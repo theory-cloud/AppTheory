@@ -4,6 +4,7 @@ import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 /**
  * Traffic shifting mode for AppTheory-managed Lambda aliases.
  */
@@ -127,6 +128,26 @@ export interface AppTheoryFunctionProps extends lambda.FunctionProps {
      * @default undefined
      */
     readonly alias?: AppTheoryFunctionAliasOptions;
+    /**
+     * Optional naming and logging context.
+     *
+     * With a derived naming profile the construct names the function from the
+     * contract when `functionName` is omitted. With the standard logging profile
+     * AppTheory creates a log group named `logs/runtime/{logicalName}` with the
+     * context's retention and points Lambda's `LoggingConfig` at it.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The component's logical name, used for the function and runtime log source.
+     * Defaults to the kebab-cased construct id when a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
 }
 export declare class AppTheoryFunction extends Construct {
     readonly fn: lambda.Function;

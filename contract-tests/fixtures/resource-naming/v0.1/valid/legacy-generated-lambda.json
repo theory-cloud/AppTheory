@@ -1,0 +1,33 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "legacy-generated-lambda",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "live",
+      "account": "784055308075",
+      "region": "us-east-1",
+      "naming_profile": "legacy"
+    },
+    "resource_type": "lambda_function",
+    "logical": "authorizer",
+    "generated": [
+      "lambda_function:authorizer"
+    ],
+    "pins": {
+      "dynamodb_table:events": "autheory-autheory-live-events"
+    }
+  },
+  "expected": {
+    "generated": true
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

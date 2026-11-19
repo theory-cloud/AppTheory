@@ -1,0 +1,26 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "log-delivery-source-over-60",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "theory-mcp-server",
+      "stage": "lab",
+      "account": "191637461429",
+      "region": "us-east-1"
+    },
+    "resource_type": "log_delivery_source",
+    "logical": "logs/access/cdn/control-plane-site-frontdoor"
+  },
+  "expected": {
+    "name": "theory-mcp-server-lab-logs-access-cdn-control-plane-h7burcvm"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

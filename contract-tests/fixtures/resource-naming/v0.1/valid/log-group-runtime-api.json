@@ -1,0 +1,25 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "log-group-runtime-api",
+  "scenario": {
+    "type": "log_group",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "lab",
+      "account": "998115851393",
+      "region": "us-east-1"
+    },
+    "logical": "logs/runtime/api"
+  },
+  "expected": {
+    "name": "theorycloud_theorycloud_autheory_lab_logs_runtime_api"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

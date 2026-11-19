@@ -27,5 +27,22 @@ type AppTheoryWebSocketApiProps struct {
 	DisconnectHandler                        awslambda.IFunction           `field:"optional" json:"disconnectHandler" yaml:"disconnectHandler"`
 	EnableAccessLogging                      *bool                         `field:"optional" json:"enableAccessLogging" yaml:"enableAccessLogging"`
 	EnableConnectionTable                    *bool                         `field:"optional" json:"enableConnectionTable" yaml:"enableConnectionTable"`
-	StageName                                *string                       `field:"optional" json:"stageName" yaml:"stageName"`
+	// The API's logical name.
+	//
+	// Defaults to the kebab-cased construct id when a
+	// naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
+	// Optional naming and logging context.
+	//
+	// With the standard logging profile access logging is on by default to a log
+	// group named `logs/access/api/{logicalName}` carrying the contract's JSON
+	// field set. Pass `enableAccessLogging: false` to opt out.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
+	StageName     *string                `field:"optional" json:"stageName" yaml:"stageName"`
 }

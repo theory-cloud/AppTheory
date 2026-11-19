@@ -179,14 +179,24 @@ require_contains ".github/release-lane.json" '"Release/security gates"' \
   "the release-lane declaration must name the release/security context"
 require_contains ".github/release-lane.json" '"Version alignment"' \
   "the release-lane declaration must name the version alignment context"
-require_contains ".github/workflows/release-pr-check-sweep.yml" "scripts/sync-release-pr-checks.sh" \
-  "a checkless generated release PR must be re-verified by the recovery sweep"
-require_contains ".github/workflows/release-pr-check-sweep.yml" "--sweep" \
-  "the recovery sweep must run the lane in its report-only mode"
+# The eligible event for a generated release pull request's required contexts is
+# the code-owner review: GitHub counts a required status check only for a run
+# triggered by push, pull_request, pull_request_review, pull_request_target,
+# deployment or deployment_status, and a workflow_dispatch run is not one of
+# them. The self-dispatch lane and its recovery sweep are gone; the review
+# trigger is what must stay.
+require_contains "${ci}" "  pull_request_review:" \
+  "the code-owner review must be able to report the generated release PR contexts"
+require_contains "${ci}" "    types: [submitted]" \
+  "the review trigger must subscribe to the approval activity"
+require_contains "${ci}" "    branches: [premain, main]" \
+  "the review trigger must cover both release branches"
+require_not_contains "${ci}" "workflow_dispatch" \
+  "CI must carry no dispatch trigger; a dispatched run never satisfies a required check"
+require_not_contains "${ci}" "inputs.release_" \
+  "CI must not keep the dispatch inputs the removed lane sent"
 require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-release-pr-check-lane.sh --self-test" \
-  "the rubric must prove the release-lane check wiring and its self-test"
-require_line "scripts/verify-rubric.sh" "bash ./scripts/test-sync-release-pr-checks.sh" \
-  "the rubric must exercise the release check lane's decisions"
+  "the rubric must prove the review-lane check wiring and its self-test"
 require_not_contains "${ci}" "verify-release-pr-check-lane.sh" \
   "the lane guard is locally runnable and must not re-execute inside the required release/security job"
 require_not_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \
@@ -194,8 +204,10 @@ require_not_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \
 for producer in ".github/workflows/prerelease-pr.yml" ".github/workflows/release-pr.yml"; do
   require_not_contains "${producer}" "finalize_only" \
     "generated release PR recovery must not depend on a human-triggered dispatch input"
-  require_contains "${producer}" "scripts/sync-release-pr-checks.sh" \
-    "the generated release PR producer must attach the required checks itself"
+  require_not_contains "${producer}" "sync-release-pr-checks" \
+    "the generated release PR producer must not resurrect the removed self-dispatch lane"
+  require_contains "${producer}" "Mark the generated release PR ready for code-owner review" \
+    "the generated release PR producer must hand its draft to the code-owner review"
 done
 for retired_check in \
   "Go (test + vet)" \

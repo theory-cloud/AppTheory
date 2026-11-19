@@ -6,6 +6,10 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import type { AppTheoryNamingContext } from "./naming-context";
+
 /**
  * Traffic shifting mode for AppTheory-managed Lambda aliases.
  */
@@ -144,6 +148,28 @@ export interface AppTheoryFunctionProps extends lambda.FunctionProps {
    * @default undefined
    */
   readonly alias?: AppTheoryFunctionAliasOptions;
+
+  /**
+   * Optional naming and logging context.
+   *
+   * With a derived naming profile the construct names the function from the
+   * contract when `functionName` is omitted. With the standard logging profile
+   * AppTheory creates a log group named `logs/runtime/{logicalName}` with the
+   * context's retention and points Lambda's `LoggingConfig` at it.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The component's logical name, used for the function and runtime log source.
+   * Defaults to the kebab-cased construct id when a naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
 }
 
 export class AppTheoryFunction extends Construct {
@@ -155,15 +181,16 @@ export class AppTheoryFunction extends Construct {
   constructor(scope: Construct, id: string, props: AppTheoryFunctionProps) {
     super(scope, id);
 
-    const { alias, roleName, ...inputLambdaProps } = props;
+    const { alias, roleName, namingContext, logicalName, ...inputLambdaProps } = props;
     const lambdaProps: lambda.FunctionProps = { ...inputLambdaProps };
-    if (roleName !== undefined) {
-      if (lambdaProps.role) {
-        throw new Error(
-          "AppTheoryFunction cannot honor props.roleName when props.role supplies the execution role; omit props.role or configure its name where that role is created",
-        );
-      }
+    const logical = logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    if (lambdaProps.role && roleName !== undefined) {
+      throw new Error(
+        "AppTheoryFunction cannot honor props.roleName when props.role supplies the execution role; omit props.role or configure its name where that role is created",
+      );
     }
+    refuseExplicitName(namingContext, "AppTheoryFunction", "functionName", "lambda_function", logical, lambdaProps.functionName !== undefined);
+    refuseExplicitName(namingContext, "AppTheoryFunction", "roleName", "iam_role", logical, roleName !== undefined);
     const logRetention = lambdaProps.logRetention ?? logs.RetentionDays.ONE_MONTH;
     const requestedLogRemovalPolicy = lambdaProps.logRemovalPolicy;
     if (lambdaProps.logGroup && requestedLogRemovalPolicy !== undefined) {
@@ -176,8 +203,37 @@ export class AppTheoryFunction extends Construct {
     delete (lambdaProps as { logRetentionRetryOptions?: unknown }).logRetentionRetryOptions;
     delete (lambdaProps as { logRetentionRole?: unknown }).logRetentionRole;
 
+    let effectiveRoleName = roleName;
+    if (namingContext && logical) {
+      const composed = namingContext.physicalName("lambda_function", logical);
+      if (!composed.generated) {
+        (lambdaProps as { functionName?: string }).functionName = composed.name;
+      }
+      if (!lambdaProps.role) {
+        const role = namingContext.physicalName("iam_role", logical);
+        effectiveRoleName = role.generated ? undefined : role.name;
+      }
+    }
+
     let boundLogGroup = lambdaProps.logGroup;
-    if (!boundLogGroup && lambdaProps.functionName) {
+    const standardLogging = namingContext?.standardLogging === true;
+    if (standardLogging) {
+      if (lambdaProps.logGroup) {
+        throw new Error(
+          "AppTheoryFunction cannot combine props.logGroup with a standard logging profile; the profile owns the runtime log group",
+        );
+      }
+      if (!namingContext || !logical) {
+        throw new Error("AppTheoryFunction standard logging requires a naming context and a logical name");
+      }
+      boundLogGroup = new logs.LogGroup(this, "RuntimeLogGroup", {
+        logGroupName: namingContext.logGroupName(`logs/runtime/${logical}`),
+        retention: namingContext.retentionDays as logs.RetentionDays,
+        removalPolicy: RemovalPolicy.RETAIN,
+      });
+    }
+
+    if (!boundLogGroup && !standardLogging && lambdaProps.functionName) {
       boundLogGroup = createManagedFunctionLogGroup(
         this,
         `/aws/lambda/${lambdaProps.functionName}`,
@@ -195,29 +251,32 @@ export class AppTheoryFunction extends Construct {
       timeout: lambdaProps.timeout ?? Duration.seconds(10),
     });
 
-    if (roleName !== undefined) {
-      if (!Token.isUnresolved(roleName)) {
-        if (!roleName.trim()) {
+    if (effectiveRoleName !== undefined) {
+      if (!Token.isUnresolved(effectiveRoleName)) {
+        if (!effectiveRoleName.trim()) {
           throw new Error("AppTheoryFunction roleName must not be empty");
         }
-        if (roleName.length > 64) {
+        if (effectiveRoleName.length > 64) {
           throw new Error("AppTheoryFunction roleName must not exceed 64 characters");
         }
-        if (!/^[\w+=,.@-]+$/.test(roleName)) {
+        if (!/^[\w+=,.@-]+$/.test(effectiveRoleName)) {
           throw new Error("AppTheoryFunction roleName must match [\\w+=,.@-]+");
         }
       }
       const roleResource = this.fn.role?.node.defaultChild;
       if (!(roleResource instanceof iam.CfnRole)) {
         throw new Error(
-          `AppTheoryFunction cannot apply the required stable roleName ${JSON.stringify(roleName)} because the Lambda execution role's default child is not an AWS::IAM::Role`,
+          `AppTheoryFunction cannot apply the required stable roleName ${JSON.stringify(effectiveRoleName)} because the Lambda execution role's default child is not an AWS::IAM::Role`,
         );
       }
-      roleResource.addPropertyOverride("RoleName", roleName);
+      roleResource.addPropertyOverride("RoleName", effectiveRoleName);
     }
 
     if (boundLogGroup) {
       (this as { logGroup?: logs.ILogGroupRef }).logGroup = boundLogGroup;
+      if (standardLogging) {
+        (boundLogGroup as logs.ILogGroup).grantWrite(this.fn);
+      }
     } else {
       // Anonymous Lambda physical names are generated by CloudFormation. Keep
       // the finite-retention log group, but require callers that need a

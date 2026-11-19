@@ -1,0 +1,26 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "type-s3-vector-index",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "theory-mcp-server",
+      "stage": "lab",
+      "account": "191637461429",
+      "region": "us-east-1"
+    },
+    "resource_type": "s3_vector_index",
+    "logical": "sources"
+  },
+  "expected": {
+    "name": "theory-mcp-server-lab-sources"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

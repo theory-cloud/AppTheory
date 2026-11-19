@@ -11,6 +11,12 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import { Construct } from "constructs";
 
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
+
 import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils";
 
 const apptheoryOriginalUriHeader = "x-apptheory-original-uri";
@@ -481,6 +487,35 @@ export interface AppTheorySsrSiteProps {
    */
   readonly allowViewerTenantHeaders?: boolean;
 
+  /**
+   * Optional naming and logging context.
+   *
+   * With the standard logging profile the buckets this construct creates take
+   * their names from the contract and CloudFront access logs go to
+   * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+   * Pass `enableLogging: false` to opt out of the delivery.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The site's logical name. Defaults to the kebab-cased construct id when a
+   * naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
+
+  /**
+   * CloudFront standard-logging output format for a CloudWatch Logs
+   * destination. Only used under the standard logging profile.
+   * @default AppTheoryCloudFrontLogFormat.W3C
+   */
+  readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
+
   readonly enableLogging?: boolean;
   readonly logsBucket?: s3.IBucket;
 
@@ -585,10 +620,37 @@ export class AppTheorySsrSite extends Construct {
     const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
     const autoDeleteObjects = props.autoDeleteObjects ?? false;
     const wireRuntimeEnv = props.wireRuntimeEnv ?? true;
+    const namingContext = props.namingContext;
+    const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    const enableLogging = props.enableLogging ?? true;
+    const isrMetadataLogical = logical ? `${logical}-isr-metadata` : undefined;
+    refuseExplicitName(
+      namingContext,
+      "AppTheorySsrSite",
+      "isrMetadataTableName",
+      "dynamodb_table",
+      isrMetadataLogical,
+      props.isrMetadataTableName !== undefined,
+    );
+    refuseExplicitName(
+      namingContext,
+      "AppTheorySsrSite",
+      "cacheTableName",
+      "dynamodb_table",
+      isrMetadataLogical,
+      props.cacheTableName !== undefined,
+    );
+    if (namingContext?.standardLogging === true && props.logsBucket !== undefined) {
+      throw new Error(
+        "AppTheorySsrSite cannot honor props.logsBucket under the standard logging profile; CloudFront access logs go to the contract log group, so remove props.logsBucket or use the legacy logging profile",
+      );
+    }
+    const standardLogging = namingContext?.standardLogging === true && enableLogging;
 
     this.assetsBucket =
       props.assetsBucket ??
       new s3.Bucket(this, "AssetsBucket", {
+        ...(namingContext && logical ? bucketNamingProps(namingContext, `${logical}-assets`) : {}),
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         encryption: s3.BucketEncryption.S3_MANAGED,
         enforceSSL: true,
@@ -596,8 +658,7 @@ export class AppTheorySsrSite extends Construct {
         autoDeleteObjects,
       });
 
-    const enableLogging = props.enableLogging ?? true;
-    if (enableLogging) {
+    if (enableLogging && !standardLogging) {
       this.logsBucket =
         props.logsBucket ??
         new s3.Bucket(this, "CloudFrontLogsBucket", {
@@ -631,6 +692,7 @@ export class AppTheorySsrSite extends Construct {
       this.htmlStoreBucket =
         props.htmlStoreBucket ??
         new s3.Bucket(this, "HtmlStoreBucket", {
+          ...(namingContext && logical ? bucketNamingProps(namingContext, `${logical}-html-store`) : {}),
           blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
           encryption: s3.BucketEncryption.S3_MANAGED,
           enforceSSL: true,
@@ -659,7 +721,19 @@ export class AppTheorySsrSite extends Construct {
       );
     }
 
-    const isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
+    let isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
+
+    // Under a naming context the ISR/cache metadata table is named through the
+    // contract. The construct consumes the `{logical}-isr-metadata` entry when
+    // it needs the table: an externally created table is passed through
+    // `isrMetadataTable`, and `ssg-isr` needs one. The entry key includes the
+    // table suffix, matching the name the construct consumes (r3, ADV-1312-2).
+    if (namingContext && logical && (props.isrMetadataTable !== undefined || siteMode === AppTheorySsrSiteMode.SSG_ISR)) {
+      const composed = namingContext.physicalName("dynamodb_table", `${logical}-isr-metadata`);
+      if (isrMetadataTableName === "" && !composed.generated && composed.name !== undefined) {
+        isrMetadataTableName = composed.name;
+      }
+    }
 
     if (props.assetsPath) {
       new s3deploy.BucketDeployment(this, "AssetsDeployment", {
@@ -1079,6 +1153,17 @@ export class AppTheorySsrSite extends Construct {
       additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
+
+    if (standardLogging && namingContext && logical) {
+      enableCloudFrontStandardLogging({
+        scope: this,
+        id: "CdnLogging",
+        context: namingContext,
+        distribution: this.distribution,
+        logical: `logs/access/cdn/${logical}`,
+        format: props.cloudFrontLogFormat,
+      });
+    }
 
     if (ssrUrlAuthType === lambda.FunctionUrlAuthType.AWS_IAM) {
       props.ssrFunction.addPermission("AllowCloudFrontInvokeFunctionViaUrl", {

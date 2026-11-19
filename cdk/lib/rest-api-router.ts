@@ -8,9 +8,13 @@ import * as route53targets from "aws-cdk-lib/aws-route53-targets";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { configureRestApiRegionalWaf } from "./private/rest-api-waf";
+import { restApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 /**
@@ -195,6 +199,27 @@ export interface AppTheoryRestApiRouterProps {
     readonly apiName?: string;
 
     /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile access logging is on by default to a
+     * log group named `logs/access/api/{logicalName}` carrying the contract's
+     * JSON field set. Pass `stage.accessLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+
+    /**
+     * The API's logical name. Defaults to the kebab-cased construct id when a
+     * naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+
+    /**
      * Description of the REST API.
      */
     readonly description?: string;
@@ -377,6 +402,8 @@ export class AppTheoryRestApiRouter extends Construct {
     private readonly scopePermissionToMethod: boolean;
     private readonly authorizer?: apigw.IAuthorizer;
     private readonly authorizationType?: apigw.AuthorizationType;
+    private readonly namingContext?: AppTheoryNamingContext;
+    private readonly logicalName?: string;
 
     constructor(scope: Construct, id: string, props: AppTheoryRestApiRouterProps = {}) {
         super(scope, id);
@@ -395,8 +422,15 @@ export class AppTheoryRestApiRouter extends Construct {
         this.scopePermissionToMethod = props.scopePermissionToMethod ?? true;
         this.authorizer = props.authorizer;
         this.authorizationType = props.authorizationType;
+        this.namingContext = props.namingContext;
+        this.logicalName = props.logicalName ?? (props.namingContext ? defaultLogicalName(this) : undefined);
+        refuseExplicitName(props.namingContext, "AppTheoryRestApiRouter", "apiName", "api_rest", this.logicalName, props.apiName !== undefined);
+        const derivedApiName = this.namingContext && this.logicalName
+            ? this.namingContext.physicalName("api_rest", this.logicalName)
+            : undefined;
 
-        const stageOpts = props.stage ?? {};
+        const configuredStageOpts = props.stage ?? {};
+        const stageOpts = this.effectiveStageOptions(configuredStageOpts);
         const stageName = stageOpts.stageName ?? "prod";
         const compressionProps =
             props.minimumCompressionSize === undefined
@@ -405,7 +439,7 @@ export class AppTheoryRestApiRouter extends Construct {
 
         // Create the REST API
         this.api = new apigw.RestApi(this, "Api", {
-            restApiName: props.apiName,
+            restApiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
             description: props.description,
             deploy: props.deploy ?? true,
             retainDeployments: props.retainDeployments,
@@ -569,6 +603,15 @@ export class AppTheoryRestApiRouter extends Construct {
     /**
      * Build deploy options for the stage.
      */
+    private effectiveStageOptions(
+        stage: AppTheoryRestApiRouterStageOptions,
+    ): AppTheoryRestApiRouterStageOptions {
+        if (this.namingContext?.standardLogging === true && stage.accessLogging === undefined) {
+            return { ...stage, accessLogging: true };
+        }
+        return stage;
+    }
+
     private buildDeployOptions(
         stageOpts: AppTheoryRestApiRouterStageOptions,
         stageName: string,
@@ -576,15 +619,28 @@ export class AppTheoryRestApiRouter extends Construct {
         // Handle access logging
         let accessLogDestination: apigw.IAccessLogDestination | undefined;
         let accessLogFormat = stageOpts.accessLogFormat;
+        const standard = this.namingContext?.standardLogging === true;
+        if (standard && !this.logicalName && stageOpts.accessLogging) {
+            throw new Error("AppTheoryRestApiRouter standard logging requires a logical name");
+        }
 
         if (stageOpts.accessLogging === true) {
-            // Create an auto-managed log group
-            const logGroup = new logs.LogGroup(this, "AccessLogs", {
-                retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-            });
+            // The construct-created access-log group is a logging resource: under
+            // the standard profile it takes the contract log-source name, and
+            // under the legacy profile it keeps today's CloudFormation-generated
+            // name and consumes no naming entry (r3, ADV-1312-1).
+            const logGroup = new logs.LogGroup(this, "AccessLogs",
+                standard && this.namingContext && this.logicalName
+                ? {
+                    logGroupName: this.namingContext.logGroupName(`logs/access/api/${this.logicalName}`),
+                    retention: retentionFor(this.namingContext.retentionDays),
+                }
+                : {
+                    retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+                });
             (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
             accessLogDestination = new apigw.LogGroupLogDestination(logGroup);
-            accessLogFormat = accessLogFormat ?? apigw.AccessLogFormat.clf();
+            accessLogFormat = accessLogFormat ?? (standard ? restApiAccessLogFormat() : apigw.AccessLogFormat.clf());
         } else if (stageOpts.accessLogging && typeof stageOpts.accessLogging === "object") {
             // Use provided log group
             (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = stageOpts.accessLogging;

@@ -69,10 +69,26 @@ type AppTheoryMcpServerProps struct {
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.JWKSURI` in the
 	// application. The construct no longer injects JWKS environment values.
 	JwksUri *string `field:"optional" json:"jwksUri" yaml:"jwksUri"`
+	// The owned API's logical name.
+	//
+	// Defaults to the kebab-cased construct id when
+	// a naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
 	// Single MCP route path from the v3.1.x A6 surface.
 	// Deprecated: Use `routeFamily.patterns`. The new default is the canonical
 	// four-pattern family; use `{ patterns: ['/mcp'] }` for the old singleton.
 	McpPath *string `field:"optional" json:"mcpPath" yaml:"mcpPath"`
+	// Optional naming and logging context for the owned HTTP API.
+	//
+	// With the standard logging profile the access log group is named
+	// `logs/access/api/{logicalName}` and carries the contract's JSON field set.
+	// Access logging already defaults on; pass `ownedApi.stage.accessLogging:
+	// false` to opt out. Attach mode ignores this prop.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Direct-origin reachability decision required under RUNTIME_BEARER and NONE_PUBLIC.
 	//
 	// A directly reachable origin is refused unless it is declared

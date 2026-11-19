@@ -5,43 +5,43 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 458.45,
+      "durationSeconds": 449.202,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T21:12:04Z",
+      "finishedAt": "2026-11-19T13:50:09Z",
       "id": "rubric",
-      "inputsDigest": "sha256:99dc2670258f8b645b9db7b4795b9b4c865f8baaac03888789fc4bb41891d18c",
-      "logDigest": "sha256:fa7ab409ea6b58fa60cda3d38dc30db9b440abce6f7a2fc35e586f46360f10e7",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261117T210425Z-62271.log",
+      "inputsDigest": "sha256:b5e58495512cec48003070a8ce9f48ef25e5e077d03242c1d5799afe5d30eb8f",
+      "logDigest": "sha256:353f7ca8f49bbbc864d21e78ebb4ed07bff90d739bce025a7473dc5d887e74db",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261119T134239Z-78308.log",
       "reused": false,
-      "startedAt": "2026-11-17T21:04:25Z"
+      "startedAt": "2026-11-19T13:42:39Z"
     }
   ],
   "consumed": [
     {
-      "digest": "sha256:cf8ba661ce07c5e0a5b5efb4bdc869093aa73853db3c282aa43053a146dc0616",
+      "digest": "sha256:f8d78580167da4143bc48cf3e30d4296c0ef65763cbad50e30a6dbb46ad0d267",
       "gate": "cdk-go-drift",
-      "recordedAt": "2026-11-17T15:24:29Z"
+      "recordedAt": "2026-11-19T12:26:01Z"
     },
     {
-      "digest": "sha256:9f6eb9fe24935333c5d006d42ff1c980c43930b37bd420f428f0eeb68aa0e3f0",
+      "digest": "sha256:b1fa60b9c468302bb57ca3baccd2edbff153603fc7034bf3342ebc0244958018",
       "gate": "contract-tests",
-      "recordedAt": "2026-11-16T17:35:59Z"
+      "recordedAt": "2026-11-19T12:26:37Z"
     },
     {
-      "digest": "sha256:058823977584c5e41ccced21d7674bdb1730d67be017590c0dccd55bae53513e",
+      "digest": "sha256:eef5b176c149dae99e3bb4cdad21094aab0f01a8d9af05feef8e46ba06118c4c",
       "gate": "deterministic-builds",
-      "recordedAt": "2026-11-17T15:25:28Z"
+      "recordedAt": "2026-11-19T12:27:30Z"
     },
     {
-      "digest": "sha256:bba50c0a65954891aecad23075150fef9a8dd21b0f741e20d7e079eb97a04269",
+      "digest": "sha256:59b800c7036b0c943f44bb29287c13c2229db7c7fcc4c55a2471a303a8812781",
       "gate": "go",
-      "recordedAt": "2026-11-17T15:30:04Z"
+      "recordedAt": "2026-11-19T12:26:13Z"
     },
     {
-      "digest": "sha256:99158f96e2c469d229eec521cf19943844dad03ae16292d03170a8a48528a329",
+      "digest": "sha256:01041b667634d3551b11826528fef46b6c3b7e768b73a5530b19036d035062d4",
       "gate": "unit",
-      "recordedAt": "2026-11-17T15:51:12Z"
+      "recordedAt": "2026-11-19T12:48:17Z"
     }
   ],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
@@ -62,26 +62,26 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-17T21:12:04Z",
+  "recordedAt": "2026-11-19T13:50:09Z",
   "releaseOnly": {
-    "digest": "sha256:cdead0d22055eac0580180e62b916bd08b138c61176a51486fb60cf3ce55ec5b",
-    "fileCount": 477,
-    "normalizedDigest": "sha256:3ff85b8100daa0871b1b27af15cd61866f2103de6e09ad42a6eb9ce4819ae968",
-    "version": "7.3.1"
+    "digest": "sha256:b9d2ecfcd0a4dd430b9a455e88a0464a1207b6d4b7df093fbce4d9cb7167f998",
+    "fileCount": 526,
+    "normalizedDigest": "sha256:fb2453b215a8fca7cd650aad600fe4f9086f12952650085eb380b84c8ae631a5",
+    "version": "7.4.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:ab727d973b68c52cee5f5e4c0030da088b60e246d09e02693edcce4ee36a9617",
-    "fileCount": 3155,
+    "digest": "sha256:7b11178a298891f22aaef6160330d328e81b11fe4cf8b322166fc92ed2f2723e",
+    "fileCount": 3293,
     "paths": [
       "**"
     ],
     "version": 1
   },
   "source": {
-    "digest": "sha256:bd0355dc669c3f91219874c6b395ee9c3a32c42abb2fd050bc0b69400ae72a50",
-    "fileCount": 2678
+    "digest": "sha256:0056d5ef45a09ade279aacae530898a3dad3853e3b02305e4cb331a059d0624c",
+    "fileCount": 2767
   },
   "verdict": "PASS"
 }

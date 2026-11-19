@@ -1,35 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release-lane guard: every generated release pull request has an automatic,
-# head-bound dispatch path for every required context of its base branch, and a
-# recovery sweep that needs no human.
+# Release-lane guard: the required contexts of a generated release pull request
+# are reported by the code-owner review of that pull request, and by nothing
+# else.
 #
 # The failure this prevents is a release lane that looks wired but cannot gate
-# itself. release-please (and the artifact sync) create their pull request
-# updates with the built-in token, and GitHub starts no `pull_request` workflow
-# for events that token causes, so a generated release pull request only gets a
-# context when the lane dispatches it. If that dispatch is missing, mis-targeted
-# or unbound, the required context never reports and the only repair used to be
-# closing and reopening the pull request or a human dispatch.
+# itself. release-please (and the artifact sync) create and update their pull
+# requests with the built-in token, and GitHub starts no `pull_request` workflow
+# for events that token causes. GitHub also evaluates a required status check
+# only for a run triggered by an eligible event, and a `workflow_dispatch` run
+# is not one of them. A self-dispatch lane therefore reports check runs that no
+# ruleset counts, and a generated release pull request can never become
+# mergeable through it.
 #
-# The declaration in `.github/release-lane.json` names, per base branch, the
-# required contexts, the workflow that reports each one and the job that carries
-# the context name. This guard proves that:
+# The eligible event this repository can produce without a credential is the
+# code-owner approval the premain/main ruleset already requires: `ci.yml` runs
+# on `pull_request_review: [submitted]` and reports the release checks against
+# the reviewed pull request's own base, head and head SHA. This guard proves
+# that lane:
 #
-#   1. every workflow that creates a generated release pull request declares the
-#      permission to create pull requests and to dispatch workflows, and invokes
-#      scripts/sync-release-pr-checks.sh for the exact head branch;
-#   2. each required context is a job in a workflow that has a
-#      workflow_dispatch path taking the pull request number *and* the head SHA,
-#      that binds the run to the pull request head through
-#      scripts/resolve-release-pr-head.sh, and that re-checks the checkout is
-#      that head before any check runs;
-#   3. the scheduled recovery sweep exists, is wired to the same lane, and cannot
-#      be turned into a silent no-op;
-#   4. no workflow reintroduces a release-please token or a secret-to-token
-#      fallback: the lane runs on the built-in token only;
-#   5. a script that a ruleset-required job runs models the review event for
+#   1. the declaration in `.github/release-lane.json` names, per release branch,
+#      the required contexts, the workflow that reports each one and the job that
+#      carries the context name, and names no scheduled recovery sweep;
+#   2. the reporting workflow declares the eligible `pull_request_review`
+#      trigger for the submitted activity on both release branches;
+#   3. every declared context is a job in that workflow, reports its exact
+#      context name, reads the reviewed pull request from
+#      `github.event.pull_request.*`, and carries no dispatch-only path;
+#   4. the producers hand the generated pull request to that review: they mark
+#      the draft release pull request ready at one head, restore the draft lock
+#      if the head moves, and never dispatch a workflow or hold the `actions`
+#      scope they only needed to dispatch;
+#   5. no workflow runs on a clock, and no workflow reintroduces a
+#      release-please token or a secret-to-token fallback: the lane runs on the
+#      built-in token only;
+#   6. a script that a ruleset-required job runs models the review event for
 #      every event-dependent input it reads: a script that branches on the event
 #      name has a `pull_request_review` branch, a script that reads
 #      GITHUB_BASE_REF/GITHUB_HEAD_REF (which GitHub sets only for
@@ -39,8 +45,7 @@ set -euo pipefail
 #      fail closed after the approval, or pass without validating.
 #
 # The self-test proves the guard is not vacuous: it mutates copies of the real
-# workflows and declaration and requires each mutation to fail, and it drives the
-# head-binding resolver with hostile stub answers.
+# workflows and declaration and requires each mutation to fail.
 #
 # Usage: bash scripts/verify-release-pr-check-lane.sh [--self-test] [--root DIR]
 
@@ -62,10 +67,11 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 Usage: bash scripts/verify-release-pr-check-lane.sh [--self-test] [--root DIR]
 
-Fails when a generated release pull request has no head-bound dispatch path for
-one of its base branch's required contexts, or when the recovery sweep that keeps
-the lane self-healing is missing. --self-test additionally proves the guard and
-the head-binding resolver reject hostile shapes.
+Fails when a generated release pull request's required contexts are not
+reported by the code-owner review lane, when a producer stops handing its
+draft release pull request to that review, or when a workflow reintroduces a
+clock, a dispatch-only path or a credential into the lane. --self-test
+additionally proves the guard rejects hostile shapes.
 USAGE
       exit 0
       ;;
@@ -114,13 +120,13 @@ if data.get("schemaVersion") != 1:
 
 contexts = data.get("requiredContexts") or {}
 producers = data.get("generatedReleasePullRequests") or []
-sweep = data.get("recoverySweep") or {}
 if not producers:
     print("release-pr-check-lane: FAIL (declaration names no generated release pull request)", file=sys.stderr)
     raise SystemExit(1)
-if not sweep:
-    print("release-pr-check-lane: FAIL (declaration names no recovery sweep)", file=sys.stderr)
-    raise SystemExit(1)
+# A scheduled recovery sweep re-dispatched the verifying workflow. GitHub never
+# counted those runs, so the lane is gone; the declaration must not name one.
+if data.get("recoverySweep") or data.get("schedule"):
+    report("the declaration names a scheduled recovery sweep; the code-owner review is the only eligible event")
 
 JOB_BLOCK = r"(?ms)^  {job}:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)"
 # Scripts a job invokes, and the runtime event-name read a script must map onto
@@ -141,6 +147,11 @@ REVIEW_REF_SOURCE = re.compile(r"\bPR_BASE_REF\b|\bPR_HEAD_REF\b|\bGITHUB_EVENT_
 # `refs/pull/<n>/merge`, whose ref name is `<n>/merge`, so a script that skips an
 # unmodelled branch must first be sure it is not a review.
 SKIP_EXIT = re.compile(r"(?m)^[^\n]*\bSKIP\b[^\n]*\n(?:[ \t][^\n]*\n){0,3}?[ \t]*exit 0\b")
+# The reviewed pull request is the only source of the base, head and head SHA a
+# review run may validate. GITHUB_BASE_REF/GITHUB_HEAD_REF are unset on that
+# event and the dispatch inputs no longer exist.
+REVIEW_PAYLOAD = re.compile(r"github\.event\.pull_request\.")
+DISPATCH_LEFTOVER = re.compile(r"workflow_dispatch|inputs\.release_")
 
 
 def job_block(text: str, job: str) -> str | None:
@@ -152,6 +163,233 @@ def script_refs(block: str) -> set[str]:
     return {match.group(0) for match in SCRIPT_REF.finditer(block)}
 
 
+def review_trigger_block(text: str) -> str | None:
+    """The body of the `pull_request_review:` trigger entry, or None."""
+    lines = text.splitlines()
+    collected: list[str] = []
+    inside = False
+    for line in lines:
+        if line.rstrip() == "  pull_request_review:":
+            inside = True
+            continue
+        if inside:
+            if line.startswith("  ") and not line.startswith("    "):
+                break
+            collected.append(line)
+    return "\n".join(collected) if inside else None
+
+
+def review_trigger_branches(trigger: str) -> set[str]:
+    """The base branches a `pull_request_review` trigger is filtered to.
+
+    An absent `branches:` filter means every base branch, which covers both
+    release branches. The flow form (`branches: [a, b]`) and the block form are
+    both read, so a narrowed filter cannot pass as a substring match.
+    """
+    lines = trigger.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^[ \t]+branches:[ \t]*(.*)$", line)
+        if not match:
+            continue
+        inline = match.group(1).strip()
+        if inline:
+            return {item.strip().strip("'\"") for item in inline.strip("[]").split(",") if item.strip()}
+        branches: set[str] = set()
+        for follow in lines[index + 1 :]:
+            item = re.match(r"^[ \t]+-[ \t]*(.+)$", follow)
+            if not item:
+                break
+            branches.add(item.group(1).strip().strip("'\""))
+        return branches
+    return {"premain", "main"}
+
+
+def review_trigger_types(trigger: str) -> set[str] | None:
+    """The activity types a `pull_request_review` trigger subscribes to.
+
+    Returns None when the trigger declares no `types:` filter. GitHub defaults an
+    unfiltered review trigger to every activity, which includes dismissals and
+    comments, so an absent filter is not the submitted-only approval the lane
+    needs. The flow form (`types: [submitted]`) and the block form are both read,
+    and the whole set is compared, so a superset cannot pass as a substring.
+    """
+    lines = trigger.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^[ \t]+types:[ \t]*(.*)$", line)
+        if not match:
+            continue
+        inline = match.group(1).strip()
+        if inline:
+            return {item.strip().strip("'\"") for item in inline.strip("[]").split(",") if item.strip()}
+        types: set[str] = set()
+        for follow in lines[index + 1 :]:
+            item = re.match(r"^[ \t]+-[ \t]*(.+)$", follow)
+            if not item:
+                break
+            types.add(item.group(1).strip().strip("'\""))
+        return types
+    return None
+
+
+def job_condition(block: str) -> str | None:
+    """The job's `if:` expression, including its folded or literal block form."""
+    lines = block.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^[ \t]{4}if:[ \t]*(.*)$", line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if value in (">", "|", ">-", "|-", ">+", "|+"):
+            collected: list[str] = []
+            for follow in lines[index + 1 :]:
+                if follow.strip() and not follow.startswith("      "):
+                    break
+                collected.append(follow.strip())
+            return " ".join(part for part in collected if part)
+        return value
+    return None
+
+
+# A job `if:` is evaluated, not grepped. A positive review branch and a negative
+# `!= 'pull_request'` gate both admit the code-owner review, and a `!=
+# 'pull_request_review'` term excludes it while containing the name, so a
+# substring check would be wrong in both directions. The parser below models the
+# subset GitHub expressions use in ci.yml: comparisons, `&&`, `||`, `!` and
+# parentheses. An unmodelled identifier fails closed rather than passing by
+# default.
+_EXPR_TOKEN = re.compile(r"\s*(?:(\(|\)|&&|\|\||==|!=|!)|('[^']*')|([A-Za-z_][A-Za-z0-9_.]*))")
+
+
+def tokenize_condition(expression: str) -> list[tuple[str, str]]:
+    expression = expression.strip()
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(expression):
+        match = _EXPR_TOKEN.match(expression, position)
+        if not match:
+            raise ValueError(f"unsupported token at {expression[position:]!r}")
+        position = match.end()
+        if match.group(1):
+            tokens.append(("op", match.group(1)))
+        elif match.group(2) is not None:
+            tokens.append(("str", match.group(2)[1:-1].replace("''", "'")))
+        else:
+            tokens.append(("ident", match.group(3)))
+    return tokens
+
+
+class _ConditionParser:
+    def __init__(self, tokens: list[tuple[str, str]]) -> None:
+        self.tokens = tokens
+        self.index = 0
+
+    def peek(self) -> tuple[str, str] | None:
+        return self.tokens[self.index] if self.index < len(self.tokens) else None
+
+    def take(self, expected: tuple[str, str] | None = None) -> tuple[str, str]:
+        token = self.peek()
+        if token is None:
+            raise ValueError("unexpected end of expression")
+        if expected is not None and token != expected:
+            raise ValueError(f"expected {expected!r}, found {token!r}")
+        self.index += 1
+        return token
+
+    def parse(self) -> tuple:
+        node = self.parse_or()
+        if self.peek() is not None:
+            raise ValueError(f"unexpected trailing token {self.peek()!r}")
+        return node
+
+    def parse_or(self) -> tuple:
+        node = self.parse_and()
+        while self.peek() == ("op", "||"):
+            self.take()
+            node = ("or", node, self.parse_and())
+        return node
+
+    def parse_and(self) -> tuple:
+        node = self.parse_comparison()
+        while self.peek() == ("op", "&&"):
+            self.take()
+            node = ("and", node, self.parse_comparison())
+        return node
+
+    # GitHub binds `!` tighter than `==` and `!=`, so `!x == y` is `(!x) == y`.
+    # Comparison therefore sits above unary negation in the grammar; otherwise a
+    # condition like `!github.event_name == 'pull_request'` would parse as
+    # `not(x == y)` and wrongly admit a job that never runs.
+    def parse_comparison(self) -> tuple:
+        left = self.parse_unary()
+        if self.peek() in (("op", "=="), ("op", "!=")):
+            operator = self.take()[1]
+            return (operator, left, self.parse_unary())
+        if left[0] == "lit":
+            raise ValueError("a literal cannot stand alone as a condition")
+        return left
+
+    def parse_unary(self) -> tuple:
+        if self.peek() == ("op", "!"):
+            self.take()
+            return ("not", self.parse_unary())
+        return self.parse_atom()
+
+    def parse_atom(self) -> tuple:
+        if self.peek() == ("op", "("):
+            self.take()
+            node = self.parse_or()
+            self.take(("op", ")"))
+            return node
+        if self.peek() is None:
+            raise ValueError("unexpected end of expression")
+        return self.parse_operand()
+
+    def parse_operand(self) -> tuple:
+        token = self.take()
+        if token[0] == "str":
+            return ("lit", token[1])
+        if token[0] == "ident":
+            if token[1] in ("true", "false"):
+                return ("lit", token[1] == "true")
+            return ("ident", token[1])
+        raise ValueError(f"unexpected operand {token!r}")
+
+
+def evaluate_condition(node: tuple, state: dict[str, object]) -> object:
+    kind = node[0]
+    if kind == "or":
+        return evaluate_condition(node[1], state) or evaluate_condition(node[2], state)
+    if kind == "and":
+        return evaluate_condition(node[1], state) and evaluate_condition(node[2], state)
+    if kind == "not":
+        return not evaluate_condition(node[1], state)
+    if kind == "==":
+        return evaluate_condition(node[1], state) == evaluate_condition(node[2], state)
+    if kind == "!=":
+        return evaluate_condition(node[1], state) != evaluate_condition(node[2], state)
+    if kind == "lit":
+        return node[1]
+    if kind == "ident":
+        if node[1] not in state:
+            raise ValueError(f"unmodelled identifier {node[1]!r}")
+        return state[node[1]]
+    raise ValueError(f"unsupported node {kind!r}")
+
+
+def runs_on_generated_release_review(condition: str, base: str) -> bool:
+    """Whether a job `if:` is true for a submitted code-owner review of the
+    generated release pull request that merges into `base`."""
+    state: dict[str, object] = {
+        "github.event_name": "pull_request_review",
+        "github.event.pull_request.base.ref": base,
+        "github.event.pull_request.head.ref": f"release-please--branches--{base}",
+        "github.event.pull_request.draft": False,
+        "github.repository": "theory-cloud/AppTheory",
+    }
+    node = _ConditionParser(tokenize_condition(condition)).parse()
+    return bool(evaluate_condition(node, state))
+
+
 def producer_checks(head: str, base: str, workflow: str) -> None:
     path = workflows / workflow
     if not path.is_file():
@@ -160,12 +398,16 @@ def producer_checks(head: str, base: str, workflow: str) -> None:
     text = read(path)
     if not re.search(r"(?m)^[ \t]+pull-requests:[ \t]*write[ \t]*$", text):
         report(f"{workflow} creates a pull request but does not declare pull-requests: write")
-    if not re.search(r"(?m)^[ \t]+actions:[ \t]*write[ \t]*$", text):
-        report(f"{workflow} dispatches the verifying workflow but does not declare actions: write")
-    if f"--head-branch {head}" not in text:
-        report(f"{workflow} does not run scripts/sync-release-pr-checks.sh for {head}")
-    if "scripts/sync-release-pr-checks.sh" not in text:
-        report(f"{workflow} does not attach the required checks to its generated pull request")
+    if "gh workflow run" in text:
+        report(f"{workflow} dispatches the verifying workflow; a dispatched run never satisfies a required check")
+    if re.search(r"(?m)^[ \t]+actions:[ \t]*write[ \t]*$", text):
+        report(f"{workflow} still holds actions: write; the producer only needed it to dispatch")
+    if "sync-release-pr-checks" in text:
+        report(f"{workflow} still runs the removed self-dispatch lane")
+    if not re.search(r"(?m)^[ \t]+gh pr ready \"\$\{RELEASE_PR_NUMBER\}\"[ \t]*$", text):
+        report(f"{workflow} does not hand the generated draft pull request to the code-owner review")
+    if not re.search(r"(?m)gh pr ready \"\$\{RELEASE_PR_NUMBER\}\" --undo", text):
+        report(f"{workflow} does not restore the draft lock when the head moves while marking ready")
     if base not in contexts:
         report(f"{workflow} targets {base}, which the declaration gives no required contexts")
 
@@ -174,26 +416,24 @@ def context_checks(base: str, item: dict) -> None:
     context = str(item.get("context") or "")
     workflow = str(item.get("workflow") or "")
     job = str(item.get("job") or "")
-    item_checkout_proof = bool(item.get("checkoutProof", True))
-    entry_note = item.get("note") or ""
     path = workflows / workflow
     if not path.is_file():
         report(f"required context {context} names a missing workflow {workflow}")
         return
     text = read(path)
-    if not re.search(r"(?m)^  workflow_dispatch:[ \t]*($|#)", text):
-        report(f"{workflow} reports {context} but has no workflow_dispatch path")
-    # GitHub evaluates a required status check only when the reporting run was
-    # triggered by an eligible event, and a generated release pull request only
-    # produces one through the code-owner review it already requires.
-    if not re.search(r"(?m)^  pull_request_review:[ \t]*$", text):
+    trigger = review_trigger_block(text)
+    if trigger is None:
         report(f"{workflow} has no pull_request_review trigger, so the code-owner review can never make {context} count")
-    if "types: [submitted]" not in text:
-        report(f"{workflow} does not subscribe the pull_request_review trigger to the submitted activity")
-    if not re.search(r"(?m)^[ \t]+release_pr_number:[ \t]*$", text):
-        report(f"{workflow} has no release_pr_number dispatch input to bind the head")
-    if not re.search(r"(?m)^[ \t]+release_head_sha:[ \t]*$", text):
-        report(f"{workflow} has no release_head_sha dispatch input, so a dispatch cannot pin the head it reads")
+    else:
+        review_types = review_trigger_types(trigger)
+        if review_types != {"submitted"}:
+            found = "no types filter" if review_types is None else ", ".join(sorted(review_types))
+            report(
+                f"{workflow} does not subscribe the pull_request_review trigger to exactly "
+                f"the submitted activity (found {found})"
+            )
+        if base not in review_trigger_branches(trigger):
+            report(f"{workflow} does not cover the {base} base in its pull_request_review trigger")
     if not job:
         report(f"required context {context} declares no job id")
         return
@@ -204,14 +444,30 @@ def context_checks(base: str, item: dict) -> None:
     name = re.search(r"(?m)^[ \t]{4}name:[ \t]*(.+?)[ \t]*$", block)
     if not name or name.group(1) != context:
         report(f"{workflow} job {job} does not report context {context} (found {name.group(1) if name else '<none>'})")
-    if "scripts/resolve-release-pr-head.sh" not in block:
-        report(f"{workflow} job {job} does not bind a dispatched run to the pull request head")
-    if "inputs.release_head_sha" not in block:
-        report(f"{workflow} job {job} does not consume the head SHA the lane dispatched")
-    if item_checkout_proof and "git rev-parse HEAD" not in block:
-        report(f"{workflow} job {job} does not prove the checkout is the resolved pull request head")
-    if not item_checkout_proof and not str(entry_note).strip():
-        report(f"{workflow} job {job} skips the checkout proof without stating why")
+    if not REVIEW_PAYLOAD.search(block):
+        report(f"{workflow} job {job} does not read the reviewed pull request from github.event.pull_request.*")
+    # A declared required context is evaluated from the code-owner review of the
+    # pull request. A job condition that is false for a submitted review of the
+    # generated release pull request never reports there, so the declaration
+    # would claim a context the review can never make count.
+    condition = job_condition(block)
+    if condition is not None:
+        try:
+            reports_on_review = runs_on_generated_release_review(condition, base)
+        except ValueError as exc:
+            report(
+                f"{workflow} job {job} condition cannot be modelled ({exc}); "
+                f"the guard cannot prove the code-owner review reaches {context}"
+            )
+        else:
+            if not reports_on_review:
+                report(
+                    f"{workflow} job {job} cannot report on the code-owner review of a generated release PR; "
+                    f"its if: is false for a submitted review into {base}"
+                )
+    leftover = DISPATCH_LEFTOVER.search(block)
+    if leftover:
+        report(f"{workflow} job {job} carries a dispatch-only path ({leftover.group(0)}); nothing dispatches it any more")
     # A ruleset-required context is evaluated from the code-owner review of the
     # pull request, so every script this job runs also runs on that event. A
     # script that branches on the event name must therefore map
@@ -261,6 +517,8 @@ for entry in producers:
         continue
     if base not in ("premain", "main"):
         report(f"producer {workflow} targets {base}, which is not a release branch")
+    if head != f"release-please--branches--{base}":
+        report(f"producer {workflow} names head {head or '<empty>'}, which is not the generated release branch for {base}")
     producer_checks(head, base, workflow)
     required = [item for item in contexts.get(base) or [] if item.get("context")]
     if not required:
@@ -276,48 +534,17 @@ for base in contexts:
     if base not in producer_bases:
         report(f"{base} declares required contexts but no generated release pull request produces it")
 
-sweep_workflow = str(sweep.get("workflow") or "")
-sweep_path = workflows / sweep_workflow
-if not sweep_workflow or not sweep_path.is_file():
-    report(f"declared recovery sweep {sweep_workflow or '<empty>'} does not exist")
-else:
-    text = read(sweep_path)
-    if not re.search(r"(?m)^  schedule:[ \t]*$", text):
-        report(f"{sweep_workflow} has no schedule trigger, so a checkless release PR is never re-verified")
-    if not re.search(r"(?m)^  workflow_dispatch:[ \t]*($|#)", text):
-        report(f"{sweep_workflow} has no workflow_dispatch path")
-    if not re.search(r"(?m)^[ \t]+pull-requests:[ \t]*write[ \t]*$", text):
-        report(f"{sweep_workflow} cannot read or mark the release pull request")
-    if not re.search(r"(?m)^[ \t]+actions:[ \t]*write[ \t]*$", text):
-        report(f"{sweep_workflow} cannot dispatch the verifying workflow")
-    if "scripts/sync-release-pr-checks.sh" not in text:
-        report(f"{sweep_workflow} does not run the release check lane")
-    if "--sweep" not in text:
-        report(f"{sweep_workflow} does not run the release check lane in report-only sweep mode")
-    for entry in producers:
-        head = str(entry.get("head") or "")
-        if head and head not in text:
-            report(f"{sweep_workflow} does not cover the generated release branch {head}")
-
-# The lane must dispatch the exact head it read, and the verifying workflow must
-# be given that head to check. A dispatch that carries only the pull request
-# number can start on a branch tip the pull request no longer contains.
-lane_path = root / "scripts" / "sync-release-pr-checks.sh"
-if lane_path.is_file():
-    lane_text = read(lane_path)
-    if 'release_head_sha=${head_sha}' not in lane_text:
-        report("the release check lane does not dispatch the head SHA it read")
-    if "--expected-head-sha" not in lane_text and "release_head_sha=${head_sha}" not in lane_text:
-        report("the release check lane does not pass the recorded head SHA to the verifier")
-    if "gh workflow run" not in lane_text and 'workflow run "${workflow}"' not in lane_text:
-        report("the release check lane has no workflow dispatch path")
-
-# The lane must run on the built-in token. A release-please token fallback makes
-# the lane depend on a credential that does not exist, and a token identity would
-# let the pull request authenticate as a person.
+# The lane must run on the built-in token, must not schedule work, and must not
+# reintroduce the removed self-dispatch path. A release-please token fallback
+# makes the lane depend on a credential that does not exist, and a token
+# identity would let the pull request authenticate as a person.
 for workflow in sorted(workflows.glob("*.yml")) + sorted(workflows.glob("*.yaml")):
     name = workflow.name
     text = read(workflow)
+    if re.search(r"(?m)^  schedule:", text):
+        report(f"{name} declares an on: schedule trigger; no workflow may run on a clock")
+    if "release-pr-check-sweep" in text or "sync-release-pr-checks" in text:
+        report(f"{name} names the removed self-dispatch lane")
     if "secrets.RELEASE_PLEASE_TOKEN" in text:
         report(f"{name} reintroduces the RELEASE_PLEASE_TOKEN identity")
     if re.search(r"secrets\.[A-Za-z0-9_]+[ \t]*\|\|[ \t]*secrets\.GITHUB_TOKEN", text):
@@ -329,7 +556,7 @@ if failures:
         print(f"- {failure}", file=sys.stderr)
     raise SystemExit(1)
 
-print("release-pr-check-lane: PASS (every generated release PR has a head-bound dispatch path for each required context)")
+print("release-pr-check-lane: PASS (the code-owner review reports every required release context)")
 PY
 }
 
@@ -367,7 +594,6 @@ run_self_test() {
     mkdir -p "${dir}/.github/workflows" "${dir}/scripts"
     cp -R "${root}/.github/workflows/." "${dir}/.github/workflows/"
     cp "${root}/.github/release-lane.json" "${dir}/.github/release-lane.json"
-    cp "${root}/scripts/sync-release-pr-checks.sh" "${dir}/scripts/sync-release-pr-checks.sh"
     # The review-event script check reads the script files the jobs name, so the
     # fixture carries exactly those and nothing else.
     python3 - "${root}" "${dir}" <<'PY'
@@ -401,111 +627,8 @@ PY
   fi
   echo "release-pr-check-lane self-test: PASS a faithful copy of the real tree passes"
 
-  # 1. A producer that stops invoking the lane.
-  fixture="$(new_fixture no-lane)"
-  sed -i.bak '/scripts\/sync-release-pr-checks.sh/d' "${fixture}/.github/workflows/prerelease-pr.yml"
-  rm -f "${fixture}/.github/workflows/prerelease-pr.yml.bak"
-  expect_fixture_failure "a producer that stops attaching the lane fails" \
-    "does not attach the required checks" "${fixture}"
-
-  # 2. A producer that dispatches without the dispatch permission.
-  fixture="$(new_fixture no-actions-write)"
-  python3 - "${fixture}/.github/workflows/release-pr.yml" <<'PY'
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-path.write_text(text.replace("  actions: write\n", "", 1), encoding="utf-8")
-PY
-  expect_fixture_failure "a producer without actions: write fails" \
-    "does not declare actions: write" "${fixture}"
-
-  # 3. The verifying workflow loses the head-SHA dispatch input, so nothing can
-  #    pin the head the lane read.
-  fixture="$(new_fixture no-head-sha-input)"
-  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-out = [
-    line
-    for line in lines
-    if line.strip() not in ("release_head_sha:", "release_pr_number:")
-]
-path.write_text("".join(out), encoding="utf-8")
-PY
-  expect_fixture_failure "a verifying workflow without the head-SHA dispatch input fails" \
-    "has no release_head_sha dispatch input" "${fixture}"
-
-  # 4. A verifying job that stops binding the run to the pull request head.
-  fixture="$(new_fixture no-head-binding)"
-  sed -i.bak 's|scripts/resolve-release-pr-head.sh|scripts/some-other-script.sh|g' \
-    "${fixture}/.github/workflows/ci.yml"
-  rm -f "${fixture}/.github/workflows/ci.yml.bak"
-  expect_fixture_failure "a verifying job without the head binding fails" \
-    "does not bind a dispatched run to the pull request head" "${fixture}"
-
-  # 5. A verifying job that stops proving the checkout is the resolved head.
-  fixture="$(new_fixture no-checkout-proof)"
-  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-path.write_text(text.replace("git rev-parse HEAD", "git rev-parse --short HEAD"), encoding="utf-8")
-PY
-  expect_fixture_failure "a verifying job that stops proving the checkout fails" \
-    "does not prove the checkout is the resolved pull request head" "${fixture}"
-
-  # 6. A required context whose job id no longer matches the declaration would
-  #    never report that context.
-  fixture="$(new_fixture renamed-job)"
-  sed -i.bak 's|^  release-security-gates:$|  release-security:|' \
-    "${fixture}/.github/workflows/ci.yml"
-  rm -f "${fixture}/.github/workflows/ci.yml.bak"
-  expect_fixture_failure "a verifying job renamed away from its declaration fails" \
-    "has no job named release-security-gates" "${fixture}"
-
-  # 7. A job that reports a different context name than the ruleset requires.
-  fixture="$(new_fixture renamed-context)"
-  sed -i.bak 's|^    name: Release/security gates$|    name: Release security gates|' \
-    "${fixture}/.github/workflows/ci.yml"
-  rm -f "${fixture}/.github/workflows/ci.yml.bak"
-  expect_fixture_failure "a job that reports a different context name fails" \
-    "does not report context Release/security gates" "${fixture}"
-
-  # 8. The recovery sweep removed: nothing re-verifies a checkless release PR.
-  fixture="$(new_fixture no-sweep-workflow)"
-  rm -f "${fixture}/.github/workflows/release-pr-check-sweep.yml"
-  expect_fixture_failure "a missing recovery sweep fails" \
-    "declared recovery sweep release-pr-check-sweep.yml does not exist" "${fixture}"
-
-  # 9. A recovery sweep turned into a silent no-op.
-  fixture="$(new_fixture sweep-without-mode)"
-  sed -i.bak 's| --sweep||' "${fixture}/.github/workflows/release-pr-check-sweep.yml"
-  rm -f "${fixture}/.github/workflows/release-pr-check-sweep.yml.bak"
-  expect_fixture_failure "a sweep without its report-only mode fails" \
-    "does not run the release check lane in report-only sweep mode" "${fixture}"
-
-  # 10. A credential fallback reintroduced anywhere in the workflow set.
-  fixture="$(new_fixture token-fallback)"
-  printf '\n# fallback for the record\n# token: ${{ secrets.RELEASE_PLEASE_TOKEN }}\n' \
-    >>"${fixture}/.github/workflows/release.yml"
-  expect_fixture_failure "a reintroduced release-please token fails" \
-    "reintroduces the RELEASE_PLEASE_TOKEN identity" "${fixture}"
-
-  fixture="$(new_fixture secret-or-token-fallback)"
-  printf '\n# fallback for the record\n# token: ${{ secrets.SOMETHING || secrets.GITHUB_TOKEN }}\n' \
-    >>"${fixture}/.github/workflows/release.yml"
-  expect_fixture_failure "a secret-to-token fallback fails" \
-    "declares a secret-to-GITHUB_TOKEN fallback" "${fixture}"
-
-  # 11. The declaration losing a generated release pull request.
-  fixture="$(new_fixture declaration-without-producer)"
+  # 1. A declaration that reintroduces a scheduled recovery sweep.
+  fixture="$(new_fixture declaration-with-sweep)"
   python3 - "${fixture}/.github/release-lane.json" <<'PY'
 import json
 import sys
@@ -513,14 +636,13 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
-data["generatedReleasePullRequests"] = data["generatedReleasePullRequests"][:1]
+data["recoverySweep"] = {"workflow": "release-pr-check-sweep.yml", "schedule": "*/20 * * * *"}
 path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
-  expect_fixture_failure "a declaration without a producer fails" \
-    "declares required contexts but no generated release pull request produces it" "${fixture}"
+  expect_fixture_failure "a declared recovery sweep fails" \
+    "names a scheduled recovery sweep" "${fixture}"
 
-  # 11b. A verifying workflow that loses the eligible-event trigger: its
-  #      dispatched check runs would exist but never satisfy the ruleset.
+  # 2. The eligible-event trigger removed: no review run can ever report.
   fixture="$(new_fixture no-review-trigger)"
   python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
 import sys
@@ -541,12 +663,203 @@ for line in lines:
     out.append(line)
 path.write_text("".join(out), encoding="utf-8")
 PY
-  expect_fixture_failure "a verifying workflow without the eligible-event trigger fails" \
+  expect_fixture_failure "a reporting workflow without the eligible-event trigger fails" \
     "has no pull_request_review trigger" "${fixture}"
 
-  # 11c. A script a ruleset-required job runs loses its review branch. The
-  #      trigger is still there, so the workflow starts; the script then fails
-  #      closed after the approval and nothing can clear the ruleset.
+  # 3. The review trigger subscribed to an activity that is not an approval.
+  fixture="$(new_fixture wrong-review-activity)"
+  sed -i.bak 's|    types: \[submitted\]|    types: [dismissed]|' "${fixture}/.github/workflows/ci.yml"
+  rm -f "${fixture}/.github/workflows/ci.yml.bak"
+  expect_fixture_failure "a review trigger without the submitted activity fails" \
+    "does not subscribe the pull_request_review trigger to exactly the submitted activity" "${fixture}"
+
+  # 3b. The review trigger widened to a superset. A dismissal is not an
+  #     approval, so subscribing to one alongside `submitted` would let the lane
+  #     report on an event that carries no approval at all.
+  fixture="$(new_fixture review-activity-superset)"
+  sed -i.bak 's|    types: \[submitted\]|    types: [submitted, dismissed]|' "${fixture}/.github/workflows/ci.yml"
+  rm -f "${fixture}/.github/workflows/ci.yml.bak"
+  expect_fixture_failure "a review trigger widened to a superset fails" \
+    "does not subscribe the pull_request_review trigger to exactly the submitted activity" "${fixture}"
+
+  # 4. The review trigger narrowed away from a release branch.
+  fixture="$(new_fixture review-trigger-omits-main)"
+  sed -i.bak 's|    branches: \[premain, main\]|    branches: [premain]|' "${fixture}/.github/workflows/ci.yml"
+  rm -f "${fixture}/.github/workflows/ci.yml.bak"
+  expect_fixture_failure "a review trigger that omits main fails" \
+    "does not cover the main base" "${fixture}"
+
+  # 5. A required context whose job id no longer matches the declaration would
+  #    never report that context.
+  fixture="$(new_fixture renamed-job)"
+  sed -i.bak 's|^  release-security-gates:$|  release-security:|' \
+    "${fixture}/.github/workflows/ci.yml"
+  rm -f "${fixture}/.github/workflows/ci.yml.bak"
+  expect_fixture_failure "a reporting job renamed away from its declaration fails" \
+    "has no job named release-security-gates" "${fixture}"
+
+  # 6. A job that reports a different context name than the ruleset requires.
+  fixture="$(new_fixture renamed-context)"
+  sed -i.bak 's|^    name: Release/security gates$|    name: Release security gates|' \
+    "${fixture}/.github/workflows/ci.yml"
+  rm -f "${fixture}/.github/workflows/ci.yml.bak"
+  expect_fixture_failure "a job that reports a different context name fails" \
+    "does not report context Release/security gates" "${fixture}"
+
+  # 6b. Prefix `!` binds tighter than `==`, so `!github.event_name ==
+  #     'pull_request'` is `(!github.event_name) == 'pull_request'`: false for a
+  #     review event. A guard that parses it as `not(x == y)` accepts a job that
+  #     never runs on the code-owner review.
+  fixture="$(new_fixture negated-event-name)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PYEOF'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+# Replace only the event-name parenthesis so the rest of the condition still
+# reads the reviewed pull request; the rejection must come from the precedence.
+pattern = re.compile(
+    r"(?m)^(?P<indent>[ \t]+)if: \(github\.event_name == 'pull_request' \|\| github\.event_name == 'pull_request_review'\)"
+    r"(?= && .*(?:base\.ref == 'premain'|base\.ref == 'main').*$)"
+)
+replaced, count = pattern.subn(
+    lambda match: f"{match.group('indent')}if: !github.event_name == 'pull_request'",
+    text,
+)
+if count < 1:
+    raise SystemExit(f"expected a generated-release job condition, replaced {count}")
+path.write_text(replaced, encoding="utf-8")
+PYEOF
+  expect_fixture_failure "a prefix-negated event name is not read as a whole comparison" \
+    "cannot report on the code-owner review" "${fixture}"
+
+  # 7. A reporting job that stops reading the reviewed pull request: on a review
+  #    run GITHUB_BASE_REF/GITHUB_HEAD_REF are unset, so the job has nothing to
+  #    validate.
+  fixture="$(new_fixture job-without-review-payload)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+block = re.search(r"(?ms)^  release-security-gates:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", text)
+assert block, "fixture is missing the release-security-gates job"
+mutation = block.group("block").replace("github.event.pull_request.", "github.event.base_ref.")
+path.write_text(text.replace(block.group("block"), mutation, 1), encoding="utf-8")
+PY
+  expect_fixture_failure "a reporting job without the reviewed pull request fails" \
+    "does not read the reviewed pull request" "${fixture}"
+
+  # 7b. The release-delta smoke gated only on `pull_request`. A generated release
+  #     pull request is created and updated with the built-in token, so its
+  #     `pull_request` events never start a run; without the review branch the
+  #     declared context can never report while the declaration and docs still
+  #     claim it does.
+  fixture="$(new_fixture release-delta-without-review-branch)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+review = "(github.event_name == 'pull_request' || github.event_name == 'pull_request_review')"
+assert review in text, "fixture is missing the release-delta review branch"
+path.write_text(text.replace(review, "github.event_name == 'pull_request'", 1), encoding="utf-8")
+PY
+  expect_fixture_failure "a release-delta job gated only on pull_request fails" \
+    "cannot report on the code-owner review of a generated release PR" "${fixture}"
+
+  # 8. A dispatch-only path creeping back into a reporting job.
+  fixture="$(new_fixture job-with-dispatch-path)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = text.replace(
+    "      - name: Verify versions match VERSION\n",
+    "      - name: Bind a dispatched run\n        if: github.event_name == 'workflow_dispatch'\n        run: echo dispatch\n      - name: Verify versions match VERSION\n",
+    1,
+)
+path.write_text(text, encoding="utf-8")
+PY
+  expect_fixture_failure "a reporting job with a dispatch-only path fails" \
+    "carries a dispatch-only path" "${fixture}"
+
+  # 9. A producer that starts dispatching the verifying workflow again.
+  fixture="$(new_fixture producer-dispatches)"
+  printf '\n# lane fallback\n# run: gh workflow run ci.yml\n' >>"${fixture}/.github/workflows/release-pr.yml"
+  expect_fixture_failure "a producer that dispatches fails" \
+    "dispatches the verifying workflow" "${fixture}"
+
+  # 10. A producer that stops handing its draft to the code-owner review.
+  fixture="$(new_fixture producer-without-ready)"
+  python3 - "${fixture}/.github/workflows/prerelease-pr.yml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = text.replace('          gh pr ready "${RELEASE_PR_NUMBER}"\n', "", 1)
+path.write_text(text, encoding="utf-8")
+PY
+  expect_fixture_failure "a producer that never marks its pull request ready fails" \
+    "does not hand the generated draft pull request to the code-owner review" "${fixture}"
+
+  # 11. A clock reintroduced anywhere in the workflow set.
+  fixture="$(new_fixture scheduled-workflow)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = text.replace(
+    "  pull_request_review:\n",
+    "  schedule:\n    - cron: '*/20 * * * *'\n  pull_request_review:\n",
+    1,
+)
+path.write_text(text, encoding="utf-8")
+PY
+  expect_fixture_failure "a workflow that runs on a clock fails" \
+    "declares an on: schedule trigger" "${fixture}"
+
+  # 12. A credential fallback reintroduced anywhere in the workflow set.
+  fixture="$(new_fixture token-fallback)"
+  printf '\n# fallback for the record\n# token: ${{ secrets.RELEASE_PLEASE_TOKEN }}\n' \
+    >>"${fixture}/.github/workflows/release.yml"
+  expect_fixture_failure "a reintroduced release-please token fails" \
+    "reintroduces the RELEASE_PLEASE_TOKEN identity" "${fixture}"
+
+  fixture="$(new_fixture secret-or-token-fallback)"
+  printf '\n# fallback for the record\n# token: ${{ secrets.SOMETHING || secrets.GITHUB_TOKEN }}\n' \
+    >>"${fixture}/.github/workflows/release.yml"
+  expect_fixture_failure "a secret-to-token fallback fails" \
+    "declares a secret-to-GITHUB_TOKEN fallback" "${fixture}"
+
+  # 13. A declaration losing a generated release pull request.
+  fixture="$(new_fixture declaration-without-producer)"
+  python3 - "${fixture}/.github/release-lane.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data["generatedReleasePullRequests"] = data["generatedReleasePullRequests"][:1]
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+  expect_fixture_failure "a declaration without a producer fails" \
+    "declares required contexts but no generated release pull request produces it" "${fixture}"
+
+  # 14. A script a ruleset-required job runs loses its review branch. The
+  #     trigger is still there, so the workflow starts; the script then fails
+  #     closed after the approval and nothing can clear the ruleset.
   fixture="$(new_fixture script-without-review-branch)"
   python3 - "${fixture}/scripts/verify-release-branch-signatures.sh" <<'PY'
 import sys
@@ -559,9 +872,8 @@ PY
   expect_fixture_failure "a review-run script without a pull_request_review branch fails" \
     "branches on the event name without a pull_request_review branch" "${fixture}"
 
-  # 11d. A ruleset-required script keeps the pull_request-only refs but loses
-  #      the review-event source. The review run then has no base or head ref:
-  #      GITHUB_BASE_REF/GITHUB_HEAD_REF are unset on that event.
+  # 15. A ruleset-required script keeps the pull_request-only refs but loses
+  #     the review-event source.
   fixture="$(new_fixture script-without-review-ref-source)"
   python3 - "${fixture}/scripts/verify-branch-version-sync.sh" <<'PY'
 import sys
@@ -576,9 +888,9 @@ PY
   expect_fixture_failure "a review-run script reading only the pull_request refs fails" \
     "without a review-event source" "${fixture}"
 
-  # 11e. A ruleset-required script that skips on a branch it cannot derive. A
-  #      review run reaches that skip on `refs/pull/<n>/merge`, so the required
-  #      context would report success without checking anything.
+  # 16. A ruleset-required script that skips on a branch it cannot derive. A
+  #     review run reaches that skip on `refs/pull/<n>/merge`, so the required
+  #     context would report success without checking anything.
   fixture="$(new_fixture script-that-skips-on-review)"
   python3 - "${fixture}/scripts/verify-branch-version-sync.sh" <<'PY'
 import sys
@@ -592,91 +904,6 @@ path.write_text(text, encoding="utf-8")
 PY
   expect_fixture_failure "a review-run script that skips an underivable branch fails" \
     "skips when it cannot derive its branch" "${fixture}"
-
-  # 12. The head-binding resolver itself. A stub `gh` answers the pull request
-  #     read, so every hostile answer runs through the real validation.
-  local resolver="${root}/scripts/resolve-release-pr-head.sh"
-  local stub_dir="${scratch}/stub"
-  mkdir -p "${stub_dir}"
-  cat >"${stub_dir}/gh" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "${GH_STUB_PAYLOAD}"
-STUB
-  chmod +x "${stub_dir}/gh"
-
-  resolver_case() {
-    local label="$1"
-    local expected="$2"
-    local expect_success="$3"
-    local payload="$4"
-    local pr="$5"
-    local ref_name="$6"
-    local ref_sha="$7"
-    local output
-    cases=$((cases + 1))
-    local -a args=(--repo theory-cloud/AppTheory --pr "${pr}" --ref-name "${ref_name}" --ref-sha "${ref_sha}")
-    output="$(GH_BIN="${stub_dir}/gh" GH_STUB_PAYLOAD="${payload}" \
-      bash "${resolver}" "${args[@]}" 2>&1)" && status=0 || status=$?
-    if [[ "${expect_success}" == "true" ]]; then
-      if [[ "${status}" -ne 0 ]] || ! grep -Fq -- "${expected}" <<<"${output}"; then
-        echo "release-pr-check-lane self-test: FAIL (${label})" >&2
-        printf '%s\n' "${output}" >&2
-        exit 1
-      fi
-    else
-      if [[ "${status}" -eq 0 ]] || ! grep -Fq -- "${expected}" <<<"${output}"; then
-        echo "release-pr-check-lane self-test: FAIL (${label})" >&2
-        printf '%s\n' "${output}" >&2
-        exit 1
-      fi
-    fi
-    echo "release-pr-check-lane self-test: PASS ${label}"
-  }
-
-  local sha_head sha_other
-  sha_head="1111111111111111111111111111111111111111"
-  sha_other="2222222222222222222222222222222222222222"
-
-  payload() {
-    local state="$1"
-    local base="$2"
-    local head_repo="$3"
-    local head_ref="$4"
-    local head_sha="$5"
-    local number="$6"
-    local title="$7"
-    printf '{"number": %s, "state": "%s", "title": "%s", "merged": false, "base": {"ref": "%s", "sha": "3333333333333333333333333333333333333333", "repo": {"full_name": "theory-cloud/AppTheory"}}, "head": {"ref": "%s", "sha": "%s", "repo": {"full_name": "%s"}}}' \
-      "${number}" "${state}" "${title}" "${base}" "${head_ref}" "${head_sha}" "${head_repo}"
-  }
-
-  resolver_case "the resolver accepts the exact pull request head" \
-    "head_sha=${sha_head}" true \
-    "$(payload open premain theory-cloud/AppTheory release-please--branches--premain "${sha_head}" 1296 "fix(premain): release 7.4.0-rc")" \
-    1296 release-please--branches--premain "${sha_head}"
-  resolver_case "the resolver refuses a moved head" \
-    "!= generated release PR head" false \
-    "$(payload open premain theory-cloud/AppTheory release-please--branches--premain "${sha_other}" 1296 "fix(premain): release 7.4.0-rc")" \
-    1296 release-please--branches--premain "${sha_head}"
-  resolver_case "the resolver refuses a closed pull request" \
-    "is closed, not open" false \
-    "$(payload closed premain theory-cloud/AppTheory release-please--branches--premain "${sha_head}" 1296 "fix(premain): release 7.4.0-rc")" \
-    1296 release-please--branches--premain "${sha_head}"
-  resolver_case "the resolver refuses a foreign head repository" \
-    "head repository" false \
-    "$(payload open premain someone/AppTheory release-please--branches--premain "${sha_head}" 1296 "fix(premain): release 7.4.0-rc")" \
-    1296 release-please--branches--premain "${sha_head}"
-  resolver_case "the resolver refuses a non-release base" \
-    "not a release branch" false \
-    "$(payload open staging theory-cloud/AppTheory release-please--branches--premain "${sha_head}" 1296 "fix(premain): release 7.4.0-rc")" \
-    1296 release-please--branches--premain "${sha_head}"
-  resolver_case "the resolver refuses a different head branch" \
-    "!= generated release PR head" false \
-    "$(payload open premain theory-cloud/AppTheory release-please--branches--main "${sha_head}" 1296 "fix(premain): release 7.4.0-rc")" \
-    1296 release-please--branches--premain "${sha_head}"
-  resolver_case "the resolver refuses a non-numeric pull request" \
-    "must be numeric" false \
-    "$(payload open premain theory-cloud/AppTheory release-please--branches--premain "${sha_head}" 1296 "fix(premain): release 7.4.0-rc")" \
-    release-please release-please--branches--premain "${sha_head}"
 
   echo "release-pr-check-lane self-test: PASS (${cases} cases)"
 }

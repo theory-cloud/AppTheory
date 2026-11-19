@@ -8,6 +8,11 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { retentionFor, webSocketApiAccessLogFormat } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
+
 export interface AppTheoryWebSocketApiProps {
   readonly handler: lambda.IFunction;
   readonly connectHandler?: lambda.IFunction;
@@ -30,6 +35,27 @@ export interface AppTheoryWebSocketApiProps {
   readonly accessLogRetention?: logs.RetentionDays;
   readonly accessLogRemovalPolicy?: RemovalPolicy;
   readonly accessLogFormat?: apigateway.AccessLogFormat;
+
+  /**
+   * Optional naming and logging context.
+   *
+   * With the standard logging profile access logging is on by default to a log
+   * group named `logs/access/api/{logicalName}` carrying the contract's JSON
+   * field set. Pass `enableAccessLogging: false` to opt out.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The API's logical name. Defaults to the kebab-cased construct id when a
+   * naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
 }
 
 export class AppTheoryWebSocketApi extends Construct {
@@ -42,12 +68,25 @@ export class AppTheoryWebSocketApi extends Construct {
     super(scope, id);
 
     const stageName = String(props.stageName ?? "dev").trim() || "dev";
+    const standard = props.namingContext?.standardLogging === true;
+    const namingContext = props.namingContext;
+    const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    refuseExplicitName(namingContext, "AppTheoryWebSocketApi", "apiName", "api_websocket", logical, props.apiName !== undefined);
+    refuseExplicitName(
+      namingContext,
+      "AppTheoryWebSocketApi",
+      "connectionTableName",
+      "dynamodb_table",
+      logical ? `${logical}-connections` : undefined,
+      props.connectionTableName !== undefined,
+    );
+    const derivedApiName = namingContext && logical ? namingContext.physicalName("api_websocket", logical) : undefined;
     const connectHandler = props.connectHandler ?? props.handler;
     const disconnectHandler = props.disconnectHandler ?? props.handler;
     const defaultHandler = props.defaultHandler ?? props.handler;
 
     this.api = new apigwv2.WebSocketApi(this, "Api", {
-      apiName: props.apiName,
+      apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
     });
 
     const useRouteSpecificHandlers =
@@ -82,6 +121,9 @@ export class AppTheoryWebSocketApi extends Construct {
     if (props.connectionTable) {
       this.connectionTable = props.connectionTable;
     } else if (shouldCreateConnectionTable) {
+      const derivedTableName = namingContext && logical
+        ? namingContext.physicalName("dynamodb_table", `${logical}-connections`)
+        : undefined;
       const pkName = props.connectionTablePartitionKeyName ?? "PK";
       const skName = props.connectionTableSortKeyName ?? "SK";
       const ttlAttribute = props.connectionTableTimeToLiveAttribute ?? "ttl";
@@ -89,7 +131,7 @@ export class AppTheoryWebSocketApi extends Construct {
       const enablePITR = props.connectionTableEnablePointInTimeRecovery ?? true;
 
       this.connectionTable = new dynamodb.Table(this, "ConnectionTable", {
-        tableName: props.connectionTableName,
+        tableName: derivedTableName && !derivedTableName.generated ? derivedTableName.name : props.connectionTableName,
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
         partitionKey: { name: pkName, type: dynamodb.AttributeType.STRING },
         sortKey: { name: skName, type: dynamodb.AttributeType.STRING },
@@ -110,13 +152,26 @@ export class AppTheoryWebSocketApi extends Construct {
     }
 
     let accessLogSettings: apigwv2.IAccessLogSettings | undefined;
-    if (props.enableAccessLogging ?? false) {
+    if (props.enableAccessLogging ?? standard) {
+      if (standard && !props.accessLogGroup && !logical) {
+        throw new Error("AppTheoryWebSocketApi standard logging requires a logical name");
+      }
       const logGroup =
         props.accessLogGroup ??
-        new logs.LogGroup(this, "AccessLogs", {
-          retention: props.accessLogRetention ?? logs.RetentionDays.ONE_WEEK,
-          removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
-        });
+        new logs.LogGroup(this, "AccessLogs",
+          // The construct-created access-log group is a logging resource: the
+          // standard profile names it from the contract, and the legacy profile
+          // keeps today's CloudFormation-generated name and consumes no entry.
+          standard && namingContext && logical
+          ? {
+              logGroupName: namingContext.logGroupName(`logs/access/api/${logical}`),
+              retention: retentionFor(namingContext.retentionDays),
+              removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
+            }
+          : {
+              retention: props.accessLogRetention ?? logs.RetentionDays.ONE_WEEK,
+              removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
+            });
       this.accessLogGroup = logGroup;
 
       logGroup.addToResourcePolicy(
@@ -129,20 +184,22 @@ export class AppTheoryWebSocketApi extends Construct {
 
       const format =
         props.accessLogFormat ??
-        apigateway.AccessLogFormat.custom(
-          JSON.stringify({
-            requestId: apigateway.AccessLogField.contextRequestId(),
-            eventType: apigateway.AccessLogField.contextEventType(),
-            routeKey: apigateway.AccessLogField.contextRouteKey(),
-            connectionId: apigateway.AccessLogField.contextConnectionId(),
-            status: apigateway.AccessLogField.contextStatus(),
-            responseLength: apigateway.AccessLogField.contextResponseLength(),
-            integrationLatency: apigateway.AccessLogField.contextIntegrationLatency(),
-            requestTime: apigateway.AccessLogField.contextRequestTime(),
-            ip: apigateway.AccessLogField.contextIdentitySourceIp(),
-            userAgent: apigateway.AccessLogField.contextIdentityUserAgent(),
-          }),
-        );
+        (standard
+          ? apigateway.AccessLogFormat.custom(webSocketApiAccessLogFormat())
+          : apigateway.AccessLogFormat.custom(
+              JSON.stringify({
+                requestId: apigateway.AccessLogField.contextRequestId(),
+                eventType: apigateway.AccessLogField.contextEventType(),
+                routeKey: apigateway.AccessLogField.contextRouteKey(),
+                connectionId: apigateway.AccessLogField.contextConnectionId(),
+                status: apigateway.AccessLogField.contextStatus(),
+                responseLength: apigateway.AccessLogField.contextResponseLength(),
+                integrationLatency: apigateway.AccessLogField.contextIntegrationLatency(),
+                requestTime: apigateway.AccessLogField.contextRequestTime(),
+                ip: apigateway.AccessLogField.contextIdentitySourceIp(),
+                userAgent: apigateway.AccessLogField.contextIdentityUserAgent(),
+              }),
+            ));
 
       accessLogSettings = {
         destination: new apigwv2.LogGroupLogDestination(logGroup),

@@ -1,0 +1,78 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "compile-grants-describe-log-groups",
+  "scenario": {
+    "type": "compile",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "lab",
+      "account": "998115851393",
+      "region": "us-east-1"
+    },
+    "rules": {
+      "include": [
+        "logs/runtime/*"
+      ],
+      "exclude": [
+        "logs/runtime/debug/*"
+      ]
+    }
+  },
+  "expected": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadManifest",
+        "Effect": "Allow",
+        "Action": [
+          "ssm:GetParameter"
+        ],
+        "Resource": [
+          "arn:aws:ssm:us-east-1:998115851393:parameter/theorycloud/visibility/autheory/lab/manifest"
+        ]
+      },
+      {
+        "Sid": "ReadIncluded",
+        "Effect": "Allow",
+        "Action": [
+          "logs:FilterLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:GetLogEvents"
+        ],
+        "Resource": [
+          "arn:aws:logs:us-east-1:998115851393:log-group:theorycloud_theorycloud_autheory_lab_logs_runtime_*"
+        ]
+      },
+      {
+        "Sid": "DenyExcluded",
+        "Effect": "Deny",
+        "Action": [
+          "logs:FilterLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:GetLogEvents"
+        ],
+        "Resource": [
+          "arn:aws:logs:us-east-1:998115851393:log-group:theorycloud_theorycloud_autheory_lab_logs_runtime_debug_*"
+        ]
+      },
+      {
+        "Sid": "List",
+        "Effect": "Allow",
+        "Action": [
+          "logs:DescribeLogGroups"
+        ],
+        "Resource": [
+          "*"
+        ]
+      }
+    ]
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

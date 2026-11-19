@@ -300,9 +300,9 @@ func TestGuardRejectsUnmodeledTriggerFilters(t *testing.T) {
 		"pull_request branches filter with an empty list": strings.Replace(baseWorkflow,
 			"    branches: [staging, premain, main]\n",
 			"    branches: []\n", 1),
-		"unknown trigger":                     strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  repository_dispatch:\n  workflow_dispatch:\n", 1),
-		"schedule outside the recovery sweep": strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
-		"missing synchronize":                 strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
+		"unknown trigger":     strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  repository_dispatch:\n  workflow_dispatch:\n", 1),
+		"schedule trigger":    strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
+		"missing synchronize": strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
 		"push branches that omit a protected branch": strings.Replace(baseWorkflow,
 			"  workflow_dispatch:\n", "  push:\n    branches: [staging, premain]\n  workflow_dispatch:\n", 1),
 	}
@@ -496,30 +496,34 @@ func TestGuardRejectsUnmodeledReviewActivity(t *testing.T) {
 	}
 }
 
-// TestGuardRejectsScheduleOutsideTheRecoverySweep pins the one clock-driven
-// exception: a gated workflow that also runs on a cron would execute work on a
-// clock the policy does not model, so only the release-lane recovery sweep may
-// declare a schedule.
-func TestGuardRejectsScheduleOutsideTheRecoverySweep(t *testing.T) {
+// TestGuardRejectsScheduleTrigger pins the no-clock rule: a gated workflow that
+// also runs on a cron would execute work on a cadence no pull request asked for,
+// and the release-lane recovery sweep that used to be the one exception is gone.
+func TestGuardRejectsScheduleTrigger(t *testing.T) {
 	text := strings.Replace(baseWorkflow, "  workflow_dispatch:\n",
 		"  schedule:\n    - cron: '*/20 * * * *'\n  workflow_dispatch:\n", 1)
-	mustFailWith(t, text, "only the release-lane recovery sweep")
+	mustFailWith(t, text, "not modeled by the parity classifier")
 }
 
-// TestGuardAcceptsRecoverySweepSchedule proves the sweep exemption is what the
-// real tree relies on: the recorded exemption accepts its own schedule trigger.
-func TestGuardAcceptsRecoverySweepSchedule(t *testing.T) {
-	exemption, ok := findPublisherExemption(sweepWorkflowPath)
+// TestGuardRejectsScheduledPublisher keeps the exemption set clock-free too: no
+// non-gating publisher may run on a schedule.
+func TestGuardRejectsScheduledPublisher(t *testing.T) {
+	root := t.TempDir()
+	rel := ".github/workflows/pages.yml"
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	published := "name: pages\non:\n  push:\n    branches: [staging]\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+	if err := os.WriteFile(path, []byte(published), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	exemption, ok := findPublisherExemption(rel)
 	if !ok {
-		t.Fatalf("%s must be a recorded publisher exemption", sweepWorkflowPath)
+		t.Fatalf("%s must be a recorded publisher exemption", rel)
 	}
-	if !exemption.allowSchedule {
-		t.Fatal("the recovery sweep exemption must permit a schedule trigger")
-	}
-	root := filepath.Join("..", "..")
-	full := filepath.Join(root, filepath.FromSlash(sweepWorkflowPath))
-	if err := checkPublisherWorkflow(full, sweepWorkflowPath, exemption); err != nil {
-		t.Fatalf("the recovery sweep must pass its own exemption: %v", err)
+	if err := checkPublisherWorkflow(path, rel, exemption); err == nil || !strings.Contains(err.Error(), "not modeled for a non-gating publisher exemption") {
+		t.Fatalf("a scheduled publisher exemption must fail closed, got: %v", err)
 	}
 }
 

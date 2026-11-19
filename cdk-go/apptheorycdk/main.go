@@ -59,6 +59,25 @@ func init() {
 		reflect.TypeOf((*AppTheoryAppProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryBucket",
+		reflect.TypeOf((*AppTheoryBucket)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "bucket", GoGetter: "Bucket"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryBucket{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryBucketProps",
+		reflect.TypeOf((*AppTheoryBucketProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryCertificate",
 		reflect.TypeOf((*AppTheoryCertificate)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -81,6 +100,14 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryChallengeAliasBridgeOptions",
 		reflect.TypeOf((*AppTheoryChallengeAliasBridgeOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryCloudFrontLogFormat",
+		reflect.TypeOf((*AppTheoryCloudFrontLogFormat)(nil)).Elem(),
+		map[string]interface{}{
+			"JSON": AppTheoryCloudFrontLogFormat_JSON,
+			"W3C":  AppTheoryCloudFrontLogFormat_W3C,
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination",
@@ -519,6 +546,36 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryJobsTableProps",
 		reflect.TypeOf((*AppTheoryJobsTableProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryKeeperAnswer",
+		reflect.TypeOf((*AppTheoryKeeperAnswer)(nil)).Elem(),
+		map[string]interface{}{
+			"EVENTS":            AppTheoryKeeperAnswer_EVENTS,
+			"ALLOWED_NO_EVENTS": AppTheoryKeeperAnswer_ALLOWED_NO_EVENTS,
+			"NOT_SHARED":        AppTheoryKeeperAnswer_NOT_SHARED,
+		},
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryKeeperVisibility",
+		reflect.TypeOf((*AppTheoryKeeperVisibility)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "manifestParameter", GoGetter: "ManifestParameter"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "preview", GoMethod: "Preview"},
+			_jsii_.MemberProperty{JsiiProperty: "readerRole", GoGetter: "ReaderRole"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryKeeperVisibility{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryKeeperVisibilityProps",
+		reflect.TypeOf((*AppTheoryKeeperVisibilityProps)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryKinesisStream",
 		reflect.TypeOf((*AppTheoryKinesisStream)(nil)).Elem(),
@@ -616,6 +673,14 @@ func init() {
 			"ALL_AT_ONCE": AppTheoryLambdaTrafficShiftType_ALL_AT_ONCE,
 			"CANARY":      AppTheoryLambdaTrafficShiftType_CANARY,
 			"LINEAR":      AppTheoryLambdaTrafficShiftType_LINEAR,
+		},
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryLoggingProfile",
+		reflect.TypeOf((*AppTheoryLoggingProfile)(nil)).Elem(),
+		map[string]interface{}{
+			"STANDARD": AppTheoryLoggingProfile_STANDARD,
+			"LEGACY":   AppTheoryLoggingProfile_LEGACY,
 		},
 	)
 	_jsii_.RegisterStruct(
@@ -1021,6 +1086,51 @@ func init() {
 		reflect.TypeOf((*AppTheoryMicrovmRuntimeHooks)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryNamingContext",
+		reflect.TypeOf((*AppTheoryNamingContext)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "account", GoGetter: "Account"},
+			_jsii_.MemberProperty{JsiiProperty: "app", GoGetter: "App"},
+			_jsii_.MemberProperty{JsiiProperty: "generated", GoGetter: "Generated"},
+			_jsii_.MemberProperty{JsiiProperty: "loggingProfile", GoGetter: "LoggingProfile"},
+			_jsii_.MemberMethod{JsiiMethod: "logGroupName", GoMethod: "LogGroupName"},
+			_jsii_.MemberMethod{JsiiMethod: "logSourcePrefix", GoMethod: "LogSourcePrefix"},
+			_jsii_.MemberProperty{JsiiProperty: "namespace", GoGetter: "Namespace"},
+			_jsii_.MemberProperty{JsiiProperty: "namingProfile", GoGetter: "NamingProfile"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "physicalName", GoMethod: "PhysicalName"},
+			_jsii_.MemberProperty{JsiiProperty: "pins", GoGetter: "Pins"},
+			_jsii_.MemberProperty{JsiiProperty: "region", GoGetter: "Region"},
+			_jsii_.MemberProperty{JsiiProperty: "retentionDays", GoGetter: "RetentionDays"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
+			_jsii_.MemberProperty{JsiiProperty: "standardLogging", GoGetter: "StandardLogging"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "values", GoMethod: "Values"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryNamingContext{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryNamingContextProps",
+		reflect.TypeOf((*AppTheoryNamingContextProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryNamingContextValues",
+		reflect.TypeOf((*AppTheoryNamingContextValues)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryNamingProfile",
+		reflect.TypeOf((*AppTheoryNamingProfile)(nil)).Elem(),
+		map[string]interface{}{
+			"DERIVED": AppTheoryNamingProfile_DERIVED,
+			"LEGACY":  AppTheoryNamingProfile_LEGACY,
+		},
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryObservability",
 		reflect.TypeOf((*AppTheoryObservability)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -1065,6 +1175,10 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps",
 		reflect.TypeOf((*AppTheoryPathRoutedFrontendProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryPhysicalName",
+		reflect.TypeOf((*AppTheoryPhysicalName)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryQueue",
@@ -1168,6 +1282,14 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryRequestMetricDimensions",
 		reflect.TypeOf((*AppTheoryRequestMetricDimensions)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		reflect.TypeOf((*AppTheoryResourceNaming)(nil)).Elem(),
+		nil, // no members
+		func() interface{} {
+			return &jsiiProxy_AppTheoryResourceNaming{}
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApi",
@@ -1413,6 +1535,26 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryVectorIndexProps",
 		reflect.TypeOf((*AppTheoryVectorIndexProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryVisibilityManifest",
+		reflect.TypeOf((*AppTheoryVisibilityManifest)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryVisibilityManifestTier",
+		reflect.TypeOf((*AppTheoryVisibilityManifestTier)(nil)).Elem(),
+		map[string]interface{}{
+			"STANDARD": AppTheoryVisibilityManifestTier_STANDARD,
+			"ADVANCED": AppTheoryVisibilityManifestTier_ADVANCED,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryVisibilityPreview",
+		reflect.TypeOf((*AppTheoryVisibilityPreview)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryVisibilityRules",
+		reflect.TypeOf((*AppTheoryVisibilityRules)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryVpcEndpointConfig",
