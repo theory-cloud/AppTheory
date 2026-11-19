@@ -309,11 +309,24 @@ class _ConditionParser:
         return node
 
     def parse_and(self) -> tuple:
-        node = self.parse_unary()
+        node = self.parse_comparison()
         while self.peek() == ("op", "&&"):
             self.take()
-            node = ("and", node, self.parse_unary())
+            node = ("and", node, self.parse_comparison())
         return node
+
+    # GitHub binds `!` tighter than `==` and `!=`, so `!x == y` is `(!x) == y`.
+    # Comparison therefore sits above unary negation in the grammar; otherwise a
+    # condition like `!github.event_name == 'pull_request'` would parse as
+    # `not(x == y)` and wrongly admit a job that never runs.
+    def parse_comparison(self) -> tuple:
+        left = self.parse_unary()
+        if self.peek() in (("op", "=="), ("op", "!=")):
+            operator = self.take()[1]
+            return (operator, left, self.parse_unary())
+        if left[0] == "lit":
+            raise ValueError("a literal cannot stand alone as a condition")
+        return left
 
     def parse_unary(self) -> tuple:
         if self.peek() == ("op", "!"):
@@ -329,13 +342,7 @@ class _ConditionParser:
             return node
         if self.peek() is None:
             raise ValueError("unexpected end of expression")
-        left = self.parse_operand()
-        if self.peek() in (("op", "=="), ("op", "!=")):
-            operator = self.take()[1]
-            return (operator, left, self.parse_operand())
-        if left[0] != "ident":
-            raise ValueError("a literal cannot stand alone as a condition")
-        return left
+        return self.parse_operand()
 
     def parse_operand(self) -> tuple:
         token = self.take()
@@ -698,6 +705,33 @@ PY
   rm -f "${fixture}/.github/workflows/ci.yml.bak"
   expect_fixture_failure "a job that reports a different context name fails" \
     "does not report context Release/security gates" "${fixture}"
+
+  # 6b. Prefix `!` binds tighter than `==`, so `!github.event_name ==
+  #     'pull_request'` is `(!github.event_name) == 'pull_request'`: false for a
+  #     review event. A guard that parses it as `not(x == y)` accepts a job that
+  #     never runs on the code-owner review.
+  fixture="$(new_fixture negated-event-name)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PYEOF'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+pattern = re.compile(
+    r"(?m)^(?P<indent>[ \t]+)if: \(github\.event_name == 'pull_request' \|\| github\.event_name == 'pull_request_review'\)"
+    r" && .*release-please--branches--premain.*$"
+)
+replaced, count = pattern.subn(
+    lambda match: f"{match.group('indent')}if: !github.event_name == 'pull_request'",
+    text,
+)
+if count != 1:
+    raise SystemExit(f"expected one generated-release job condition, replaced {count}")
+path.write_text(replaced, encoding="utf-8")
+PYEOF
+  expect_fixture_failure "a prefix-negated event name is not read as a whole comparison" \
+    "cannot report on the code-owner review" "${fixture}"
 
   # 7. A reporting job that stops reading the reviewed pull request: on a review
   #    run GITHUB_BASE_REF/GITHUB_HEAD_REF are unset, so the job has nothing to
