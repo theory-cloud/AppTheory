@@ -221,8 +221,8 @@ elif mode == "add_yaml_smuggling":
     text = text.replace("  release-security-gates:\n", "  release-security-gates: &base\n", 1)
     text = text.rstrip("\n") + "\n  clone:\n    <<: *base\n    runs-on: ubuntu-latest\n"
 elif mode == "add_push_trigger":
-    text = text.replace("  workflow_dispatch:\n",
-                        "  push:\n    branches: [staging, premain, main]\n  workflow_dispatch:\n", 1)
+    text = text.replace("  pull_request:\n",
+                        "  push:\n    branches: [staging, premain, main]\n  pull_request:\n", 1)
 elif mode == "add_pull_request_trigger":
     text = text.replace("  push:\n    branches: [staging]\n",
                         "  push:\n    branches: [staging]\n  pull_request:\n    types: [opened, synchronize]\n", 1)

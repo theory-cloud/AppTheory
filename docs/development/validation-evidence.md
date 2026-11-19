@@ -357,8 +357,8 @@ What a hand edit to `CHANGELOG.md` on a staging pull request does now: it no
 longer stales any record. That is deliberate and bounded. Release notes have no
 runtime, packaging or publication effect; the edit is still visible in the diff
 the reviewer approves; `release-delta` re-reads the generated changelog form
-through `verify-release-generated-messages.sh` on every generated release pull
-request; and version alignment keeps reading both manifests, so a manifest
+through `verify-release-generated-messages.sh` on the code-owner review of every
+generated release pull request; and version alignment keeps reading both manifests, so a manifest
 value that disagrees with `VERSION` still fails the `Version alignment` job.
 The alternative — binding release history to proof — would only add a claim no
 gate makes.
@@ -463,7 +463,13 @@ while a non-version byte inside a packed member, another `.jsii` field, a second
 tarball and a missing tarball each fail closed.
 
 `release-delta` performs the narrow regeneration and packaging smoke once per
-changed generated artifact set. It deliberately does not run the rubric,
+changed generated artifact set. It runs on the code-owner review of a generated
+release pull request, which is the one eligible event a generated release pull
+request can produce: GitHub starts no `pull_request` run for a pull request the
+built-in token creates or updates. For the same reason it sits behind an `if`
+that admits both `pull_request` and `pull_request_review` for a generated head
+into `premain` or `main`; a staging pull request never matches it, so its
+staging behaviour is unchanged. It deliberately does not run the rubric,
 contract corpus, examples harness or language test suites, and it executes on the
 current event rather than reusing a record (its state is the generated artifact
 set itself).
@@ -656,11 +662,11 @@ release operations run only from protected branches.
 | `push-staging` | merge push → staging | every job re-executes on the merged tree | publish side effects only (pages); no gate-class job runs on the merge |
 | `pr-staging-premain` | staging → premain promotion PR | CI product set plus promotion readiness/eligibility | release hygiene only: promotion gate, version alignment, release/security gates and dependency-scan freshness; no product job runs |
 | `push-premain` | promotion merge push → premain | CI product set re-executes, then release-please generates the RC PR | release-please generation and publish only; no gate re-verification |
-| `release-pr-premain` | generated RC release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
+| `release-pr-premain` | generated RC release PR | a dispatched CI run re-executes the product suite on generated artifacts | generated release PR under code-owner review: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
 | `release-merge-premain` | RC merge/publish on premain | CI product set re-executes, then the publisher builds assets again | publish only; the publisher builds real Linux assets once and no gate re-verifies |
 | `pr-premain-main` | premain → main promotion PR | CI product set plus promotion readiness/eligibility | release hygiene only: promotion gate, version alignment and release/security gates; no product job runs |
 | `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | release-please generation and publish only; no gate re-verification |
-| `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
+| `release-pr-main` | generated stable release PR | a dispatched CI run re-executes the product suite on generated artifacts | generated release PR under code-owner review: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
 | `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | publish only; no gate re-verifies |
 | `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | the committed staging records verify the back-merge pull request unchanged for every gate except `security-refresh`: a pure release back-merge changes release-only paths, release history and the two release-derived jsii artifacts only, each projected to what it contributes, and release-only JSON documents are compared after canonical projection; `security-refresh` is always recollected on a back-merge, because its dependency digest binds the raw bytes of its security inputs and a scan record also expires after 24 hours; a product delta still stales its scope and needs the affected gates recollected |
 
@@ -682,14 +688,18 @@ itself is not relaxed: the digest, the scan and the freshness window keep
 failing closed for a stale or widened record.
 
 No gate runs on a push, on a release branch, or at deploy. `ci.yml` declares a
-pull-request trigger scoped to `staging`, `premain` and `main`, plus the release
-dispatch; every job in it is either a staging-pull-request evidence verify, one
-of the recorded fast checks (`release-train-promotion`,
-`release-security-gates`, `version-alignment`), or recorded release hygiene
-(`release-delta`, `security-refresh`, `prerelease-readiness`,
-`staging-release-eligibility`). `cmd/ci-guard` fails closed on anything else,
-including a push trigger, a job no modeled trigger can reach, or a job that
-starts executing a gate command.
+pull-request trigger scoped to `staging`, `premain` and `main`, plus the code-owner
+review (`pull_request_review: [submitted]`) of `premain` and `main` pull requests,
+which is the eligible event that reports a generated release pull request's
+required contexts; there is no dispatch trigger, because GitHub never counts a
+dispatched run toward a required check and no workflow runs on a schedule. Every
+job in it is either a staging-pull-request evidence verify, one of the recorded
+fast checks (`release-train-promotion`, `release-security-gates`,
+`version-alignment`), or recorded release hygiene (`release-delta`,
+`security-refresh`, `prerelease-readiness`, `staging-release-eligibility`).
+`cmd/ci-guard` fails closed on anything else, including a push trigger, a
+schedule trigger, a job no modeled trigger can reach, or a job that starts
+executing a gate command.
 
 The staging required contexts are exactly the checks that report on every
 staging pull request: `Rubric (full gate set)`, `Examples (local harness)`,
@@ -698,7 +708,10 @@ required context is the head-branch check `Release train promotion gate`, which
 keeps its accepted heads (`staging`, and the generated
 `release-please--branches--premain` / `--main` heads); `Version alignment` and
 `Release/security gates` also report there, and `security-refresh` fails a
-promotion whose scan record is older than 24 hours.
+promotion whose scan record is older than 24 hours. The non-required
+`Release delta validation` smoke also reports there, on the code-owner review of
+a generated release pull request, which its job condition admits alongside the
+`pull_request` event.
 
 The lower-floor matrix maps each cell to explicit profiles:
 
@@ -721,8 +734,8 @@ current event, bounded by that event's own accepted base:
 
 - pull request: the base commit (`pull_request.base.sha`) → head;
 - push: the `before` commit → head;
-- dispatched generated release PR: the accepted protected branch it merges into
-  (`origin/premain` or `origin/main`) → the dispatched head;
+- generated release PR under code-owner review: the accepted protected branch it
+  merges into (`origin/premain` or `origin/main`) → the reviewed pull request head;
 - manual audit: an explicit `--range`.
 
 The base must be an ancestor of the head, both endpoints must resolve locally,
