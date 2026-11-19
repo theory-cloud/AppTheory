@@ -734,7 +734,7 @@ test("AppTheory deprecated log props carry jsii deprecation notices pointing at 
   // AppTheory interface itself.
   const functionProps = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryFunctionProps"];
   const ownProps = functionProps.properties.map((property) => property.name).sort();
-  assert.deepEqual(ownProps, ["alias", "roleName"]);
+  assert.deepEqual(ownProps, ["alias", "logicalName", "namingContext", "roleName"]);
   assert.match(functionProps.docs?.remarks ?? "", /deprecated upstream[\s\S]*logGroup/);
 });
 

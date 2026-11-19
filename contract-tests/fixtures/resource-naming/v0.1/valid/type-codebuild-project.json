@@ -1,0 +1,26 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "type-codebuild-project",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "theory-mcp-server",
+      "stage": "lab",
+      "account": "191637461429",
+      "region": "us-east-1"
+    },
+    "resource_type": "codebuild_project",
+    "logical": "runner"
+  },
+  "expected": {
+    "name": "theory-mcp-server-lab-runner"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

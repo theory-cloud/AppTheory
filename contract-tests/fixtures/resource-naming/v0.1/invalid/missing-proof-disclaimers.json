@@ -1,0 +1,24 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "missing-proof-disclaimers",
+  "scenario": {
+    "type": "visible",
+    "rules": {
+      "include": [
+        "logs/runtime/*"
+      ],
+      "exclude": [
+        "logs/runtime/debug/*"
+      ]
+    },
+    "logical": "logs/runtime/api"
+  },
+  "expected": {
+    "visible": true
+  },
+  "proof": {
+    "does_not_prove": [
+      "journey_proof"
+    ]
+  }
+}

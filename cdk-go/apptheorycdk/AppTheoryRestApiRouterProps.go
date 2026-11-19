@@ -61,10 +61,27 @@ type AppTheoryRestApiRouterProps struct {
 	// Default: [REGIONAL].
 	//
 	EndpointTypes *[]awsapigateway.EndpointType `field:"optional" json:"endpointTypes" yaml:"endpointTypes"`
+	// The API's logical name.
+	//
+	// Defaults to the kebab-cased construct id when a
+	// naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
 	// Minimum compression size in bytes.
 	// Default: undefined (no compression).
 	//
 	MinimumCompressionSize *float64 `field:"optional" json:"minimumCompressionSize" yaml:"minimumCompressionSize"`
+	// Optional naming and logging context.
+	//
+	// With the standard logging profile access logging is on by default to a
+	// log group named `logs/access/api/{logicalName}` carrying the contract's
+	// JSON field set. Pass `stage.accessLogging: false` to opt out.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Retain deployment history when deployments change.
 	// Default: false.
 	//

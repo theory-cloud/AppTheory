@@ -7,6 +7,7 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryHttpApiCorsOptions } from "./http-api";
 /** Route-emission model for AppTheoryMcpServer. */
 export declare enum AppTheoryMcpRouteModel {
@@ -570,6 +571,24 @@ export interface AppTheoryMcpServerProps {
     readonly jwksUri?: string;
     /** @deprecated Use `ownedApi.apiName`. */
     readonly apiName?: string;
+    /**
+     * Optional naming and logging context for the owned HTTP API.
+     *
+     * With the standard logging profile the access log group is named
+     * `logs/access/api/{logicalName}` and carries the contract's JSON field set.
+     * Access logging already defaults on; pass `ownedApi.stage.accessLogging:
+     * false` to opt out. Attach mode ignores this prop.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The owned API's logical name. Defaults to the kebab-cased construct id when
+     * a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
     /**
      * @deprecated Use `sessionState.enabled`. Session state now defaults on.
      */

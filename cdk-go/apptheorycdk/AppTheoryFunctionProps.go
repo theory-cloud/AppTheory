@@ -414,6 +414,23 @@ type AppTheoryFunctionProps struct {
 	// Default: undefined.
 	//
 	Alias *AppTheoryFunctionAliasOptions `field:"optional" json:"alias" yaml:"alias"`
+	// The component's logical name, used for the function and runtime log source.
+	//
+	// Defaults to the kebab-cased construct id when a naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
+	// Optional naming and logging context.
+	//
+	// With a derived naming profile the construct names the function from the
+	// contract when `functionName` is omitted. With the standard logging profile
+	// AppTheory creates a log group named `logs/runtime/{logicalName}` with the
+	// context's retention and points Lambda's `LoggingConfig` at it.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Stable physical name for the AppTheory-managed Lambda execution role.
 	//
 	// AppTheory preserves the Lambda L2's policies. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit.

@@ -13,6 +13,9 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
+import { defaultLogicalName } from "./private/logical-name";
+import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 import { buildCorsPreflight } from "./cors";
 import type { AppTheoryHttpApiCorsOptions } from "./http-api";
 import { semanticRouteConstructId } from "./route-ids";
@@ -692,6 +695,26 @@ export interface AppTheoryMcpServerProps {
   readonly apiName?: string;
 
   /**
+   * Optional naming and logging context for the owned HTTP API.
+   *
+   * With the standard logging profile the access log group is named
+   * `logs/access/api/{logicalName}` and carries the contract's JSON field set.
+   * Access logging already defaults on; pass `ownedApi.stage.accessLogging:
+   * false` to opt out. Attach mode ignores this prop.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The owned API's logical name. Defaults to the kebab-cased construct id when
+   * a naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
+
+  /**
    * @deprecated Use `sessionState.enabled`. Session state now defaults on.
    */
   readonly enableSessionTable?: boolean;
@@ -840,8 +863,13 @@ export class AppTheoryMcpServer extends Construct {
     } else {
       const stageOptions = normalizeStageOptions(ownedOptions.stage);
       ownedStageName = stageOptions.stageName;
+      const namingContext = props.namingContext;
+      const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+      const standard = namingContext?.standardLogging === true;
       const api = new apigwv2.HttpApi(this, "Api", {
-        apiName: ownedOptions.apiName,
+        apiName: ownedOptions.apiName ?? (namingContext && logical
+          ? namingContext.physicalName("api_http", logical).name
+          : ownedOptions.apiName),
         corsPreflight: buildCorsPreflight(props.cors),
         createDefaultStage: false,
         disableExecuteApiEndpoint: originReachability === AppTheoryMcpOriginReachability.DISABLED
@@ -869,14 +897,22 @@ export class AppTheoryMcpServer extends Construct {
       ownedStage = stage;
 
       if (stageOptions.accessLogging) {
-        const logGroup = new logs.LogGroup(this, "AccessLogs", {
-          retention: stageOptions.accessLogRetention,
-        });
+        if (standard && !logical) {
+          throw new Error("AppTheoryMcpServer standard logging requires a logical name");
+        }
+        const logGroup = standard && namingContext && logical
+          ? new logs.LogGroup(this, "AccessLogs", {
+              logGroupName: namingContext.logGroupName(`logs/access/api/${logical}`),
+              retention: retentionFor(namingContext.retentionDays),
+            })
+          : new logs.LogGroup(this, "AccessLogs", {
+              retention: stageOptions.accessLogRetention,
+            });
         (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
         const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
         cfnStage.accessLogSettings = {
           destinationArn: logGroup.logGroupArn,
-          format: accessLogFormat(),
+          format: standard ? httpApiAccessLogFormat() : accessLogFormat(),
         };
       }
     }

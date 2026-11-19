@@ -1,0 +1,30 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-selector-bare-logs",
+  "scenario": {
+    "type": "compile",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "lab",
+      "account": "998115851393",
+      "region": "us-east-1"
+    },
+    "rules": {
+      "include": [
+        "logs"
+      ],
+      "exclude": []
+    }
+  },
+  "expected": {
+    "error": "selector logs"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}
