@@ -139,9 +139,10 @@ def s3_account_regional_suffix(context: dict[str, Any]) -> str:
 
 
 def log_source_prefix(context: dict[str, Any]) -> str:
-    return "_".join(
-        [LOG_SOURCE_PREFIX, context.get("namespace", LOG_SOURCE_PREFIX), context["app"], context["stage"]]
-    ) + "_"
+    return (
+        "_".join([LOG_SOURCE_PREFIX, context.get("namespace", LOG_SOURCE_PREFIX), context["app"], context["stage"]])
+        + "_"
+    )
 
 
 def log_group_name(context: dict[str, Any], logical: str) -> str:
@@ -170,34 +171,7 @@ def physical_resource_name(
     if context.get("naming_profile", "derived") == "legacy":
         raise ValueError("legacy naming profile requires a pin for every resource")
 
-    kind = rule["kind"]
-    if kind == "s3ar":
-        suffix = s3_account_regional_suffix(context)
-        budget = rule["max"] - len(suffix)
-        prefix = shorten_resource_name(f"{context['app']}-{context['stage']}-{logical.replace('/', '-')}", budget)
-        out: dict[str, Any] = {
-            "bucket_name_prefix": prefix,
-            "bucket_namespace": "account-regional",
-            "name": prefix + suffix,
-        }
-    elif kind == "dash":
-        out = {"name": shorten_resource_name(f"{context['app']}-{context['stage']}-{logical.replace('/', '-')}", rule["max"])}
-    elif kind == "path":
-        full = f"{rule.get('lead', '')}{context['app']}/{context['stage']}/{logical}"
-        if resource_type == "secret" and _SECRET_TAIL_RE.search(full):
-            raise ValueError("secret name must not end with a hyphen and six characters")
-        if resource_type == "ssm_parameter" and full.count("/") > 15:
-            raise ValueError("ssm hierarchy deeper than 15")
-        if len(full) > rule["max"]:
-            raise ValueError("path name over limit")
-        out = {"name": full}
-    elif kind == "log":
-        name = log_group_name(context, logical)
-        if len(name) > rule["max"]:
-            raise ValueError("log group over limit")
-        out = {"name": name}
-    else:  # pragma: no cover
-        raise ValueError(kind)
+    out = _compose(context, resource_type, logical, rule)
 
     name = out["name"]
     if not re.fullmatch(rule["charset"] + "+", name):
@@ -207,6 +181,46 @@ def physical_resource_name(
     if resource_type in ("s3_bucket", "s3_vector_bucket", "s3_vector_index") and not _S3_EDGES_RE.match(name):
         raise ValueError("s3 start/end")
     return out
+
+
+def _compose(
+    context: dict[str, Any],
+    resource_type: str,
+    logical: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Compose the type-specific form before the shared limits are checked."""
+    kind = rule["kind"]
+    if kind == "s3ar":
+        suffix = s3_account_regional_suffix(context)
+        budget = rule["max"] - len(suffix)
+        prefix = shorten_resource_name(f"{context['app']}-{context['stage']}-{logical.replace('/', '-')}", budget)
+        return {
+            "bucket_name_prefix": prefix,
+            "bucket_namespace": "account-regional",
+            "name": prefix + suffix,
+        }
+    if kind == "dash":
+        return {
+            "name": shorten_resource_name(
+                f"{context['app']}-{context['stage']}-{logical.replace('/', '-')}", rule["max"]
+            )
+        }
+    if kind == "path":
+        full = f"{rule.get('lead', '')}{context['app']}/{context['stage']}/{logical}"
+        if resource_type == "secret" and _SECRET_TAIL_RE.search(full):
+            raise ValueError("secret name must not end with a hyphen and six characters")
+        if resource_type == "ssm_parameter" and full.count("/") > 15:
+            raise ValueError("ssm hierarchy deeper than 15")
+        if len(full) > rule["max"]:
+            raise ValueError("path name over limit")
+        return {"name": full}
+    if kind == "log":
+        name = log_group_name(context, logical)
+        if len(name) > rule["max"]:
+            raise ValueError("log group over limit")
+        return {"name": name}
+    raise ValueError(kind)  # pragma: no cover
 
 
 # ---- visibility (contract sections 5-7) ------------------------------------
@@ -266,7 +280,9 @@ def compile_visibility_policy(context: dict[str, Any], rules: dict[str, Any]) ->
         f"arn:aws:ssm:{context['region']}:{context['account']}:parameter"
         f"/{LOG_SOURCE_PREFIX}/visibility/{context['app']}/{context['stage']}/manifest"
     )
-    statements.append({"Sid": "ReadManifest", "Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": [manifest]})
+    statements.append(
+        {"Sid": "ReadManifest", "Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": [manifest]}
+    )
     if included:
         statements.append({"Sid": "ReadIncluded", "Effect": "Allow", "Action": actions, "Resource": included})
     if excluded:

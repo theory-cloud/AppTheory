@@ -90,6 +90,7 @@ func run(root string) (int, int, []string) {
 }
 
 func checkFile(path string) []string {
+	//nolint:gosec // Fixture files are discovered from the repo-owned fixtures directory.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return []string{err.Error()}
@@ -98,6 +99,16 @@ func checkFile(path string) []string {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		return []string{fmt.Sprintf("parse: %v", err)}
 	}
+	reasons := fixtureReasons(fx)
+	var expected any
+	if err := json.Unmarshal(fx.Expected, &expected); err != nil {
+		return append(reasons, fmt.Sprintf("parse expected: %v", err))
+	}
+	got, gotErr := evaluate(fx.Scenario)
+	return append(reasons, comparisonReasons(got, gotErr, expected)...)
+}
+
+func fixtureReasons(fx fixture) []string {
 	var reasons []string
 	if fx.Contract != contract {
 		reasons = append(reasons, "contract id")
@@ -106,35 +117,31 @@ func checkFile(path string) []string {
 	for _, value := range fx.Proof.DoesNotProve {
 		declared[value] = true
 	}
-	for _, required := range []string{"deployment_proof", "journey_proof", "aws_behaviour_proof"} {
+	for _, required := range []string{"deployment_proof", "journey_proof", "aws_behaviour_proof"} { //nolint:misspell // Fixture field value.
 		if !declared[required] {
 			reasons = append(reasons, "missing proof disclaimer "+required)
 		}
 	}
+	return reasons
+}
 
-	got, gotErr := evaluate(fx.Scenario)
-	var expected any
-	if err := json.Unmarshal(fx.Expected, &expected); err != nil {
-		reasons = append(reasons, fmt.Sprintf("parse expected: %v", err))
-		return reasons
-	}
+func comparisonReasons(got any, gotErr error, expected any) []string {
 	expectsError := false
 	if object, ok := expected.(map[string]any); ok {
 		if message, ok := object["error"]; ok {
 			expectsError = message != nil && message != ""
 		}
 	}
-
-	if gotErr != nil {
-		if !expectsError {
-			reasons = append(reasons, "contract rejects: "+gotErr.Error())
-		}
-	} else if expectsError {
-		reasons = append(reasons, "fixture expects rejection but contract accepts")
-	} else if !reflect.DeepEqual(got, expected) {
-		reasons = append(reasons, fmt.Sprintf("expected %s != required %s", mustJSON(expected), mustJSON(got)))
+	switch {
+	case gotErr != nil && !expectsError:
+		return []string{"contract rejects: " + gotErr.Error()}
+	case gotErr == nil && expectsError:
+		return []string{"fixture expects rejection but contract accepts"}
+	case gotErr == nil && !reflect.DeepEqual(got, expected):
+		return []string{fmt.Sprintf("expected %s != required %s", mustJSON(expected), mustJSON(got))}
+	default:
+		return nil
 	}
-	return reasons
 }
 
 func evaluate(raw json.RawMessage) (any, error) {
@@ -144,36 +151,11 @@ func evaluate(raw json.RawMessage) (any, error) {
 	}
 	switch sc.Type {
 	case "name":
-		pins := sc.Pins
-		if pins == nil {
-			pins = map[string]string{}
-		}
-		composed, err := naming.PhysicalName(*sc.Context, sc.ResourceType, sc.Logical, pins)
-		if err != nil {
-			return nil, err
-		}
-		out := map[string]any{"name": composed.Name}
-		if composed.BucketNamePrefix != "" {
-			out["bucket_name_prefix"] = composed.BucketNamePrefix
-		}
-		if composed.BucketNamespace != "" {
-			out["bucket_namespace"] = composed.BucketNamespace
-		}
-		if composed.Pinned {
-			out["pinned"] = true
-		}
-		return out, nil
+		return evaluateName(sc)
 	case "log_group":
-		if err := naming.ValidateContext(*sc.Context); err != nil {
-			return nil, err
-		}
-		name, err := naming.LogGroupName(*sc.Context, sc.Logical)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"name": name}, nil
+		return evaluateLogGroup(sc)
 	case "compile":
-		policy, err := naming.CompilePolicy(*sc.Context, rulesOf(sc.Rules))
+		policy, err := naming.CompilePolicy(contextOf(sc), rulesOf(sc.Rules))
 		if err != nil {
 			return nil, err
 		}
@@ -203,6 +185,48 @@ func evaluate(raw json.RawMessage) (any, error) {
 	}
 }
 
+func evaluateName(sc scenario) (any, error) {
+	if sc.Context == nil {
+		return nil, fmt.Errorf("name scenario requires a context")
+	}
+	composed, err := naming.PhysicalName(*sc.Context, sc.ResourceType, sc.Logical, sc.Pins)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"name": composed.Name}
+	if composed.BucketNamePrefix != "" {
+		out["bucket_name_prefix"] = composed.BucketNamePrefix
+	}
+	if composed.BucketNamespace != "" {
+		out["bucket_namespace"] = composed.BucketNamespace
+	}
+	if composed.Pinned {
+		out["pinned"] = true
+	}
+	return out, nil
+}
+
+func evaluateLogGroup(sc scenario) (any, error) {
+	if sc.Context == nil {
+		return nil, fmt.Errorf("log_group scenario requires a context")
+	}
+	if err := naming.ValidateContext(*sc.Context); err != nil {
+		return nil, err
+	}
+	name, err := naming.LogGroupName(*sc.Context, sc.Logical)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"name": name}, nil
+}
+
+func contextOf(sc scenario) naming.Context {
+	if sc.Context == nil {
+		return naming.Context{}
+	}
+	return *sc.Context
+}
+
 func rulesOf(rules *naming.Rules) naming.Rules {
 	if rules == nil {
 		return naming.Rules{}
@@ -219,28 +243,7 @@ func toGeneric(value any) any {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return value
 	}
-	return normalizeNumbers(out)
-}
-
-func normalizeNumbers(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, item := range typed {
-			typed[key] = normalizeNumbers(item)
-		}
-		return typed
-	case []any:
-		for index, item := range typed {
-			typed[index] = normalizeNumbers(item)
-		}
-		return typed
-	case int:
-		return float64(typed)
-	case float64:
-		return typed
-	default:
-		return value
-	}
+	return out
 }
 
 func mustJSON(value any) string {

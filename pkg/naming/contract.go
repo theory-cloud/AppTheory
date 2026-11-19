@@ -181,42 +181,9 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 		return ComposedName{}, errors.New("legacy naming profile requires a pin for every resource")
 	}
 
-	var out ComposedName
-	switch rule.Kind {
-	case "s3ar":
-		suffix := S3AccountRegionalSuffix(ctx)
-		budget := rule.Max - len(suffix)
-		prefix := ShortenName(ctx.App+"-"+ctx.Stage+"-"+strings.ReplaceAll(logical, "/", "-"), budget)
-		out = ComposedName{
-			Name:             prefix + suffix,
-			BucketNamePrefix: prefix,
-			BucketNamespace:  "account-regional",
-		}
-	case "dash":
-		out = ComposedName{Name: ShortenName(ctx.App+"-"+ctx.Stage+"-"+strings.ReplaceAll(logical, "/", "-"), rule.Max)}
-	case "path":
-		full := rule.Lead + ctx.App + "/" + ctx.Stage + "/" + logical
-		if resourceType == "secret" && secretTail.MatchString(full) {
-			return ComposedName{}, errors.New("secret name must not end with a hyphen and six characters")
-		}
-		if resourceType == "ssm_parameter" && strings.Count(full, "/") > 15 {
-			return ComposedName{}, errors.New("ssm hierarchy deeper than 15")
-		}
-		if len(full) > rule.Max {
-			return ComposedName{}, errors.New("path name over limit")
-		}
-		out = ComposedName{Name: full}
-	case "log":
-		name, err := LogGroupName(ctx, logical)
-		if err != nil {
-			return ComposedName{}, err
-		}
-		if len(name) > rule.Max {
-			return ComposedName{}, errors.New("log group over limit")
-		}
-		out = ComposedName{Name: name}
-	default:
-		return ComposedName{}, fmt.Errorf("unsupported kind %s", rule.Kind)
+	out, err := composeName(ctx, resourceType, logical, rule)
+	if err != nil {
+		return ComposedName{}, err
 	}
 
 	if !regexp.MustCompile(rule.Charset + "+").MatchString(out.Name) {
@@ -231,6 +198,45 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 		}
 	}
 	return out, nil
+}
+
+func composeName(ctx Context, resourceType, logical string, rule ResourceRule) (ComposedName, error) {
+	switch rule.Kind {
+	case "s3ar":
+		suffix := S3AccountRegionalSuffix(ctx)
+		budget := rule.Max - len(suffix)
+		prefix := ShortenName(ctx.App+"-"+ctx.Stage+"-"+strings.ReplaceAll(logical, "/", "-"), budget)
+		return ComposedName{
+			Name:             prefix + suffix,
+			BucketNamePrefix: prefix,
+			BucketNamespace:  "account-regional",
+		}, nil
+	case "dash":
+		return ComposedName{Name: ShortenName(ctx.App+"-"+ctx.Stage+"-"+strings.ReplaceAll(logical, "/", "-"), rule.Max)}, nil
+	case "path":
+		full := rule.Lead + ctx.App + "/" + ctx.Stage + "/" + logical
+		if resourceType == "secret" && secretTail.MatchString(full) {
+			return ComposedName{}, errors.New("secret name must not end with a hyphen and six characters")
+		}
+		if resourceType == "ssm_parameter" && strings.Count(full, "/") > 15 {
+			return ComposedName{}, errors.New("ssm hierarchy deeper than 15")
+		}
+		if len(full) > rule.Max {
+			return ComposedName{}, errors.New("path name over limit")
+		}
+		return ComposedName{Name: full}, nil
+	case "log":
+		name, err := LogGroupName(ctx, logical)
+		if err != nil {
+			return ComposedName{}, err
+		}
+		if len(name) > rule.Max {
+			return ComposedName{}, errors.New("log group over limit")
+		}
+		return ComposedName{Name: name}, nil
+	default:
+		return ComposedName{}, fmt.Errorf("unsupported kind %s", rule.Kind)
+	}
 }
 
 // ---- visibility (contract sections 5-7) -----------------------------------

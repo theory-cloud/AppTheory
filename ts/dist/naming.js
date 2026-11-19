@@ -76,8 +76,18 @@ export const RESOURCE_NAME_RULES = {
     sqs_queue: { kind: "dash", max: 80, charset: "[A-Za-z0-9_-]" },
     sns_topic: { kind: "dash", max: 256, charset: "[A-Za-z0-9_-]" },
     secret: { kind: "path", max: 512, charset: "[A-Za-z0-9/_+=.@-]" },
-    ssm_parameter: { kind: "path", max: 900, charset: "[A-Za-z0-9_./-]", lead: "/" },
-    kms_alias: { kind: "path", max: 256, charset: "[A-Za-z0-9/_-]", lead: "alias/" },
+    ssm_parameter: {
+        kind: "path",
+        max: 900,
+        charset: "[A-Za-z0-9_./-]",
+        lead: "/",
+    },
+    kms_alias: {
+        kind: "path",
+        max: 256,
+        charset: "[A-Za-z0-9/_-]",
+        lead: "alias/",
+    },
     event_bus: { kind: "dash", max: 256, charset: "[A-Za-z0-9._-]" },
     event_rule: { kind: "dash", max: 64, charset: "[A-Za-z0-9._-]" },
     schedule: { kind: "dash", max: 64, charset: "[A-Za-z0-9._-]" },
@@ -94,7 +104,10 @@ export const RESOURCE_NAME_RULES = {
     log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
 };
 /** The only log actions a reader role is granted. */
-export const KEEPER_ACTIONS_GROUP = ["logs:FilterLogEvents", "logs:DescribeLogStreams"];
+export const KEEPER_ACTIONS_GROUP = [
+    "logs:FilterLogEvents",
+    "logs:DescribeLogStreams",
+];
 export const KEEPER_ACTIONS_STREAM = ["logs:GetLogEvents"];
 function fail(message) {
     throw new Error(message);
@@ -147,7 +160,7 @@ export function s3AccountRegionalSuffix(context) {
 }
 /** The bound prefix shared by every log source of the app. */
 export function logSourcePrefix(context) {
-    return [LOG_SOURCE_PREFIX, context.namespace ?? LOG_SOURCE_PREFIX, context.app, context.stage].join("_") + "_";
+    return `${[LOG_SOURCE_PREFIX, context.namespace ?? LOG_SOURCE_PREFIX, context.app, context.stage].join("_")}_`;
 }
 /** Map a logical log source to its physical log-group name. */
 export function logGroupName(context, logical) {
@@ -174,17 +187,24 @@ export function physicalResourceName(context, resourceType, logical, pins = {}) 
         const suffix = s3AccountRegionalSuffix(context);
         const budget = rule.max - suffix.length;
         const prefix = shortenResourceName(`${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`, budget);
-        out = { name: prefix + suffix, bucket_name_prefix: prefix, bucket_namespace: "account-regional" };
+        out = {
+            name: prefix + suffix,
+            bucket_name_prefix: prefix,
+            bucket_namespace: "account-regional",
+        };
     }
     else if (rule.kind === "dash") {
-        out = { name: shortenResourceName(`${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`, rule.max) };
+        out = {
+            name: shortenResourceName(`${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`, rule.max),
+        };
     }
     else if (rule.kind === "path") {
         const full = `${rule.lead ?? ""}${context.app}/${context.stage}/${logical}`;
         if (resourceType === "secret" && SECRET_TAIL_RE.test(full)) {
             fail("secret name must not end with a hyphen and six characters");
         }
-        if (resourceType === "ssm_parameter" && (full.match(/\//g)?.length ?? 0) > 15) {
+        if (resourceType === "ssm_parameter" &&
+            (full.match(/\//g)?.length ?? 0) > 15) {
             fail("ssm hierarchy deeper than 15");
         }
         if (full.length > rule.max)
@@ -204,7 +224,8 @@ export function physicalResourceName(context, resourceType, logical, pins = {}) 
         fail("charset");
     if (out.name.length > rule.max)
         fail("length");
-    if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) && !S3_EDGES_RE.test(out.name)) {
+    if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) &&
+        !S3_EDGES_RE.test(out.name)) {
         fail("s3 start/end");
     }
     return out;
@@ -240,10 +261,10 @@ export function visibilitySelectorArns(context, selector) {
     const base = `arn:aws:logs:${context.region}:${context.account}:log-group:`;
     if (selector.endsWith("/*")) {
         const mapped = selector.slice(0, -1).replace(/\//g, "_");
-        return [base + logSourcePrefix(context) + mapped + "*"];
+        return [`${base}${logSourcePrefix(context)}${mapped}*`];
     }
     const name = logSourcePrefix(context) + selector.replace(/\//g, "_");
-    return [base + name, base + name + ":*"];
+    return [base + name, `${base}${name}:*`];
 }
 /** The first 12 hex characters of SHA-256 over the canonical rules. */
 export function visibilityRuleVersion(rules) {
@@ -269,26 +290,46 @@ export function compileVisibilityPolicy(context, rules) {
     const included = sortedCopy(rules.include).flatMap((selector) => visibilitySelectorArns(context, selector));
     const excluded = sortedCopy(rules.exclude).flatMap((selector) => visibilitySelectorArns(context, selector));
     if (included.length > 0) {
-        statements.push({ Sid: "ReadIncluded", Effect: "Allow", Action: actions, Resource: included });
+        statements.push({
+            Sid: "ReadIncluded",
+            Effect: "Allow",
+            Action: actions,
+            Resource: included,
+        });
     }
     if (excluded.length > 0) {
-        statements.push({ Sid: "DenyExcluded", Effect: "Deny", Action: actions, Resource: excluded });
+        statements.push({
+            Sid: "DenyExcluded",
+            Effect: "Deny",
+            Action: actions,
+            Resource: excluded,
+        });
     }
-    const policy = { Version: "2012-10-17", Statement: statements };
+    const policy = {
+        Version: "2012-10-17",
+        Statement: statements,
+    };
     if (JSON.stringify(policy).length > ROLE_POLICY_MAX)
         fail("compiled policy over role policy size");
     return policy;
 }
 function futureRules(rules) {
-    return { include: sortedCopy(rules.include), exclude: sortedCopy(rules.exclude) };
+    return {
+        include: sortedCopy(rules.include),
+        exclude: sortedCopy(rules.exclude),
+    };
 }
 /** Assemble the synth-time preview. */
 export function visibilityPreview(rules, sources) {
     for (const selector of [...(rules.include ?? []), ...(rules.exclude ?? [])]) {
         validateVisibilitySelector(selector);
     }
-    const matched = sources.filter((source) => sourceVisible(rules, source)).sort();
-    const notMatched = sources.filter((source) => !sourceVisible(rules, source)).sort();
+    const matched = sources
+        .filter((source) => sourceVisible(rules, source))
+        .sort();
+    const notMatched = sources
+        .filter((source) => !sourceVisible(rules, source))
+        .sort();
     return {
         rule_version: visibilityRuleVersion(rules),
         matched_now: matched,

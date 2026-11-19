@@ -131,8 +131,18 @@ export const RESOURCE_NAME_RULES: { [type: string]: ResourceNameRule } = {
   sqs_queue: { kind: "dash", max: 80, charset: "[A-Za-z0-9_-]" },
   sns_topic: { kind: "dash", max: 256, charset: "[A-Za-z0-9_-]" },
   secret: { kind: "path", max: 512, charset: "[A-Za-z0-9/_+=.@-]" },
-  ssm_parameter: { kind: "path", max: 900, charset: "[A-Za-z0-9_./-]", lead: "/" },
-  kms_alias: { kind: "path", max: 256, charset: "[A-Za-z0-9/_-]", lead: "alias/" },
+  ssm_parameter: {
+    kind: "path",
+    max: 900,
+    charset: "[A-Za-z0-9_./-]",
+    lead: "/",
+  },
+  kms_alias: {
+    kind: "path",
+    max: 256,
+    charset: "[A-Za-z0-9/_-]",
+    lead: "alias/",
+  },
   event_bus: { kind: "dash", max: 256, charset: "[A-Za-z0-9._-]" },
   event_rule: { kind: "dash", max: 64, charset: "[A-Za-z0-9._-]" },
   schedule: { kind: "dash", max: 64, charset: "[A-Za-z0-9._-]" },
@@ -158,7 +168,10 @@ export interface ComposedName {
 }
 
 /** The only log actions a reader role is granted. */
-export const KEEPER_ACTIONS_GROUP = ["logs:FilterLogEvents", "logs:DescribeLogStreams"];
+export const KEEPER_ACTIONS_GROUP = [
+  "logs:FilterLogEvents",
+  "logs:DescribeLogStreams",
+];
 export const KEEPER_ACTIONS_STREAM = ["logs:GetLogEvents"];
 
 /** A consumer's include/exclude visibility selectors. */
@@ -215,7 +228,8 @@ export function validateNamingContext(context: NamingContext): void {
   if (!STAGE_RE.test(context.stage)) fail("stage");
   if (!ACCOUNT_RE.test(context.account)) fail("account");
   if (!REGION_RE.test(context.region)) fail("region");
-  if (!NAMESPACE_RE.test(context.namespace ?? LOG_SOURCE_PREFIX)) fail("namespace");
+  if (!NAMESPACE_RE.test(context.namespace ?? LOG_SOURCE_PREFIX))
+    fail("namespace");
 }
 
 function sha256Hex(text: string): string {
@@ -257,7 +271,7 @@ export function s3AccountRegionalSuffix(context: NamingContext): string {
 
 /** The bound prefix shared by every log source of the app. */
 export function logSourcePrefix(context: NamingContext): string {
-  return [LOG_SOURCE_PREFIX, context.namespace ?? LOG_SOURCE_PREFIX, context.app, context.stage].join("_") + "_";
+  return `${[LOG_SOURCE_PREFIX, context.namespace ?? LOG_SOURCE_PREFIX, context.app, context.stage].join("_")}_`;
 }
 
 /** Map a logical log source to its physical log-group name. */
@@ -291,15 +305,27 @@ export function physicalResourceName(
       `${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`,
       budget,
     );
-    out = { name: prefix + suffix, bucket_name_prefix: prefix, bucket_namespace: "account-regional" };
+    out = {
+      name: prefix + suffix,
+      bucket_name_prefix: prefix,
+      bucket_namespace: "account-regional",
+    };
   } else if (rule.kind === "dash") {
-    out = { name: shortenResourceName(`${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`, rule.max) };
+    out = {
+      name: shortenResourceName(
+        `${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`,
+        rule.max,
+      ),
+    };
   } else if (rule.kind === "path") {
     const full = `${rule.lead ?? ""}${context.app}/${context.stage}/${logical}`;
     if (resourceType === "secret" && SECRET_TAIL_RE.test(full)) {
       fail("secret name must not end with a hyphen and six characters");
     }
-    if (resourceType === "ssm_parameter" && (full.match(/\//g)?.length ?? 0) > 15) {
+    if (
+      resourceType === "ssm_parameter" &&
+      (full.match(/\//g)?.length ?? 0) > 15
+    ) {
       fail("ssm hierarchy deeper than 15");
     }
     if (full.length > rule.max) fail("path name over limit");
@@ -314,7 +340,12 @@ export function physicalResourceName(
 
   if (!new RegExp(`^${rule.charset}+$`).test(out.name)) fail("charset");
   if (out.name.length > rule.max) fail("length");
-  if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) && !S3_EDGES_RE.test(out.name)) {
+  if (
+    ["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(
+      resourceType,
+    ) &&
+    !S3_EDGES_RE.test(out.name)
+  ) {
     fail("s3 start/end");
   }
   return out;
@@ -335,27 +366,40 @@ export function validateVisibilitySelector(selector: string): void {
 }
 
 /** Whether a selector matches a logical source. `/*` matches descendants only. */
-export function visibilitySelectorMatches(selector: string, logical: string): boolean {
+export function visibilitySelectorMatches(
+  selector: string,
+  logical: string,
+): boolean {
   if (selector.endsWith("/*")) return logical.startsWith(selector.slice(0, -1));
   return logical === selector;
 }
 
 /** Whether a source is visible: an include matches and no exclude does. */
-export function sourceVisible(rules: VisibilityRules, logical: string): boolean {
-  const included = (rules.include ?? []).some((selector) => visibilitySelectorMatches(selector, logical));
+export function sourceVisible(
+  rules: VisibilityRules,
+  logical: string,
+): boolean {
+  const included = (rules.include ?? []).some((selector) =>
+    visibilitySelectorMatches(selector, logical),
+  );
   if (!included) return false;
-  return !(rules.exclude ?? []).some((selector) => visibilitySelectorMatches(selector, logical));
+  return !(rules.exclude ?? []).some((selector) =>
+    visibilitySelectorMatches(selector, logical),
+  );
 }
 
 /** Expand a selector to the log-group ARNs it covers. */
-export function visibilitySelectorArns(context: NamingContext, selector: string): string[] {
+export function visibilitySelectorArns(
+  context: NamingContext,
+  selector: string,
+): string[] {
   const base = `arn:aws:logs:${context.region}:${context.account}:log-group:`;
   if (selector.endsWith("/*")) {
     const mapped = selector.slice(0, -1).replace(/\//g, "_");
-    return [base + logSourcePrefix(context) + mapped + "*"];
+    return [`${base}${logSourcePrefix(context)}${mapped}*`];
   }
   const name = logSourcePrefix(context) + selector.replace(/\//g, "_");
-  return [base + name, base + name + ":*"];
+  return [base + name, `${base}${name}:*`];
 }
 
 /** The first 12 hex characters of SHA-256 over the canonical rules. */
@@ -365,7 +409,10 @@ export function visibilityRuleVersion(rules: VisibilityRules): string {
 }
 
 /** Compile the rules into the reader-role inline policy. */
-export function compileVisibilityPolicy(context: NamingContext, rules: VisibilityRules): VisibilityPolicy {
+export function compileVisibilityPolicy(
+  context: NamingContext,
+  rules: VisibilityRules,
+): VisibilityPolicy {
   for (const selector of [...(rules.include ?? []), ...(rules.exclude ?? [])]) {
     validateVisibilitySelector(selector);
   }
@@ -380,30 +427,58 @@ export function compileVisibilityPolicy(context: NamingContext, rules: Visibilit
       ],
     },
   ];
-  const included = sortedCopy(rules.include).flatMap((selector) => visibilitySelectorArns(context, selector));
-  const excluded = sortedCopy(rules.exclude).flatMap((selector) => visibilitySelectorArns(context, selector));
+  const included = sortedCopy(rules.include).flatMap((selector) =>
+    visibilitySelectorArns(context, selector),
+  );
+  const excluded = sortedCopy(rules.exclude).flatMap((selector) =>
+    visibilitySelectorArns(context, selector),
+  );
   if (included.length > 0) {
-    statements.push({ Sid: "ReadIncluded", Effect: "Allow", Action: actions, Resource: included });
+    statements.push({
+      Sid: "ReadIncluded",
+      Effect: "Allow",
+      Action: actions,
+      Resource: included,
+    });
   }
   if (excluded.length > 0) {
-    statements.push({ Sid: "DenyExcluded", Effect: "Deny", Action: actions, Resource: excluded });
+    statements.push({
+      Sid: "DenyExcluded",
+      Effect: "Deny",
+      Action: actions,
+      Resource: excluded,
+    });
   }
-  const policy: VisibilityPolicy = { Version: "2012-10-17", Statement: statements };
-  if (JSON.stringify(policy).length > ROLE_POLICY_MAX) fail("compiled policy over role policy size");
+  const policy: VisibilityPolicy = {
+    Version: "2012-10-17",
+    Statement: statements,
+  };
+  if (JSON.stringify(policy).length > ROLE_POLICY_MAX)
+    fail("compiled policy over role policy size");
   return policy;
 }
 
 function futureRules(rules: VisibilityRules): VisibilityFutureRules {
-  return { include: sortedCopy(rules.include), exclude: sortedCopy(rules.exclude) };
+  return {
+    include: sortedCopy(rules.include),
+    exclude: sortedCopy(rules.exclude),
+  };
 }
 
 /** Assemble the synth-time preview. */
-export function visibilityPreview(rules: VisibilityRules, sources: string[]): VisibilityPreview {
+export function visibilityPreview(
+  rules: VisibilityRules,
+  sources: string[],
+): VisibilityPreview {
   for (const selector of [...(rules.include ?? []), ...(rules.exclude ?? [])]) {
     validateVisibilitySelector(selector);
   }
-  const matched = sources.filter((source) => sourceVisible(rules, source)).sort();
-  const notMatched = sources.filter((source) => !sourceVisible(rules, source)).sort();
+  const matched = sources
+    .filter((source) => sourceVisible(rules, source))
+    .sort();
+  const notMatched = sources
+    .filter((source) => !sourceVisible(rules, source))
+    .sort();
   return {
     rule_version: visibilityRuleVersion(rules),
     matched_now: matched,
@@ -413,7 +488,10 @@ export function visibilityPreview(rules: VisibilityRules, sources: string[]): Vi
 }
 
 /** Assemble the published manifest (no `not_matched_now`). */
-export function visibilityManifest(rules: VisibilityRules, sources: string[]): VisibilityManifest {
+export function visibilityManifest(
+  rules: VisibilityRules,
+  sources: string[],
+): VisibilityManifest {
   const preview = visibilityPreview(rules, sources);
   return {
     rule_version: preview.rule_version,
@@ -430,6 +508,7 @@ export function keeperDecision(
 ): KeeperAnswer {
   if (!rules || !sourceVisible(rules, logical)) return "not_shared";
   if (awsResult === "events") return "events";
-  if (awsResult === "empty" || awsResult === "not_found") return "allowed_no_events";
+  if (awsResult === "empty" || awsResult === "not_found")
+    return "allowed_no_events";
   return "not_shared";
 }
