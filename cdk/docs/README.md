@@ -101,7 +101,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>171 exported top-level symbols</summary>
+<summary>188 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps,
@@ -139,7 +139,24 @@ SpaOriginConfig,
 AppTheoryMcpEndpointPath, AppTheoryMcpEndpointTemplate, AppTheoryMcpFrontDoorVerificationOptions, AppTheoryMcpOAuthDiscoveryTemplate, AppTheoryMcpOAuthFacadeTemplate, AppTheoryMcpRouteAlgebra,
 AppTheoryMcpStageGlobalRoute,
 AppTheoryChallengeAliasBridgeOptions, AppTheoryRestV1ChallengeRestoration, AppTheoryRestV1ChallengeRestorationProps,
-AppTheoryRestV1OriginLockOptions, AppTheoryRestV1OriginReachability
+AppTheoryRestV1OriginLockOptions, AppTheoryRestV1OriginReachability,
+AppTheoryBucket,
+AppTheoryBucketProps,
+AppTheoryCloudFrontLogFormat,
+AppTheoryKeeperAnswer,
+AppTheoryKeeperVisibility,
+AppTheoryKeeperVisibilityProps,
+AppTheoryLoggingProfile,
+AppTheoryNamingContext,
+AppTheoryNamingContextProps,
+AppTheoryNamingContextValues,
+AppTheoryNamingProfile,
+AppTheoryPhysicalName,
+AppTheoryResourceNaming,
+AppTheoryVisibilityManifest,
+AppTheoryVisibilityManifestTier,
+AppTheoryVisibilityPreview,
+AppTheoryVisibilityRules
 ```
 
 </details>

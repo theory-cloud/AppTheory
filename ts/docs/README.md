@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>966 exported top-level symbols</summary>
+<summary>1001 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest,
@@ -256,7 +256,42 @@ VALIDATION_RULE_REQUIRED, validationError, ValidationFieldError, ValidationRuleN
 VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG, VECTORSTORE_ERROR_INVALID_INPUT,
 VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WebSocketCall,
 WebSocketClientFactory, WebSocketContext, WebSocketManagementClient, WebSocketManagementClientLike, wellFormedClientRequestId, WindowConfig, WindowLimit,
-wrapError, wrapJobLedgerError, XMLSanitizationPattern
+wrapError, wrapJobLedgerError, XMLSanitizationPattern,
+compileVisibilityPolicy,
+ComposedName,
+KEEPER_ACTIONS_GROUP,
+KEEPER_ACTIONS_STREAM,
+KeeperAnswer,
+keeperDecision,
+LOG_SOURCE_PREFIX,
+LoggingProfile,
+logGroupName,
+logSourcePrefix,
+NamingContext,
+NamingPins,
+NamingProfile,
+physicalResourceName,
+RESOURCE_NAME_RULES,
+RESOURCE_NAMING_CONTRACT,
+ResourceNameKind,
+ResourceNameRule,
+ROLE_POLICY_MAX,
+s3AccountRegionalSuffix,
+shortenResourceName,
+sourceVisible,
+validateNamingContext,
+validateVisibilitySelector,
+VisibilityFutureRules,
+VisibilityManifest,
+visibilityManifest,
+VisibilityPolicy,
+visibilityPreview,
+VisibilityPreview,
+VisibilityRules,
+visibilityRuleVersion,
+visibilitySelectorArns,
+visibilitySelectorMatches,
+VisibilityStatement
 ```
 </details>
 <!-- apptheory-api-docs:ts:end -->

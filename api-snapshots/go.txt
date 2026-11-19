@@ -683,11 +683,146 @@ func SetLogger(observability.StructuredLogger)
 
 ## github.com/theory-cloud/apptheory/v7/pkg/naming
 
+const Contract = "theorycloud_resource_naming.v0.1"
+
+const KeeperAllowedNoEvents = "allowed_no_events"
+
+const KeeperEvents = "events"
+
+const KeeperNotShared = "not_shared"
+
+const LogPrefix = "theorycloud"
+
+const NamingProfileDerived = "derived"
+
+const NamingProfileLegacy = "legacy"
+
+const RolePolicyMax = 10240
+
+var KeeperActionsGroup = []string{"logs:FilterLogEvents", "logs:DescribeLogStreams"}
+
+var KeeperActionsStream = []string{"logs:GetLogEvents"}
+
+var ResourceRules = map[string]ResourceRule{
+	"s3_bucket":                {Kind: "s3ar", Max: 63, Charset: `[a-z0-9-]`},
+	"s3_vector_bucket":         {Kind: "dash", Max: 63, Charset: `[a-z0-9-]`},
+	"s3_vector_index":          {Kind: "dash", Max: 63, Charset: `[a-z0-9-]`},
+	"dynamodb_table":           {Kind: "dash", Max: 255, Charset: `[A-Za-z0-9_.-]`},
+	"lambda_function":          {Kind: "dash", Max: 64, Charset: `[A-Za-z0-9_-]`},
+	"sqs_queue":                {Kind: "dash", Max: 80, Charset: `[A-Za-z0-9_-]`},
+	"sns_topic":                {Kind: "dash", Max: 256, Charset: `[A-Za-z0-9_-]`},
+	"secret":                   {Kind: "path", Max: 512, Charset: `[A-Za-z0-9/_+=.@-]`},
+	"ssm_parameter":            {Kind: "path", Max: 900, Charset: `[A-Za-z0-9_./-]`, Lead: "/"},
+	"kms_alias":                {Kind: "path", Max: 256, Charset: `[A-Za-z0-9/_-]`, Lead: "alias/"},
+	"event_bus":                {Kind: "dash", Max: 256, Charset: `[A-Za-z0-9._-]`},
+	"event_rule":               {Kind: "dash", Max: 64, Charset: `[A-Za-z0-9._-]`},
+	"schedule":                 {Kind: "dash", Max: 64, Charset: `[A-Za-z0-9._-]`},
+	"alarm":                    {Kind: "dash", Max: 255, Charset: `[A-Za-z0-9_.-]`},
+	"dashboard":                {Kind: "dash", Max: 255, Charset: `[A-Za-z0-9_-]`},
+	"iam_role":                 {Kind: "dash", Max: 64, Charset: `[A-Za-z0-9+=,.@_-]`},
+	"iam_managed_policy":       {Kind: "dash", Max: 128, Charset: `[A-Za-z0-9+=,.@_-]`},
+	"state_machine":            {Kind: "dash", Max: 80, Charset: `[A-Za-z0-9_-]`},
+	"codebuild_project":        {Kind: "dash", Max: 150, Charset: `[A-Za-z0-9_-]`},
+	"api_rest":                 {Kind: "dash", Max: 128, Charset: `[A-Za-z0-9_-]`},
+	"api_http":                 {Kind: "dash", Max: 128, Charset: `[A-Za-z0-9_-]`},
+	"log_delivery_source":      {Kind: "dash", Max: 60, Charset: `[A-Za-z0-9_-]`},
+	"log_delivery_destination": {Kind: "dash", Max: 60, Charset: `[A-Za-z0-9_-]`},
+	"log_group":                {Kind: "log", Max: 512, Charset: `[A-Za-z0-9_-]`},
+}
+
+type ComposedName struct {
+	Name             string `json:"name"`
+	BucketNamePrefix string `json:"bucket_name_prefix,omitempty"`
+	BucketNamespace  string `json:"bucket_namespace,omitempty"`
+	Pinned           bool   `json:"pinned,omitempty"`
+}
+
+type Context struct {
+	Namespace     string `json:"namespace,omitempty"`
+	App           string `json:"app"`
+	Stage         string `json:"stage"`
+	Account       string `json:"account"`
+	Region        string `json:"region"`
+	NamingProfile string `json:"naming_profile,omitempty"`
+}
+
+type FutureRules struct {
+	Include []string `json:"include"`
+	Exclude []string `json:"exclude"`
+}
+
+type Manifest struct {
+	RuleVersion string      `json:"rule_version"`
+	MatchedNow  []string    `json:"matched_now"`
+	Future      FutureRules `json:"future"`
+}
+
+type Policy struct {
+	Version   string      `json:"Version"`
+	Statement []Statement `json:"Statement"`
+}
+
+type Preview struct {
+	RuleVersion   string      `json:"rule_version"`
+	MatchedNow    []string    `json:"matched_now"`
+	NotMatchedNow []string    `json:"not_matched_now"`
+	Future        FutureRules `json:"future"`
+}
+
+type ResourceRule struct {
+	Kind    string
+	Max     int
+	Charset string
+	Lead    string
+}
+
+type Rules struct {
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+type Statement struct {
+	Sid      string   `json:"Sid"`
+	Effect   string   `json:"Effect"`
+	Action   []string `json:"Action"`
+	Resource []string `json:"Resource"`
+}
+
 func BaseName(string, string, string) string
+
+func CompilePolicy(Context, Rules) (Policy, error)
+
+func KeeperDecision(*Rules, string, string) string
+
+func LogGroupName(Context, string) (string, error)
+
+func LogSourcePrefix(Context) string
+
+func ManifestBuild(Rules, []string) (Manifest, error)
 
 func NormalizeStage(string) string
 
+func PhysicalName(Context, string, string, map[string]string) (ComposedName, error)
+
+func PreviewBuild(Rules, []string) (Preview, error)
+
 func ResourceName(string, string, string, string) string
+
+func RuleVersion(Rules) string
+
+func S3AccountRegionalSuffix(Context) string
+
+func SelectorARNs(Context, string) []string
+
+func SelectorMatches(string, string) bool
+
+func ShortenName(string, int) string
+
+func ValidateContext(Context) error
+
+func ValidateSelector(string) error
+
+func Visible(Rules, string) bool
 
 ## github.com/theory-cloud/apptheory/v7/pkg/objectstore
 

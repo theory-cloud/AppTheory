@@ -82,7 +82,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>838 exported top-level symbols</summary>
+<summary>862 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
@@ -226,7 +226,31 @@ validate_required_metadata, validate_value, validate_vector, validation_error, V
 VALIDATION_RULE_MIN, VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, ValidationFieldError, ValidationRule, vary, VectorRecord,
 VectorStore, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG, VECTORSTORE_ERROR_INVALID_INPUT,
 VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WebSocketCall,
-WebSocketContext, well_formed_client_request_id, WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error
+WebSocketContext, well_formed_client_request_id, WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error,
+compile_visibility_policy,
+KEEPER_ACTIONS_GROUP,
+KEEPER_ACTIONS_STREAM,
+KEEPER_ALLOWED_NO_EVENTS,
+keeper_decision,
+KEEPER_EVENTS,
+KEEPER_NOT_SHARED,
+log_group_name,
+LOG_SOURCE_PREFIX,
+log_source_prefix,
+physical_resource_name,
+RESOURCE_NAME_RULES,
+RESOURCE_NAMING_CONTRACT,
+ROLE_POLICY_MAX,
+s3_account_regional_suffix,
+shorten_resource_name,
+source_visible,
+validate_naming_context,
+validate_visibility_selector,
+visibility_manifest,
+visibility_preview,
+visibility_rule_version,
+visibility_selector_arns,
+visibility_selector_matches
 ```
 </details>
 <!-- apptheory-api-docs:py:end -->
