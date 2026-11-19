@@ -50,7 +50,7 @@ const refuse_explicit_name_1 = require("./private/refuse-explicit-name");
  * `-{account}-{region}-an` to the prefix.
  */
 class AppTheoryBucket extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryBucket", version: "7.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryBucket", version: "7.5.0-rc" };
     /**
      * The bucket.
      */
