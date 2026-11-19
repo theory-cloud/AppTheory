@@ -6,6 +6,8 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 export declare enum AppTheorySsrSiteMode {
     /**
      * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
@@ -156,6 +158,32 @@ export interface AppTheorySsrSiteProps {
      * @default false
      */
     readonly allowViewerTenantHeaders?: boolean;
+    /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile the buckets this construct creates take
+     * their names from the contract and CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out of the delivery.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The site's logical name. Defaults to the kebab-cased construct id when a
+     * naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.W3C
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
     /**

@@ -48,6 +48,12 @@ type AppTheorySsrSiteProps struct {
 	//
 	// The certificate must be in `us-east-1` for CloudFront.
 	CertificateArn *string `field:"optional" json:"certificateArn" yaml:"certificateArn"`
+	// CloudFront standard-logging output format for a CloudWatch Logs destination.
+	//
+	// Only used under the standard logging profile.
+	// Default: AppTheoryCloudFrontLogFormat.W3C
+	//
+	CloudFrontLogFormat AppTheoryCloudFrontLogFormat `field:"optional" json:"cloudFrontLogFormat" yaml:"cloudFrontLogFormat"`
 	// Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.
 	//
 	// In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
@@ -92,8 +98,15 @@ type AppTheorySsrSiteProps struct {
 	// Optional ISR/cache metadata table name to wire when you are not passing `isrMetadataTable`.
 	//
 	// Prefer `isrMetadataTable` when AppTheory should also grant access to the SSR Lambda.
-	IsrMetadataTableName *string       `field:"optional" json:"isrMetadataTableName" yaml:"isrMetadataTableName"`
-	LogsBucket           awss3.IBucket `field:"optional" json:"logsBucket" yaml:"logsBucket"`
+	IsrMetadataTableName *string `field:"optional" json:"isrMetadataTableName" yaml:"isrMetadataTableName"`
+	// The site's logical name.
+	//
+	// Defaults to the kebab-cased construct id when a
+	// naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string       `field:"optional" json:"logicalName" yaml:"logicalName"`
+	LogsBucket  awss3.IBucket `field:"optional" json:"logsBucket" yaml:"logsBucket"`
 	// Explicit deployment mode for the site topology.
 	//
 	// - `ssr-only`: Lambda Function URL is the default origin
@@ -102,8 +115,19 @@ type AppTheorySsrSiteProps struct {
 	// Existing implicit behavior maps to `ssr-only`.
 	// Default: AppTheorySsrSiteMode.SSR_ONLY
 	//
-	Mode          AppTheorySsrSiteMode `field:"optional" json:"mode" yaml:"mode"`
-	RemovalPolicy awscdk.RemovalPolicy `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
+	Mode AppTheorySsrSiteMode `field:"optional" json:"mode" yaml:"mode"`
+	// Optional naming and logging context.
+	//
+	// With the standard logging profile the buckets this construct creates take
+	// their names from the contract and CloudFront access logs go to
+	// `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+	// Pass `enableLogging: false` to opt out of the delivery.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
+	RemovalPolicy awscdk.RemovalPolicy   `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
 	// CloudFront response headers policy applied to SSR and direct-S3 behaviors.
 	//
 	// If omitted, AppTheory provisions a FaceTheory-aligned baseline policy at the CDN

@@ -4,6 +4,8 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 export declare enum AppTheorySpaRewriteMode {
     /**
      * Rewrite extensionless routes to `index.html` within the SPA prefix.
@@ -159,6 +161,31 @@ export interface AppTheoryPathRoutedFrontendProps {
      * Origin request policy for the API origin (default behavior).
      */
     readonly apiOriginRequestPolicy?: cloudfront.IOriginRequestPolicy;
+    /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The distribution's logical name. Defaults to the kebab-cased construct id
+     * when a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.W3C
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
     /**
      * Enable CloudFront access logging.
      * @default true

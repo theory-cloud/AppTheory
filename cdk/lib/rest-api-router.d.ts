@@ -6,6 +6,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 /**
  * CORS configuration for the REST API router.
@@ -166,6 +167,25 @@ export interface AppTheoryRestApiRouterProps {
      */
     readonly apiName?: string;
     /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile access logging is on by default to a
+     * log group named `logs/access/api/{logicalName}` carrying the contract's
+     * JSON field set. Pass `stage.accessLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The API's logical name. Defaults to the kebab-cased construct id when a
+     * naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
      * Description of the REST API.
      */
     readonly description?: string;
@@ -324,6 +344,8 @@ export declare class AppTheoryRestApiRouter extends Construct {
     private readonly scopePermissionToMethod;
     private readonly authorizer?;
     private readonly authorizationType?;
+    private readonly namingContext?;
+    private readonly logicalName?;
     constructor(scope: Construct, id: string, props?: AppTheoryRestApiRouterProps);
     /**
      * Add a Lambda integration for the specified path and HTTP methods.
@@ -354,6 +376,7 @@ export declare class AppTheoryRestApiRouter extends Construct {
     /**
      * Build deploy options for the stage.
      */
+    private effectiveStageOptions;
     private buildDeployOptions;
     /**
      * Set up custom domain with optional Route53 record.

@@ -23,6 +23,23 @@ type AppTheoryHttpApiProps struct {
 	// Default: undefined.
 	//
 	Domain *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
+	// The API's logical name.
+	//
+	// Defaults to the kebab-cased construct id when a
+	// naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
+	// Optional naming and logging context.
+	//
+	// With the standard logging profile API access logging is on by default to a
+	// log group named `logs/access/api/{logicalName}` carrying the contract's
+	// JSON field set. Pass `stage.accessLogging: false` to opt out.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Explicit, semantically identified routes added alongside the construct's greedy `ANY /` and `ANY /{proxy+}` routes.
 	//
 	// Use this where a stricter per-path gateway posture (for example

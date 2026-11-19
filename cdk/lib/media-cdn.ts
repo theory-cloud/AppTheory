@@ -7,6 +7,11 @@ import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import { defaultLogicalName } from "./private/logical-name";
+import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
+
 function assertCloudFrontHostedZoneCertificateRegion(scope: Construct, constructName: string): void {
     const region = Stack.of(scope).region;
     if (!Token.isUnresolved(region) && region === "us-east-1") {
@@ -125,6 +130,35 @@ export interface AppTheoryMediaCdnProps {
     readonly defaultRootObject?: string;
 
     /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile the media bucket takes its name from the
+     * contract and CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out of the delivery.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+
+    /**
+     * The distribution's logical name. Defaults to the kebab-cased construct id
+     * when a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.W3C
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
+
+    /**
      * Enable CloudFront access logging.
      * @default true
      */
@@ -240,13 +274,18 @@ export class AppTheoryMediaCdn extends Construct {
         const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
         const autoDeleteObjects = props.autoDeleteObjects ?? false;
         const enableLogging = props.enableLogging ?? true;
+        const namingContext = props.namingContext;
+        const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+        const standardLogging = namingContext?.standardLogging === true && enableLogging;
 
         // Create or use the provided media bucket
         if (props.bucket) {
             this.bucket = props.bucket;
         } else {
             this.bucket = new s3.Bucket(this, "MediaBucket", {
-                bucketName: props.bucketName,
+                ...(namingContext && logical
+                    ? bucketNamingProps(namingContext, `${logical}-media`, props.bucketName)
+                    : { bucketName: props.bucketName }),
                 blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
                 encryption: s3.BucketEncryption.S3_MANAGED,
                 enforceSSL: true,
@@ -257,8 +296,9 @@ export class AppTheoryMediaCdn extends Construct {
             });
         }
 
-        // Create logs bucket if logging is enabled
-        if (enableLogging) {
+        // Create logs bucket if S3 logging is enabled and the standard profile is
+        // not replacing it with CloudWatch Logs delivery.
+        if (enableLogging && !standardLogging) {
             this.logsBucket =
                 props.logsBucket ??
                 new s3.Bucket(this, "CloudFrontLogsBucket", {
@@ -355,6 +395,17 @@ export class AppTheoryMediaCdn extends Construct {
             ...(props.comment ? { comment: props.comment } : {}),
             ...(props.errorResponses ? { errorResponses: props.errorResponses } : {}),
         });
+
+        if (standardLogging && namingContext && logical) {
+            enableCloudFrontStandardLogging({
+                scope: this,
+                id: "CdnLogging",
+                context: namingContext,
+                distribution: this.distribution,
+                logical: `logs/access/cdn/${logical}`,
+                format: props.cloudFrontLogFormat,
+            });
+        }
 
         // Create Route53 A record if hosted zone is provided
         if (props.domain?.domainName && props.domain?.hostedZone) {

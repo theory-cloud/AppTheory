@@ -1,0 +1,15 @@
+package apptheorycdk
+
+// CloudFront standard-logging output format for a CloudWatch Logs destination.
+//
+// The resource-naming contract settles this from `DescribeConfigurationTemplates`.
+// Until that lab evidence exists, AppTheory defaults to `W3C`. The format cannot
+// be changed later without replacing the delivery destination.
+type AppTheoryCloudFrontLogFormat string
+
+const (
+	// JSON records.
+	AppTheoryCloudFrontLogFormat_JSON AppTheoryCloudFrontLogFormat = "JSON"
+	// W3C extended log format.
+	AppTheoryCloudFrontLogFormat_W3C AppTheoryCloudFrontLogFormat = "W3C"
+)
