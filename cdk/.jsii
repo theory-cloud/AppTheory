@@ -13259,7 +13259,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/eventbridge-bus.ts",
-          "line": 35
+          "line": 65
         },
         "parameters": [
           {
@@ -13286,7 +13286,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/eventbridge-bus.ts",
-        "line": 29
+        "line": 54
       },
       "methods": [
         {
@@ -13295,7 +13295,7 @@
           },
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 51
+            "line": 114
           },
           "name": "allowAccount",
           "parameters": [
@@ -13311,6 +13311,23 @@
               "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
             }
           }
+        },
+        {
+          "docs": {
+            "remarks": "Security Hub EventBridge.3 requires a custom bus to carry a resource-based\npolicy. The policy grants the owning account `events:*` on this bus, so every\nsame-account principal keeps exactly the access IAM already gives it, and no\nother account is admitted.",
+            "see": "https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html",
+            "summary": "Attaches the owning-account resource policy."
+          },
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 94
+          },
+          "name": "allowOwningAccount",
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
+            }
+          }
         }
       ],
       "name": "AppTheoryEventBridgeBus",
@@ -13319,7 +13336,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 30
+            "line": 55
           },
           "name": "eventBus",
           "type": {
@@ -13330,7 +13347,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 31
+            "line": 56
           },
           "name": "policies",
           "type": {
@@ -13340,6 +13357,21 @@
               },
               "kind": "array"
             }
+          }
+        },
+        {
+          "docs": {
+            "summary": "The owning-account resource policy attached under a derived naming context."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 61
+          },
+          "name": "owningAccountPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
           }
         }
       ],
@@ -13352,7 +13384,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/eventbridge-bus.ts",
-        "line": 5
+        "line": 8
       },
       "name": "AppTheoryEventBridgeBusProps",
       "properties": [
@@ -13366,7 +13398,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 23
+            "line": 26
           },
           "name": "allowedAccountIds",
           "optional": true,
@@ -13388,7 +13420,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 16
+            "line": 19
           },
           "name": "description",
           "optional": true,
@@ -13405,12 +13437,48 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 10
+            "line": 13
           },
           "name": "eventBusName",
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Under a derived context the bus takes a\nresource-based policy that admits only the owning account, which is what\nSecurity Hub EventBridge.3 asks for.\n\nWith no context the construct synthesizes exactly as before.",
+            "summary": "Optional naming context."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 37
+          },
+          "name": "namingContext",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContext"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true under a derived naming context, otherwise undefined",
+            "remarks": "Attaching it closes the bus to every principal except the owning account,\nwhich preserves today's same-account behaviour while satisfying\nEventBridge.3. Set false to attach only your own statements.",
+            "summary": "Whether to attach the owning-account resource policy."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 48
+          },
+          "name": "owningAccountResourcePolicy",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         }
       ],
@@ -34598,5 +34666,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "d0pmWz+t9EWyDlna8M7SEQI5oeVA9a09gsU6bO8bA0c="
+  "fingerprint": "qfJ6QRVnP8MxX195eCPtm5paO9W2YlcmmuIp/nSVUV8="
 }
