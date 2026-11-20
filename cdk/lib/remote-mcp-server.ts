@@ -13,7 +13,9 @@ import {
 } from "./rest-api-router";
 import { AppTheoryMcpPaths } from "./mcp-paths";
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
+import { defaultLogicalName } from "./private/logical-name";
 import { trimRepeatedChar } from "./private/string-utils";
+import type { AppTheoryNamingContext } from "./naming-context";
 
 const STREAM_SPILL_INLINE_DEFAULT_BYTES = 32 * 1024;
 const STREAM_SPILL_INLINE_SAFE_MAX_BYTES = 350 * 1024;
@@ -27,6 +29,23 @@ const STREAM_MAX_EVENT_DEFAULT_BYTES = 10 * 1024 * 1024;
  * - Streamable HTTP mount at `/mcp` (POST/GET/DELETE)
  */
 export interface AppTheoryRemoteMcpServerProps {
+  /**
+   * Optional naming and logging context.
+   *
+   * The construct passes it to the REST API router it builds, so the router
+   * follows the same rules as every other AppTheory REST surface: with the
+   * standard logging profile the API's access logging comes from the contract,
+   * and under a derived naming profile the REST custom domain takes the
+   * Security Hub APIGateway.11 security policy with `endpointAccessMode:
+   * STRICT`. The router's logical name defaults to the kebab-cased construct
+   * id.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
   /**
    * The Lambda function that handles MCP Streamable HTTP requests.
    */
@@ -295,6 +314,8 @@ export class AppTheoryRemoteMcpServer extends Construct {
     super(scope, id);
 
     this.router = new AppTheoryRestApiRouter(this, "Api", {
+      namingContext: props.namingContext,
+      logicalName: props.namingContext ? defaultLogicalName(this) : undefined,
       apiName: props.apiName,
       description: props.description,
       stage: props.stage,

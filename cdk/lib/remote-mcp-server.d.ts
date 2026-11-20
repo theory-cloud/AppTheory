@@ -4,6 +4,7 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 import { AppTheoryRestApiRouter, type AppTheoryRestApiRouterCorsOptions, type AppTheoryRestApiRouterDomainOptions, type AppTheoryRestApiRouterStageOptions } from "./rest-api-router";
+import type { AppTheoryNamingContext } from "./naming-context";
 /**
  * Props for the AppTheoryRemoteMcpServer construct.
  *
@@ -12,6 +13,22 @@ import { AppTheoryRestApiRouter, type AppTheoryRestApiRouterCorsOptions, type Ap
  * - Streamable HTTP mount at `/mcp` (POST/GET/DELETE)
  */
 export interface AppTheoryRemoteMcpServerProps {
+    /**
+     * Optional naming and logging context.
+     *
+     * The construct passes it to the REST API router it builds, so the router
+     * follows the same rules as every other AppTheory REST surface: with the
+     * standard logging profile the API's access logging comes from the contract,
+     * and under a derived naming profile the REST custom domain takes the
+     * Security Hub APIGateway.11 security policy with `endpointAccessMode:
+     * STRICT`. The router's logical name defaults to the kebab-cased construct
+     * id.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
     /**
      * The Lambda function that handles MCP Streamable HTTP requests.
      */
