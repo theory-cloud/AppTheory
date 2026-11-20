@@ -1,4 +1,6 @@
 import { RemovalPolicy } from "aws-cdk-lib";
+import * as apigw from "aws-cdk-lib/aws-apigateway";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 
 import { AppTheoryNamingProfile } from "../naming";
@@ -61,4 +63,39 @@ export function defaultMinimumProtocolVersion(
   if (explicit !== undefined) return explicit;
   if (!secureDefaults(context) || !certificatePresent) return undefined;
   return RECOMMENDED_CLOUD_FRONT_SECURITY_POLICY;
+}
+
+/**
+ * The REST custom-domain security policy that satisfies Security Hub
+ * APIGateway.11 for a regional or private endpoint: TLS 1.3 and TLS 1.2 with
+ * perfect forward secrecy and post-quantum key exchange.
+ *
+ * @see https://docs.aws.amazon.com/securityhub/latest/userguide/apigateway-controls.html
+ */
+export const RECOMMENDED_REST_API_SECURITY_POLICY = apigw.SecurityPolicy.TLS13_1_2_PFS_PQ_2025_09;
+
+/**
+ * The REST custom-domain security policy that satisfies APIGateway.11 for an
+ * edge-optimized endpoint. API Gateway rejects the regional policies on an edge
+ * domain and vice versa.
+ */
+export const RECOMMENDED_EDGE_REST_API_SECURITY_POLICY = apigw.SecurityPolicy.TLS12_PFS_2025_EDGE;
+
+/**
+ * The strongest security policy an HTTP API custom domain can carry. Security
+ * Hub APIGateway.11 produces a FAILED finding for every custom domain attached
+ * to an HTTP API, so no value satisfies the control; API Gateway v2 offers only
+ * the legacy TLS policies, and TLS 1.2 is the stronger of the two.
+ *
+ * @see https://docs.aws.amazon.com/securityhub/latest/userguide/apigateway-controls.html
+ */
+export const RECOMMENDED_HTTP_API_SECURITY_POLICY = apigwv2.SecurityPolicy.TLS_1_2;
+
+/**
+ * Whether an API Gateway REST security policy is one of the enhanced
+ * `SecurityPolicy_*` values. An enhanced policy requires an endpoint access
+ * mode, and a legacy policy rejects one.
+ */
+export function isEnhancedRestSecurityPolicy(policy: apigw.SecurityPolicy): boolean {
+  return String(policy).startsWith("SecurityPolicy_");
 }

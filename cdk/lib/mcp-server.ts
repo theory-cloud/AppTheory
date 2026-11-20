@@ -15,7 +15,11 @@ import { Construct } from "constructs";
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
-import { defaultDeletionProtection } from "./private/secure-defaults";
+import {
+  RECOMMENDED_HTTP_API_SECURITY_POLICY,
+  defaultDeletionProtection,
+  secureDefaults,
+} from "./private/secure-defaults";
 import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import { buildCorsPreflight } from "./cors";
@@ -1053,7 +1057,7 @@ export class AppTheoryMcpServer extends Construct {
       if (!ownedStage) {
         throw new Error("AppTheoryMcpServer: domain configuration requires construct-owned API mode");
       }
-      this.setupCustomDomain(ownedOptions.domain, ownedStage);
+      this.setupCustomDomain(ownedOptions.domain, ownedStage, props.api ? undefined : props.namingContext);
       if (
         originReachability === AppTheoryMcpOriginReachability.LOCKED
         && this.ownedApi !== undefined
@@ -1139,6 +1143,7 @@ export class AppTheoryMcpServer extends Construct {
   private setupCustomDomain(
     options: AppTheoryMcpServerDomainOptions,
     stage: apigwv2.IStage,
+    namingContext?: AppTheoryNamingContext,
   ): void {
     const certificate = options.certificate ?? (options.certificateArn
       ? acm.Certificate.fromCertificateArn(this, "ImportedCert", options.certificateArn) as acm.ICertificate
@@ -1152,6 +1157,7 @@ export class AppTheoryMcpServer extends Construct {
       domainName: options.domainName,
       certificate,
       mtls: options.mutualTlsAuthentication,
+      securityPolicy: secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined,
     });
     (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
     const apiMapping = new apigwv2.ApiMapping(this, "ApiMapping", {

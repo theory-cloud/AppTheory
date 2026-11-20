@@ -6,6 +6,7 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 export interface AppTheoryHttpIngestionEndpointDomainOptions {
     /**
      * The custom domain name (for example `ingest.example.com`).
@@ -121,6 +122,15 @@ export interface AppTheoryHttpIngestionEndpointProps {
      * @default undefined
      */
     readonly stage?: AppTheoryHttpIngestionEndpointStageOptions;
+    /**
+     * Optional naming context that selects the Security Hub-aligned defaults.
+     * Under a derived context a custom domain takes TLS 1.2, the strongest policy
+     * API Gateway v2 offers; Security Hub APIGateway.11 always fails a custom
+     * domain attached to an HTTP API.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
 }
 /**
  * Authenticated HTTPS ingestion endpoint backed by Lambda.

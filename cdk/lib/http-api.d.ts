@@ -87,7 +87,7 @@ export interface AppTheoryHttpApiDomainOptions {
     readonly mutualTlsAuthentication?: apigwv2.MTLSConfig;
     /**
      * TLS security policy.
-     * @default API Gateway default
+     * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
      */
     readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
