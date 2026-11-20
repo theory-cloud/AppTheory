@@ -527,3 +527,107 @@ test("S4: no naming context keeps the bus template unchanged", () => {
   const template = synth((stack) => new apptheory.AppTheoryEventBridgeBus(stack, "Bus", {}));
   assert.equal(busPolicies(template).length, 0);
 });
+
+// ---- S5: S3 ---------------------------------------------------------------
+//
+// S3.5 (buckets require TLS) and S3.9 (server access logging):
+// https://docs.aws.amazon.com/securityhub/latest/userguide/s3-controls.html
+
+function tlsDenies(template) {
+  return resourcesOfType(template, "AWS::S3::BucketPolicy").filter((resource) =>
+    JSON.stringify(resource.Properties?.PolicyDocument ?? {}).includes("aws:SecureTransport"),
+  );
+}
+
+test("S5: every bucket AppTheory creates denies non-TLS requests under a derived context", () => {
+  const builders = {
+    AppTheoryBucket: (stack, context) =>
+      new apptheory.AppTheoryBucket(stack, "Bucket", { namingContext: context, logical: "assets" }),
+    AppTheorySsrSite: (stack, context) =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: handler(stack),
+        namingContext: context,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+      }),
+    AppTheoryMediaCdn: (stack, context) => new apptheory.AppTheoryMediaCdn(stack, "Media", { namingContext: context }),
+    AppTheoryS3Ingest: (stack) => new apptheory.AppTheoryS3Ingest(stack, "Ingest", {}),
+    AppTheoryS3VersionedIngress: (stack) => new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress", {}),
+  };
+
+  for (const [name, build] of Object.entries(builders)) {
+    const template = synth((stack) => build(stack, labContext(stack)));
+    const buckets = resourcesOfType(template, "AWS::S3::Bucket").length;
+    assert.ok(buckets > 0, `${name} should create a bucket`);
+    assert.equal(tlsDenies(template).length, buckets, `${name} should deny non-TLS requests on every bucket (S3.5)`);
+  }
+});
+
+test("S5: an explicit enforceSSL false still wins", () => {
+  const template = synth((stack) =>
+    new apptheory.AppTheoryBucket(stack, "Bucket", {
+      namingContext: labContext(stack),
+      logical: "assets",
+      enforceSSL: false,
+    }),
+  );
+  assert.equal(tlsDenies(template).length, 0);
+});
+
+test("S5: a legacy naming context keeps AppTheoryBucket without the TLS policy", () => {
+  const template = synth((stack) =>
+    new apptheory.AppTheoryBucket(stack, "Bucket", {
+      namingContext: new apptheory.AppTheoryNamingContext(stack, "Naming", {
+        app: "autheory",
+        stage: "live",
+        account: "784055308075",
+        region: "us-east-1",
+        namingProfile: apptheory.AppTheoryNamingProfile.LEGACY,
+        loggingProfile: apptheory.AppTheoryLoggingProfile.LEGACY,
+        pins: { "s3_bucket:assets": "autheory-live-assets" },
+      }),
+      logical: "assets",
+    }),
+  );
+  assert.equal(tlsDenies(template).length, 0);
+});
+
+test("S5: server access logging is opt-in and off by default", () => {
+  const without = synth((stack) =>
+    new apptheory.AppTheorySsrSite(stack, "Site", {
+      ssrFunction: handler(stack),
+      namingContext: labContext(stack),
+      mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    }),
+  );
+  assert.equal(
+    resourcesOfType(without, "AWS::S3::Bucket").filter(
+      (bucket) => bucket.Properties?.LoggingConfiguration !== undefined,
+    ).length,
+    0,
+  );
+
+  const withLogs = (name, build) => {
+    const template = synth((stack) => build(stack, labContext(stack)));
+    const logged = resourcesOfType(template, "AWS::S3::Bucket").filter(
+      (bucket) => bucket.Properties?.LoggingConfiguration !== undefined,
+    );
+    assert.equal(logged.length, 1, `${name} should log to the supplied bucket`);
+    assert.equal(logged[0].Properties.LoggingConfiguration.LogFilePrefix, "s3-access/");
+  };
+  withLogs("AppTheorySsrSite", (stack, context) =>
+    new apptheory.AppTheorySsrSite(stack, "Site", {
+      ssrFunction: handler(stack),
+      namingContext: context,
+      mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+      serverAccessLogsBucket: new s3.Bucket(stack, "LogTarget"),
+      serverAccessLogsPrefix: "s3-access/",
+    }),
+  );
+  withLogs("AppTheoryMediaCdn", (stack, context) =>
+    new apptheory.AppTheoryMediaCdn(stack, "Media", {
+      namingContext: context,
+      serverAccessLogsBucket: new s3.Bucket(stack, "LogTarget"),
+      serverAccessLogsPrefix: "s3-access/",
+    }),
+  );
+});
