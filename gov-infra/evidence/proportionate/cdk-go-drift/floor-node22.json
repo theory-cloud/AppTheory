@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 16.168,
+      "durationSeconds": 17.206,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-20T11:59:08Z",
+      "finishedAt": "2026-11-20T14:58:37Z",
       "id": "cdk-go-drift",
-      "inputsDigest": "sha256:6bb5d5c1e1e47fe4e7fec4ed8cc9468013e216b6d708b9ad2de36bb6a0dc4c3e",
+      "inputsDigest": "sha256:69fd593dd17a71ec29abe683c6181ad1c7b346e3d1c2c803845819ad7089fe1f",
       "logDigest": "sha256:a8f35561d96d94a0fdce783005c3e2b37bbb6bfff6dda47c5dbc32e19bc7eec9",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261120T115852Z-30324.log",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261120T145820Z-45121.log",
       "reused": false,
-      "startedAt": "2026-11-20T11:58:52Z"
+      "startedAt": "2026-11-20T14:58:20Z"
     }
   ],
   "consumed": [],
@@ -26,7 +26,7 @@
       "arch": "arm64",
       "os": "darwin"
     },
-    "python": "3.14.7"
+    "python": "3.12.14"
   },
   "gate": "cdk-go-drift",
   "kind": "source",
@@ -36,17 +36,17 @@
   },
   "profile": "floor-node22",
   "reason": "",
-  "recordedAt": "2026-11-20T11:59:08Z",
+  "recordedAt": "2026-11-20T14:58:37Z",
   "releaseOnly": {
-    "digest": "sha256:8d158ad078b3e749db1997a3af5a9af3668fab231891c51bec3723884e46c865",
+    "digest": "sha256:67de65f259b215bfa5e82ab36bfb0ce64517b9daeef2d305aecbae2a2bebc797",
     "fileCount": 529,
-    "normalizedDigest": "sha256:d18927936f7b34645cb2f6ae6ab5497831642d5d7fc72ea7a7566187497ab04f",
+    "normalizedDigest": "sha256:c73be5490abd1c173863468a649766c605cb032eea3bae4354f954a81b438064",
     "version": "7.4.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:daebf891328c8b8c8d192d2c95d34a504df1a7f28c6c47a2b4040436e61e79fc",
+    "digest": "sha256:6694afb12c20e2b668efc391ca700614660bac479668bb2130b698f10e25429d",
     "fileCount": 644,
     "paths": [
       "cdk/",
@@ -59,7 +59,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:fe801a22fb5fa8637b58eb366539160ba575aa769933d6ed5624a1974b66d38f",
+    "digest": "sha256:ae6ee44f40a16d212519614bfe104db15873015259df75b695ba79f3323c33aa",
     "fileCount": 2769
   },
   "verdict": "PASS"
