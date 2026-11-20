@@ -314,3 +314,153 @@ test("S2: an HTTP API custom domain defaults to TLS 1.2 under a derived context"
   const plain = resourcesOfType(untouched, "AWS::ApiGatewayV2::DomainName");
   assert.equal(plain[0].Properties.DomainNameConfigurations[0].SecurityPolicy, undefined);
 });
+
+// ---- S3: CloudFront -------------------------------------------------------
+//
+// CloudFront.15 (recommended TLS security policy) accepts TLSv1.2_2025 and
+// TLSv1.3_2025 and evaluates only distributions with a custom certificate:
+// https://docs.aws.amazon.com/securityhub/latest/userguide/cloudfront-controls.html
+// CloudFront.1 (default root object) applies to S3-origin distributions and
+// does not apply to custom origins.
+
+const TLS_2025 = cloudfront.SecurityPolicyProtocol.TLS_V1_2_2025;
+
+function distributions(template) {
+  return resourcesOfType(template, "AWS::CloudFront::Distribution").map(
+    (resource) => resource.Properties.DistributionConfig,
+  );
+}
+
+function ssrSiteBuild(stack, context, props = {}) {
+  return new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: handler(stack),
+    namingContext: context,
+    ...props,
+  });
+}
+
+test("S3: an SSR site distribution takes the CloudFront.15 policy when it serves a certificate", () => {
+  const template = synth((stack) =>
+    ssrSiteBuild(stack, labContext(stack), { domainName: "site.example.com", certificateArn: CERT_ARN }),
+  );
+  const [config] = distributions(template);
+  assert.equal(config.ViewerCertificate.MinimumProtocolVersion, TLS_2025);
+});
+
+test("S3: an explicit minimumProtocolVersion still wins", () => {
+  const template = synth((stack) =>
+    ssrSiteBuild(stack, labContext(stack), {
+      domainName: "site.example.com",
+      certificateArn: CERT_ARN,
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_3_2025,
+    }),
+  );
+  assert.equal(
+    distributions(template)[0].ViewerCertificate.MinimumProtocolVersion,
+    cloudfront.SecurityPolicyProtocol.TLS_V1_3_2025,
+  );
+});
+
+test("S3: without a certificate the distribution keeps the CloudFront default certificate", () => {
+  const template = synth((stack) => ssrSiteBuild(stack, labContext(stack)));
+  assert.equal(distributions(template)[0].ViewerCertificate, undefined);
+});
+
+test("S3: no naming context keeps the SSR site template unchanged", () => {
+  const template = synth((stack) =>
+    ssrSiteBuild(stack, undefined, { domainName: "site.example.com", certificateArn: CERT_ARN }),
+  );
+  const [config] = distributions(template);
+  assert.equal(config.ViewerCertificate.MinimumProtocolVersion, cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021);
+  assert.equal(config.DefaultRootObject, undefined);
+});
+
+test("S3: a static SSR site root gets the CloudFront.1 default root object", () => {
+  const staticSite = synth((stack) =>
+    ssrSiteBuild(stack, labContext(stack), { mode: apptheory.AppTheorySsrSiteMode.SSG_ISR }),
+  );
+  assert.equal(distributions(staticSite)[0].DefaultRootObject, "index.html");
+
+  const ssrOnly = synth((stack) => ssrSiteBuild(stack, labContext(stack)));
+  assert.equal(
+    distributions(ssrOnly)[0].DefaultRootObject,
+    undefined,
+    "an SSR-only root is served by the function URL, a custom origin the control does not evaluate",
+  );
+
+  const overridden = synth((stack) =>
+    ssrSiteBuild(stack, labContext(stack), {
+      mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+      defaultRootObject: "home.html",
+    }),
+  );
+  assert.equal(distributions(overridden)[0].DefaultRootObject, "home.html");
+});
+
+test("S3: the path-routed frontend takes the CloudFront.15 policy and no default root object", () => {
+  const build = (stack, context) =>
+    new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+      apiOriginUrl: "https://api.example.com",
+      namingContext: context,
+      domain: { domainName: "app.example.com", certificateArn: CERT_ARN },
+    });
+
+  const template = synth((stack) => build(stack, labContext(stack)));
+  const [config] = distributions(template);
+  assert.equal(config.ViewerCertificate.MinimumProtocolVersion, TLS_2025);
+  assert.equal(config.DefaultRootObject, undefined, "the root is the API origin");
+
+  const untouched = synth((stack) => build(stack, undefined));
+  assert.equal(
+    distributions(untouched)[0].ViewerCertificate.MinimumProtocolVersion,
+    cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+  );
+});
+
+test("S3: the media CDN takes the CloudFront.15 policy and keeps its explicit root object", () => {
+  const build = (stack, context) =>
+    new apptheory.AppTheoryMediaCdn(stack, "Media", {
+      namingContext: context,
+      domain: { domainName: "media.example.com", certificateArn: CERT_ARN },
+      defaultRootObject: "health.txt",
+    });
+
+  const template = synth((stack) => build(stack, labContext(stack)));
+  const [config] = distributions(template);
+  assert.equal(config.ViewerCertificate.MinimumProtocolVersion, TLS_2025);
+  assert.equal(config.DefaultRootObject, "health.txt");
+
+  const untouched = synth((stack) => build(stack, undefined));
+  assert.equal(
+    distributions(untouched)[0].ViewerCertificate.MinimumProtocolVersion,
+    cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+  );
+});
+
+test("S3: the REST v1 challenge-restoration front door takes the CloudFront.15 policy", () => {
+  const build = (stack, context) => {
+    const rest = new apigw.RestApi(stack, "Rest", {
+      restApiName: "apptheory-lab-rest",
+      deployOptions: { stageName: "v1" },
+    });
+    rest.root.addMethod("GET", new apigw.MockIntegration());
+    return new apptheory.AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+      secret: "restoration-secret-value-0123456789",
+      originReachability: apptheory.AppTheoryRestV1OriginReachability.DISABLED,
+      disableExecuteApiEndpointAsserted: true,
+      origin: rest,
+      domainNames: ["api.example.com"],
+      certificate: acm.Certificate.fromCertificateArn(stack, "Cert", CERT_ARN),
+      namingContext: context,
+    });
+  };
+
+  const template = synth((stack) => build(stack, labContext(stack)));
+  assert.equal(distributions(template)[0].ViewerCertificate.MinimumProtocolVersion, TLS_2025);
+
+  const untouched = synth((stack) => build(stack, undefined));
+  assert.equal(
+    distributions(untouched)[0].ViewerCertificate.MinimumProtocolVersion,
+    cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+  );
+});
