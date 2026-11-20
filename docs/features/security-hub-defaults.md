@@ -87,14 +87,19 @@ is no override.
 |---|---|---|---|
 | `AppTheoryBucket` | the logical bucket | derived `true` under a derived context; an explicit prop wins | `enforceSSL` (inherited from `s3.BucketProps`) |
 | `AppTheoryMediaCdn` | the media bucket | hardcoded `true` | supply `bucket` |
-| `AppTheoryMediaCdn` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
+| `AppTheoryMediaCdn` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` on the legacy S3 logging path only |
 | `AppTheorySsrSite` | the asset bucket | hardcoded `true` | supply `assetsBucket` |
 | `AppTheorySsrSite` | the HTML store bucket (when configured) | hardcoded `true` | supply `htmlStoreBucket` |
-| `AppTheorySsrSite` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
-| `AppTheoryPathRoutedFrontend` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
+| `AppTheorySsrSite` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` on the legacy S3 logging path only |
+| `AppTheoryPathRoutedFrontend` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` on the legacy S3 logging path only |
 | `AppTheoryS3Ingest` | the ingest bucket | hardcoded `true` | supply `bucket` |
 | `AppTheoryS3VersionedIngress` | the release bucket | hardcoded `true` | none |
 | `AppTheoryRemoteMcpServer` | the stream spill bucket | hardcoded `true` | none |
+
+The CloudFront log bucket in those rows exists only on the legacy S3 logging path: a legacy logging profile, or no
+naming context at all. Under the standard logging profile the three constructs deliver CloudFront access logs to the
+contract CloudWatch Logs log group and create no CloudFront log bucket, and they refuse `logsBucket` at synthesis, so
+there is no log bucket to supply.
 
 ### CloudFront.1 residuals
 
