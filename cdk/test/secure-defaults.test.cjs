@@ -64,6 +64,27 @@ function renderedString(value) {
   return JSON.stringify(value);
 }
 
+function tableNamed(template, name) {
+  const found = tables(template).filter((table) => renderedString(table.Properties?.TableName) === name);
+  assert.equal(found.length, 1, `expected exactly one table named ${name}`);
+  return found[0];
+}
+
+function appBuild(overrides = {}, options = {}) {
+  const withContext = options.withContext ?? true;
+  return synth((stack) =>
+    new apptheory.AppTheoryApp(stack, "App", {
+      appName: "autheory-lab",
+      runtime: lambda.Runtime.NODEJS_24_X,
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 204 });"),
+      enableDatabase: true,
+      enableRateLimiting: true,
+      ...(withContext ? { namingContext: labContext(stack) } : {}),
+      ...overrides,
+    }),
+  );
+}
+
 function microvmControllerBuild(stack, context, overrides = {}) {
   return new apptheory.AppTheoryMicrovmController(stack, "Controller", {
     namingContext: context,
@@ -152,6 +173,46 @@ test("S1: the app construct protects its database and rate-limit tables", () => 
   for (const table of owned) {
     assert.equal(table.Properties?.PointInTimeRecoverySpecification?.PointInTimeRecoveryEnabled, true);
     assert.equal(table.Properties?.DeletionProtectionEnabled, true);
+  }
+});
+
+test("S1: the app construct's table deletion protection has an explicit override", () => {
+  const database = (template) => tableNamed(template, "autheory-lab-table");
+  const rateLimits = (template) => tableNamed(template, "autheory-lab-rate-limits");
+
+  const databaseOff = appBuild({ databaseTableDeletionProtection: false });
+  assert.equal(database(databaseOff).Properties?.DeletionProtectionEnabled, undefined);
+  assert.equal(rateLimits(databaseOff).Properties?.DeletionProtectionEnabled, true);
+
+  const rateLimitsOff = appBuild({ rateLimitTableDeletionProtection: false });
+  assert.equal(database(rateLimitsOff).Properties?.DeletionProtectionEnabled, true);
+  assert.equal(rateLimits(rateLimitsOff).Properties?.DeletionProtectionEnabled, undefined);
+
+  const bothOff = appBuild({
+    databaseTableDeletionProtection: false,
+    rateLimitTableDeletionProtection: false,
+  });
+  assert.equal(database(bothOff).Properties?.DeletionProtectionEnabled, undefined);
+  assert.equal(rateLimits(bothOff).Properties?.DeletionProtectionEnabled, undefined);
+});
+
+test("S1: an explicit true protects the app tables with no naming context", () => {
+  const template = appBuild(
+    {
+      databaseTableDeletionProtection: true,
+      rateLimitTableDeletionProtection: true,
+    },
+    { withContext: false },
+  );
+  assert.equal(tableNamed(template, "autheory-lab-table").Properties?.DeletionProtectionEnabled, true);
+  assert.equal(tableNamed(template, "autheory-lab-rate-limits").Properties?.DeletionProtectionEnabled, true);
+});
+
+test("S1: no naming context and no props keeps the app template unchanged", () => {
+  const template = appBuild({}, { withContext: false });
+  for (const table of tables(template)) {
+    assert.equal(table.Properties?.PointInTimeRecoverySpecification?.PointInTimeRecoveryEnabled, true);
+    assert.equal(table.Properties?.DeletionProtectionEnabled, undefined);
   }
 });
 
