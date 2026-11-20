@@ -9,24 +9,29 @@ import (
 )
 
 type AppTheoryWebSocketApiProps struct {
-	Handler                                  awslambda.IFunction           `field:"required" json:"handler" yaml:"handler"`
-	AccessLogFormat                          awsapigateway.AccessLogFormat `field:"optional" json:"accessLogFormat" yaml:"accessLogFormat"`
-	AccessLogGroup                           awslogs.ILogGroup             `field:"optional" json:"accessLogGroup" yaml:"accessLogGroup"`
-	AccessLogRemovalPolicy                   awscdk.RemovalPolicy          `field:"optional" json:"accessLogRemovalPolicy" yaml:"accessLogRemovalPolicy"`
-	AccessLogRetention                       awslogs.RetentionDays         `field:"optional" json:"accessLogRetention" yaml:"accessLogRetention"`
-	ApiName                                  *string                       `field:"optional" json:"apiName" yaml:"apiName"`
-	ConnectHandler                           awslambda.IFunction           `field:"optional" json:"connectHandler" yaml:"connectHandler"`
-	ConnectionTable                          awsdynamodb.ITable            `field:"optional" json:"connectionTable" yaml:"connectionTable"`
-	ConnectionTableEnablePointInTimeRecovery *bool                         `field:"optional" json:"connectionTableEnablePointInTimeRecovery" yaml:"connectionTableEnablePointInTimeRecovery"`
-	ConnectionTableName                      *string                       `field:"optional" json:"connectionTableName" yaml:"connectionTableName"`
-	ConnectionTablePartitionKeyName          *string                       `field:"optional" json:"connectionTablePartitionKeyName" yaml:"connectionTablePartitionKeyName"`
-	ConnectionTableRemovalPolicy             awscdk.RemovalPolicy          `field:"optional" json:"connectionTableRemovalPolicy" yaml:"connectionTableRemovalPolicy"`
-	ConnectionTableSortKeyName               *string                       `field:"optional" json:"connectionTableSortKeyName" yaml:"connectionTableSortKeyName"`
-	ConnectionTableTimeToLiveAttribute       *string                       `field:"optional" json:"connectionTableTimeToLiveAttribute" yaml:"connectionTableTimeToLiveAttribute"`
-	DefaultHandler                           awslambda.IFunction           `field:"optional" json:"defaultHandler" yaml:"defaultHandler"`
-	DisconnectHandler                        awslambda.IFunction           `field:"optional" json:"disconnectHandler" yaml:"disconnectHandler"`
-	EnableAccessLogging                      *bool                         `field:"optional" json:"enableAccessLogging" yaml:"enableAccessLogging"`
-	EnableConnectionTable                    *bool                         `field:"optional" json:"enableConnectionTable" yaml:"enableConnectionTable"`
+	Handler                awslambda.IFunction           `field:"required" json:"handler" yaml:"handler"`
+	AccessLogFormat        awsapigateway.AccessLogFormat `field:"optional" json:"accessLogFormat" yaml:"accessLogFormat"`
+	AccessLogGroup         awslogs.ILogGroup             `field:"optional" json:"accessLogGroup" yaml:"accessLogGroup"`
+	AccessLogRemovalPolicy awscdk.RemovalPolicy          `field:"optional" json:"accessLogRemovalPolicy" yaml:"accessLogRemovalPolicy"`
+	AccessLogRetention     awslogs.RetentionDays         `field:"optional" json:"accessLogRetention" yaml:"accessLogRetention"`
+	ApiName                *string                       `field:"optional" json:"apiName" yaml:"apiName"`
+	ConnectHandler         awslambda.IFunction           `field:"optional" json:"connectHandler" yaml:"connectHandler"`
+	ConnectionTable        awsdynamodb.ITable            `field:"optional" json:"connectionTable" yaml:"connectionTable"`
+	// Whether deletion protection should be enabled for the connection table.
+	// Default: undefined (with no naming context: the AWS default, no deletion
+	// protection; with a naming context: on for a RETAIN table, off otherwise).
+	//
+	ConnectionTableDeletionProtection        *bool                `field:"optional" json:"connectionTableDeletionProtection" yaml:"connectionTableDeletionProtection"`
+	ConnectionTableEnablePointInTimeRecovery *bool                `field:"optional" json:"connectionTableEnablePointInTimeRecovery" yaml:"connectionTableEnablePointInTimeRecovery"`
+	ConnectionTableName                      *string              `field:"optional" json:"connectionTableName" yaml:"connectionTableName"`
+	ConnectionTablePartitionKeyName          *string              `field:"optional" json:"connectionTablePartitionKeyName" yaml:"connectionTablePartitionKeyName"`
+	ConnectionTableRemovalPolicy             awscdk.RemovalPolicy `field:"optional" json:"connectionTableRemovalPolicy" yaml:"connectionTableRemovalPolicy"`
+	ConnectionTableSortKeyName               *string              `field:"optional" json:"connectionTableSortKeyName" yaml:"connectionTableSortKeyName"`
+	ConnectionTableTimeToLiveAttribute       *string              `field:"optional" json:"connectionTableTimeToLiveAttribute" yaml:"connectionTableTimeToLiveAttribute"`
+	DefaultHandler                           awslambda.IFunction  `field:"optional" json:"defaultHandler" yaml:"defaultHandler"`
+	DisconnectHandler                        awslambda.IFunction  `field:"optional" json:"disconnectHandler" yaml:"disconnectHandler"`
+	EnableAccessLogging                      *bool                `field:"optional" json:"enableAccessLogging" yaml:"enableAccessLogging"`
+	EnableConnectionTable                    *bool                `field:"optional" json:"enableConnectionTable" yaml:"enableConnectionTable"`
 	// The API's logical name.
 	//
 	// Defaults to the kebab-cased construct id when a

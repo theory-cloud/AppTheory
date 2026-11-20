@@ -54,6 +54,15 @@ type AppTheorySsrSiteProps struct {
 	// Default: AppTheoryCloudFrontLogFormat.JSON
 	//
 	CloudFrontLogFormat AppTheoryCloudFrontLogFormat `field:"optional" json:"cloudFrontLogFormat" yaml:"cloudFrontLogFormat"`
+	// Object CloudFront returns for a request to the distribution root.
+	//
+	// With a derived naming context and `mode: ssg-isr` the default is
+	// `index.html`, because that mode serves the site root from the S3 HTML store
+	// (Security Hub CloudFront.1). `ssr-only` serves the root from the function
+	// URL, a custom origin CloudFront.1 does not evaluate, so no default applies.
+	// Default: "index.html" under a derived naming context in `ssg-isr` mode
+	//
+	DefaultRootObject *string `field:"optional" json:"defaultRootObject" yaml:"defaultRootObject"`
 	// Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.
 	//
 	// In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
@@ -107,6 +116,16 @@ type AppTheorySsrSiteProps struct {
 	//
 	LogicalName *string       `field:"optional" json:"logicalName" yaml:"logicalName"`
 	LogsBucket  awss3.IBucket `field:"optional" json:"logsBucket" yaml:"logsBucket"`
+	// Minimum TLS protocol version for viewers of a custom domain.
+	//
+	// With a derived naming context and a custom certificate the default is
+	// `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+	// widest client support. Without a certificate CloudFront serves the fixed
+	// default certificate and this property has no effect.
+	// Default: TLS_V1_2_2025 under a derived naming context with a certificate,
+	// otherwise the CloudFront default for the certificate.
+	//
+	MinimumProtocolVersion awscloudfront.SecurityPolicyProtocol `field:"optional" json:"minimumProtocolVersion" yaml:"minimumProtocolVersion"`
 	// Explicit deployment mode for the site topology.
 	//
 	// - `ssr-only`: Lambda Function URL is the default origin
@@ -134,6 +153,21 @@ type AppTheorySsrSiteProps struct {
 	// layer: HSTS, nosniff, frame-options, referrer-policy, XSS protection, and a
 	// restrictive permissions-policy. Content-Security-Policy remains origin-defined.
 	ResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"responseHeadersPolicy" yaml:"responseHeadersPolicy"`
+	// Bucket that receives S3 server access logs for the buckets this construct creates, which is what Security Hub S3.9 evaluates.
+	//
+	// Off by default because the log target and its storage cost money. The target
+	// bucket is yours: it takes no naming entry (resource-naming contract
+	// section 4), and it should not itself be logged.
+	// Default: no server access logging.
+	//
+	ServerAccessLogsBucket awss3.IBucket `field:"optional" json:"serverAccessLogsBucket" yaml:"serverAccessLogsBucket"`
+	// Key prefix for the server access logs.
+	//
+	// Only used with
+	// `serverAccessLogsBucket`.
+	// Default: no prefix.
+	//
+	ServerAccessLogsPrefix *string `field:"optional" json:"serverAccessLogsPrefix" yaml:"serverAccessLogsPrefix"`
 	// Cache policy applied to direct Lambda-backed SSR behaviors.
 	//
 	// The default is `CACHING_DISABLED` so dynamic Lambda routes stay safe unless you

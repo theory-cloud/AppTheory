@@ -13,7 +13,8 @@ type AppTheoryJobsTableProps struct {
 	//
 	BillingMode awsdynamodb.BillingMode `field:"optional" json:"billingMode" yaml:"billingMode"`
 	// Whether deletion protection should be enabled for the table.
-	// Default: - AWS default (no deletion protection).
+	// Default: undefined (with no naming context: the AWS default, no deletion
+	// protection; with a naming context: on for a RETAIN table, off otherwise).
 	//
 	DeletionProtection *bool `field:"optional" json:"deletionProtection" yaml:"deletionProtection"`
 	// Whether point-in-time recovery should be enabled.
@@ -32,6 +33,16 @@ type AppTheoryJobsTableProps struct {
 	GrantReadWriteTo *[]awsiam.IGrantable `field:"optional" json:"grantReadWriteTo" yaml:"grantReadWriteTo"`
 	// Principals to grant DynamoDB write permissions to.
 	GrantWriteTo *[]awsiam.IGrantable `field:"optional" json:"grantWriteTo" yaml:"grantWriteTo"`
+	// Optional naming context.
+	//
+	// When present the table takes the contract's
+	// Security Hub-aligned defaults: point-in-time recovery on, and deletion
+	// protection on for a RETAIN table.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Provisioned read capacity (only used when billingMode is PROVISIONED).
 	// Default: 5.
 	//

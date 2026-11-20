@@ -59,9 +59,24 @@ type AppTheoryAppProps struct {
 	// Deprecated: Configure `retention` on an explicit `logs.LogGroup` and pass
 	// it as `logGroup` instead. AppTheory keeps honoring this property for
 	// existing stacks and has no planned removal date.
-	LogRetention       awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
-	MemorySize         *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
-	RateLimitTableName *string               `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
+	LogRetention awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
+	MemorySize   *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
+	// Optional naming context.
+	//
+	// When present the tables this construct creates
+	// (the database table and the rate-limit table) take the contract's Security
+	// Hub-aligned defaults: point-in-time recovery on, and deletion protection on
+	// for a RETAIN table.
+	//
+	// The context selects table defaults only. AppTheoryApp does not derive
+	// physical names for its HTTP API in the v0.1 resource-naming contract, so it
+	// consumes no naming entry.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext      AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
+	RateLimitTableName *string                `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
 	// Stable physical name for the app function's AppTheory-managed IAM role.
 	//
 	// AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.

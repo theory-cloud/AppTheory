@@ -35,6 +35,13 @@ type AppTheoryPathRoutedFrontendProps struct {
 	CloudFrontLogFormat AppTheoryCloudFrontLogFormat `field:"optional" json:"cloudFrontLogFormat" yaml:"cloudFrontLogFormat"`
 	// An optional name/comment for the distribution.
 	Comment *string `field:"optional" json:"comment" yaml:"comment"`
+	// Object CloudFront returns for a request to the distribution root.
+	//
+	// The frontend's root behavior targets the API origin, a custom origin that
+	// Security Hub CloudFront.1 does not evaluate, so AppTheory sets no default.
+	// Default: undefined.
+	//
+	DefaultRootObject *string `field:"optional" json:"defaultRootObject" yaml:"defaultRootObject"`
 	// Domain configuration for custom domain, certificate, and Route53.
 	Domain *PathRoutedFrontendDomainConfig `field:"optional" json:"domain" yaml:"domain"`
 	// Enable CloudFront access logging.
@@ -52,6 +59,15 @@ type AppTheoryPathRoutedFrontendProps struct {
 	//
 	// If not provided and enableLogging is true, a new bucket will be created.
 	LogsBucket awss3.IBucket `field:"optional" json:"logsBucket" yaml:"logsBucket"`
+	// Minimum TLS protocol version for viewers of a custom domain.
+	//
+	// With a derived naming context and a custom certificate the default is
+	// `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+	// widest client support.
+	// Default: TLS_V1_2_2025 under a derived naming context with a certificate,
+	// otherwise the CloudFront default for the certificate.
+	//
+	MinimumProtocolVersion awscloudfront.SecurityPolicyProtocol `field:"optional" json:"minimumProtocolVersion" yaml:"minimumProtocolVersion"`
 	// Optional naming and logging context.
 	//
 	// With the standard logging profile CloudFront access logs go to

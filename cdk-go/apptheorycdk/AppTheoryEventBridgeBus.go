@@ -15,9 +15,20 @@ type AppTheoryEventBridgeBus interface {
 	EventBus() awsevents.EventBus
 	// The tree node.
 	Node() constructs.Node
+	// The owning-account resource policy attached under a derived naming context.
+	OwningAccountPolicy() awsevents.CfnEventBusPolicy
 	Policies() *[]awsevents.CfnEventBusPolicy
 	// Adds a single account ID to the cross-account publish allowlist.
 	AllowAccount(accountId *string) awsevents.CfnEventBusPolicy
+	// Attaches the owning-account resource policy.
+	//
+	// Security Hub EventBridge.3 requires a custom bus to carry a resource-based
+	// policy. The policy grants the owning account `events:*` on this bus, so every
+	// same-account principal keeps exactly the access IAM already gives it, and no
+	// other account is admitted.
+	// See: https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html
+	//
+	AllowOwningAccount() awsevents.CfnEventBusPolicy
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -51,6 +62,16 @@ func (j *jsiiProxy_AppTheoryEventBridgeBus) Node() constructs.Node {
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryEventBridgeBus) OwningAccountPolicy() awsevents.CfnEventBusPolicy {
+	var returns awsevents.CfnEventBusPolicy
+	_jsii_.Get(
+		j,
+		"owningAccountPolicy",
 		&returns,
 	)
 	return returns
@@ -138,6 +159,19 @@ func (a *jsiiProxy_AppTheoryEventBridgeBus) AllowAccount(accountId *string) awse
 		a,
 		"allowAccount",
 		[]interface{}{accountId},
+		&returns,
+	)
+
+	return returns
+}
+
+func (a *jsiiProxy_AppTheoryEventBridgeBus) AllowOwningAccount() awsevents.CfnEventBusPolicy {
+	var returns awsevents.CfnEventBusPolicy
+
+	_jsii_.Invoke(
+		a,
+		"allowOwningAccount",
+		nil, // no parameters
 		&returns,
 	)
 

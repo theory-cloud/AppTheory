@@ -18,6 +18,13 @@ import (
 // (`aws-cdk-lib` 2.277.0) exposes `bucketNamespace` and `bucketNamePrefix`, so
 // no L1 property override is needed; CloudFormation appends
 // `-{account}-{region}-an` to the prefix.
+//
+// Under a derived profile the bucket also enforces TLS (`enforceSSL: true`),
+// which is the bucket-policy condition Security Hub S3.5 asks for. An explicit
+// `enforceSSL` still wins. Server access logging (S3.9) stays opt-in through the
+// inherited `serverAccessLogsBucket` and `serverAccessLogsPrefix` props, because
+// a log target costs money; the target bucket is the caller's and consumes no
+// naming entry (resource-naming contract section 4).
 type AppTheoryBucket interface {
 	constructs.Construct
 	// The bucket.
