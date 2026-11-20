@@ -28,8 +28,8 @@ That is what "live stays byte-identical until it moves accounts" means in practi
 profile and its template does not move; a stage that moves to a derived context (lab, or a live stage after an account
 move) picks the defaults up with no application change, because nothing comes from an environment variable.
 
-An application that needs a different setting overrides it with the explicit prop named in the table. Every default has
-one.
+An application that needs a different setting overrides it with the explicit prop named in the table. Where a construct
+exposes no override, the table says so.
 
 ## Security Hub mapping
 
@@ -44,8 +44,8 @@ DynamoDB controls: [DynamoDB.2](https://docs.aws.amazon.com/securityhub/latest/u
 
 | Control | Construct | Default under a derived context | Opt out or override |
 |---|---|---|---|
-| DynamoDB.2 | `AppTheoryDynamoTable`, `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryApp` database and rate-limit tables, `AppTheoryWebSocketApi` connection table, `AppTheoryMcpServer` session table, `AppTheoryMicrovmController` session table | Point-in-time recovery on | `enablePointInTimeRecovery: false`, `connectionTableEnablePointInTimeRecovery: false`, `enableSessionTablePointInTimeRecovery: false` |
-| DynamoDB.6 | the same tables | Deletion protection on when the resolved removal policy is `RETAIN` | `deletionProtection: false`, `connectionTableDeletionProtection`, `sessionState.deletionProtection`, `sessionTableDeletionProtection`; a `DESTROY` removal policy also leaves protection off so the stack still tears down |
+| DynamoDB.2 | `AppTheoryDynamoTable`, `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryApp` database and rate-limit tables, `AppTheoryWebSocketApi` connection table, `AppTheoryMcpServer` session table, `AppTheoryMicrovmController` session table, `AppTheoryRemoteMcpServer` session, stream and task tables | Point-in-time recovery on | `enablePointInTimeRecovery: false`, `connectionTableEnablePointInTimeRecovery: false`, `enableSessionTablePointInTimeRecovery: false`; the `AppTheoryRemoteMcpServer` tables have always enabled it and expose no override |
+| DynamoDB.6 | the same tables, including the `AppTheoryRemoteMcpServer` session, stream and task tables | Deletion protection on when the resolved removal policy is `RETAIN`; the `AppTheoryRemoteMcpServer` tables fix `DESTROY`, so DynamoDB.6 reports them by design under the lab removal-policy ruling | `deletionProtection: false`, `connectionTableDeletionProtection`, `sessionState.deletionProtection`, `sessionTableDeletionProtection`; a `DESTROY` removal policy also leaves protection off so the stack still tears down, and the `AppTheoryRemoteMcpServer` tables expose no override |
 | APIGateway.11 | `AppTheoryRestApiRouter`, `AppTheoryRemoteMcpServer` REST domains | `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` for a regional or private domain, `SecurityPolicy_TLS12_PFS_2025_EDGE` for an edge domain, with `endpointAccessMode: STRICT` | `domain.securityPolicy` and `domain.endpointAccessMode` |
 | APIGateway.11 | `AppTheoryHttpApi`, `AppTheoryApiDomain`, `AppTheoryHttpIngestionEndpoint`, `AppTheoryMcpServer` owned domain | `TLS_1_2`, the strongest policy API Gateway v2 offers (see the limitation below) | `securityPolicy` on the domain options |
 | CloudFront.15 | `AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`, `AppTheoryRestV1ChallengeRestoration` | `TLSv1.2_2025` on a distribution that serves a custom certificate | `minimumProtocolVersion` |
@@ -103,12 +103,20 @@ Factory disabled these controls for the platform because they do not apply to it
 | CloudFront.5 (access logging) | The control only evaluates legacy S3 standard logging. Under the standard logging profile AppTheory delivers CloudFront access logs to the contract log group through CloudWatch Logs vended delivery, so the control still reports a finding and Factory suppresses it rather than AppTheory downgrading the platform to S3 legacy logging to satisfy a check |
 | CloudFront.17 (trusted key groups) | Only `AppTheoryMediaCdn` supports signed access, and only when private media is configured |
 
-Two more limits a reader should know:
+More limits a reader should know:
 
 - **APIGateway.11 cannot pass for an HTTP API custom domain.** The control reference states that it generates a FAILED
   finding for custom domain names attached to HTTP APIs, so AppTheory sets the strongest policy API Gateway v2 offers
   (`TLS_1_2`) and does not claim the control for HTTP API domains. An app that must pass APIGateway.11 uses a REST API
   custom domain.
+- **The 2025 TLS policies are a client-compatibility change.** `TLSv1.2_2025` (CloudFront.15) and
+  `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` (APIGateway.11 on a REST regional or private domain, with the
+  `endpointAccessMode: STRICT` API Gateway requires for an enhanced policy) raise the minimum version and cipher suite:
+  a client that can only negotiate an older TLS 1.2 cipher suite is excluded. Each control accepts only its 2025
+  values, so the trade is explicit. `TLSv1.2_2025` is the more compatible of the two CloudFront.15 values, and the
+  regional APIGateway.11 policy is the only accepted regional policy that still admits TLS 1.2 (an edge domain takes
+  `SecurityPolicy_TLS12_PFS_2025_EDGE`). An app with a long-tail TLS 1.2 client overrides `minimumProtocolVersion` or
+  `domain.securityPolicy` and accepts the finding.
 - **S3.9 is opt-in, not default.** Enabling server access logging on every bucket would add a log target and storage
   cost that the platform has not budgeted, so AppTheory exposes the prop and leaves the decision to the app.
 
