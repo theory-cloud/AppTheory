@@ -63,7 +63,8 @@ Details behind the table:
   Amazon CloudFront distribution with S3 origins is configured to return a specific object that is the default root
   object" and fails a distribution that uses S3 origins without one; a distribution that carries custom origins only is
   not evaluated. AppTheory sets a default root object only where the control's root object rewrite (`/` →
-  `/<object>`) cannot change which origin serves `/`: the `ssg-isr` root behavior is the S3 HTML store, and the media
+  `/<object>`) cannot change which origin serves `/`: the `ssg-isr` root behavior is the S3 HTML origin (the
+  configured HTML store bucket, or the asset bucket when no HTML store is configured), and the media
   CDN's default behavior is the S3 media bucket over OAC. `ssr-only` (whose `/` must reach the function URL) and
   `AppTheoryPathRoutedFrontend` (whose `/` must reach the API origin whenever SPA prefixes add S3 origins) keep no
   default and are documented residuals below. `AppTheoryRestV1ChallengeRestoration` carries no S3 origin, so the
@@ -88,7 +89,7 @@ is no override.
 | `AppTheoryMediaCdn` | the media bucket | hardcoded `true` | supply `bucket` |
 | `AppTheoryMediaCdn` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
 | `AppTheorySsrSite` | the asset bucket | hardcoded `true` | supply `assetsBucket` |
-| `AppTheorySsrSite` | the `ssg-isr` HTML store bucket | hardcoded `true` | supply `htmlStoreBucket` |
+| `AppTheorySsrSite` | the HTML store bucket (when configured) | hardcoded `true` | supply `htmlStoreBucket` |
 | `AppTheorySsrSite` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
 | `AppTheoryPathRoutedFrontend` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
 | `AppTheoryS3Ingest` | the ingest bucket | hardcoded `true` | supply `bucket` |
@@ -104,7 +105,7 @@ default root object where `/` already reaches the S3 default behavior, because t
 
 | Distribution | S3 origin | Default behavior | Root object | Why |
 |---|---|---|---|---|
-| `AppTheorySsrSite` in `ssg-isr` mode | the HTML store | the S3 HTML store with the Lambda fallback | `index.html` | `/` reaches the S3 store first |
+| `AppTheorySsrSite` in `ssg-isr` mode | the HTML store, or the asset bucket when no HTML store is configured | the S3 origin with the Lambda fallback | `index.html` | `/` reaches the S3 store first |
 | `AppTheoryMediaCdn` | the media bucket | the S3 bucket over OAC | `index.html` | `/` already reaches the S3 bucket |
 | `AppTheorySsrSite` in `ssr-only` mode | the asset bucket | the Lambda function URL | none (residual) | `/` must reach the Lambda origin |
 | `AppTheoryPathRoutedFrontend` with SPA origins | the SPA buckets | the API origin | none (residual) | `/` must reach the API origin |
