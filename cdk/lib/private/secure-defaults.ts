@@ -70,6 +70,11 @@ export function defaultMinimumProtocolVersion(
  * APIGateway.11 for a regional or private endpoint: TLS 1.3 and TLS 1.2 with
  * perfect forward secrecy and post-quantum key exchange.
  *
+ * It is also a cipher-policy change for clients, with the same caveat as the
+ * CloudFront.15 2025 policies: a client that only negotiates an older TLS 1.2
+ * cipher suite is excluded. API Gateway requires `endpointAccessMode: STRICT`
+ * alongside an enhanced policy.
+ *
  * @see https://docs.aws.amazon.com/securityhub/latest/userguide/apigateway-controls.html
  */
 export const RECOMMENDED_REST_API_SECURITY_POLICY = apigw.SecurityPolicy.TLS13_1_2_PFS_PQ_2025_09;
