@@ -297,6 +297,74 @@ test("S1: a legacy naming context keeps the pinned template and gains no protect
   }
 });
 
+// An attached API does not receive a derived session-table name, but the
+// secure-defaults decision is independent of naming: the table AppTheory
+// creates is still covered by DynamoDB.6 under a derived context.
+function attachMcpServer(stack, context, overrides = {}) {
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "AttachedApi", {
+    httpApiId: "api-attached",
+    apiEndpoint: "https://attached.execute-api.us-east-1.amazonaws.com",
+  });
+  return new apptheory.AppTheoryMcpServer(stack, "Mcp", {
+    handler: handler(stack),
+    api: importedApi,
+    sessionState: { enabled: true },
+    ...(context ? { namingContext: context } : {}),
+    ...overrides,
+  });
+}
+
+test("S1: an attached-API session table takes the derived deletion-protection default", () => {
+  const template = synth((stack) => attachMcpServer(stack, labContext(stack)));
+  const owned = tables(template);
+  assert.equal(owned.length, 1, "attach mode still creates the session table");
+  assert.equal(owned[0].Properties?.DeletionProtectionEnabled, true, "DynamoDB.6 must protect the attached-API table");
+  assert.equal(owned[0].Properties?.TableName, undefined, "attach mode must not derive the session-table name");
+});
+
+test("S1: an attached-API session table keeps an explicit deletionProtection override", () => {
+  const off = synth((stack) =>
+    attachMcpServer(stack, labContext(stack), { sessionState: { enabled: true, deletionProtection: false } }),
+  );
+  assert.notEqual(tables(off)[0].Properties?.DeletionProtectionEnabled, true);
+
+  const on = synth((stack) =>
+    attachMcpServer(stack, labContext(stack), {
+      sessionState: { enabled: true, removalPolicy: cdk.RemovalPolicy.DESTROY, deletionProtection: true },
+    }),
+  );
+  assert.equal(tables(on)[0].Properties?.DeletionProtectionEnabled, true);
+});
+
+test("S1: an attached-API session table with DESTROY keeps deletion protection off", () => {
+  const template = synth((stack) =>
+    attachMcpServer(stack, labContext(stack), {
+      sessionState: { enabled: true, removalPolicy: cdk.RemovalPolicy.DESTROY },
+    }),
+  );
+  assert.notEqual(tables(template)[0].Properties?.DeletionProtectionEnabled, true);
+});
+
+test("S1: an attached-API session table is unchanged without a derived context", () => {
+  const noContext = synth((stack) => attachMcpServer(stack, undefined));
+  assert.equal(tables(noContext)[0].Properties?.DeletionProtectionEnabled, undefined);
+
+  const legacy = synth((stack) =>
+    attachMcpServer(
+      stack,
+      new apptheory.AppTheoryNamingContext(stack, "Naming", {
+        app: "autheory",
+        stage: "live",
+        account: "784055308075",
+        region: "us-east-1",
+        namingProfile: apptheory.AppTheoryNamingProfile.LEGACY,
+        loggingProfile: apptheory.AppTheoryLoggingProfile.LEGACY,
+      }),
+    ),
+  );
+  assert.equal(tables(legacy)[0].Properties?.DeletionProtectionEnabled, undefined);
+});
+
 // ---- S2: API custom domains -----------------------------------------------
 //
 // APIGateway.11 (recommended domain-name security policies):
