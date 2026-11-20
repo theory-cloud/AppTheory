@@ -49,22 +49,46 @@ DynamoDB controls: [DynamoDB.2](https://docs.aws.amazon.com/securityhub/latest/u
 | APIGateway.11 | `AppTheoryRestApiRouter`, `AppTheoryRemoteMcpServer` REST domains | `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` for a regional or private domain, `SecurityPolicy_TLS12_PFS_2025_EDGE` for an edge domain, with `endpointAccessMode: STRICT` | `domain.securityPolicy` and `domain.endpointAccessMode` |
 | APIGateway.11 | `AppTheoryHttpApi`, `AppTheoryApiDomain`, `AppTheoryHttpIngestionEndpoint`, `AppTheoryMcpServer` owned domain | `TLS_1_2`, the strongest policy API Gateway v2 offers (see the limitation below) | `securityPolicy` on the domain options |
 | CloudFront.15 | `AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`, `AppTheoryRestV1ChallengeRestoration` | `TLSv1.2_2025` on a distribution that serves a custom certificate | `minimumProtocolVersion` |
-| CloudFront.1 | `AppTheorySsrSite` in `ssg-isr` mode | `index.html` | `defaultRootObject` |
+| CloudFront.1 | `AppTheorySsrSite` in `ssg-isr` mode, `AppTheoryMediaCdn` | `index.html` where `/` already reaches the S3 default behavior | `defaultRootObject` |
 | EventBridge.3 | `AppTheoryEventBridgeBus` | A resource policy granting the owning account `events:*` on that bus, so same-account principals keep exactly the IAM access they already had and no other account is admitted | `owningAccountResourcePolicy: false` |
 | S3.5 | every bucket AppTheory creates | `enforceSSL` on, which adds the `aws:SecureTransport` deny policy | `enforceSSL: false` |
 | S3.9 | the data buckets `AppTheorySsrSite` and `AppTheoryMediaCdn` create | **Off.** Server access logging is opt-in because the log target and its storage cost money | `serverAccessLogsBucket` and `serverAccessLogsPrefix` |
 
-Two details behind the table:
+Details behind the table:
 
 - **CloudFront.15 evaluates only a distribution with a custom certificate.** Without a certificate CloudFront serves
   its fixed default certificate, so AppTheory sets no minimum protocol version and the control does not evaluate the
   distribution.
-- **CloudFront.1 evaluates S3 origins, not custom origins.** The `ssg-isr` root is the S3 HTML store, so it takes a
-  default root object. The `ssr-only` root is the Lambda function URL, and the path-routed frontend, the media CDN and
-  the REST v1 challenge-restoration front door serve a custom origin, so they take none; each construct documents that
-  and keeps the explicit prop.
+- **CloudFront.1 evaluates a distribution that carries S3 origins.** The control page says it "checks whether an
+  Amazon CloudFront distribution with S3 origins is configured to return a specific object that is the default root
+  object" and fails a distribution that uses S3 origins without one; a distribution that carries custom origins only is
+  not evaluated. AppTheory sets a default root object only where the control's root object rewrite (`/` →
+  `/<object>`) cannot change which origin serves `/`: the `ssg-isr` root behavior is the S3 HTML store, and the media
+  CDN's default behavior is the S3 media bucket over OAC. `ssr-only` (whose `/` must reach the function URL) and
+  `AppTheoryPathRoutedFrontend` (whose `/` must reach the API origin whenever SPA prefixes add S3 origins) keep no
+  default and are documented residuals below. `AppTheoryRestV1ChallengeRestoration` carries no S3 origin, so the
+  control does not evaluate it.
 - **The S3.9 log target consumes no naming entry.** Resource-naming contract section 4 keeps a construct's logging
   resources out of the naming entries, so the bucket you supply here is yours and never needs a `s3_bucket` entry.
+
+### CloudFront.1 residuals
+
+The control page for CloudFront.1 is
+[CloudFront.1](https://docs.aws.amazon.com/securityhub/latest/userguide/cloudfront-controls.html). AppTheory sets a
+default root object where `/` already reaches the S3 default behavior, because the control's rewrite (`/` →
+`/<object>`) must not change where `/` goes:
+
+| Distribution | S3 origin | Default behavior | Root object | Why |
+|---|---|---|---|---|
+| `AppTheorySsrSite` in `ssg-isr` mode | the HTML store | the S3 HTML store with the Lambda fallback | `index.html` | `/` already reaches the S3 store |
+| `AppTheoryMediaCdn` | the media bucket | the S3 bucket over OAC | `index.html` | `/` already reaches the S3 bucket |
+| `AppTheorySsrSite` in `ssr-only` mode | the asset bucket | the Lambda function URL | none (residual) | `/` must reach the Lambda origin |
+| `AppTheoryPathRoutedFrontend` with SPA origins | the SPA buckets | the API origin | none (residual) | `/` must reach the API origin |
+| `AppTheoryRestV1ChallengeRestoration` | none | the REST API origin | not evaluated | no S3 origin, so the control does not apply |
+
+A finding on the two residual rows is expected, and it is the correct trade: a default root object there would move `/`
+to a different origin, which changes what the distribution serves. Both constructs keep the explicit prop for an app
+that knows its own routing is safe.
 
 ## Controls the framework deliberately does not address
 
