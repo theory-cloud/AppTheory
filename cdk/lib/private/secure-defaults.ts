@@ -72,8 +72,9 @@ export function defaultMinimumProtocolVersion(
  *
  * It is also a cipher-policy change for clients, with the same caveat as the
  * CloudFront.15 2025 policies: a client that only negotiates an older TLS 1.2
- * cipher suite is excluded. API Gateway requires `endpointAccessMode: STRICT`
- * alongside an enhanced policy.
+ * cipher suite is excluded. An enhanced policy requires an endpoint access
+ * mode alongside it: AppTheory derives `STRICT` (the recommended mode), and
+ * `BASIC` remains available through `domain.endpointAccessMode`.
  *
  * @see https://docs.aws.amazon.com/securityhub/latest/userguide/apigateway-controls.html
  */

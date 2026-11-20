@@ -130,8 +130,10 @@ export interface AppTheoryRestApiRouterDomainOptions {
      *
      * The 2025 policies are also a cipher-policy change for clients, the same
      * caveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only
-     * negotiates an older TLS 1.2 cipher suite is excluded. API Gateway
-     * requires `endpointAccessMode: STRICT` alongside an enhanced policy.
+     * negotiates an older TLS 1.2 cipher suite is excluded. An enhanced policy
+     * requires an endpoint access mode alongside it: AppTheory derives `STRICT`
+     * (the recommended mode), and `BASIC` remains available through
+     * `domain.endpointAccessMode`.
      *
      * @default TLS_1_2, or the APIGateway.11 policy under a derived naming context
      */
