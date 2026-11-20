@@ -20,6 +20,7 @@ contract.
 - [Observability Hooks](./observability.md)
 - [Logging Profiles](./logging-profiles.md)
 - [Resource Naming](./resource-naming.md)
+- [Security Hub Defaults](./security-hub-defaults.md)
 - [Logging and Visibility](./logging-and-visibility.md)
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)

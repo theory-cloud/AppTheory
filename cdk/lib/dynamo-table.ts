@@ -4,6 +4,9 @@ import type * as iam from "aws-cdk-lib/aws-iam";
 import type * as kms from "aws-cdk-lib/aws-kms";
 import { Construct } from "constructs";
 
+import type { AppTheoryNamingContext } from "./naming-context";
+import { defaultDeletionProtection } from "./private/secure-defaults";
+
 export interface AppTheoryDynamoTableGsiProps {
   readonly indexName: string;
   readonly partitionKeyName: string;
@@ -35,6 +38,17 @@ export interface AppTheoryDynamoTableProps {
   readonly streamViewType?: dynamodb.StreamViewType;
   readonly globalSecondaryIndexes?: AppTheoryDynamoTableGsiProps[];
 
+  /**
+   * Optional naming context. Under a derived naming context the table takes the contract's
+   * Security Hub-aligned defaults: point-in-time recovery on, and deletion
+   * protection on for a RETAIN table.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
   readonly grantReadTo?: iam.IGrantable[];
   readonly grantWriteTo?: iam.IGrantable[];
   readonly grantReadWriteTo?: iam.IGrantable[];
@@ -52,6 +66,11 @@ export class AppTheoryDynamoTable extends Construct {
     const ttlAttribute =
       props.timeToLiveAttribute === undefined ? undefined : String(props.timeToLiveAttribute).trim();
     const enablePITR = props.enablePointInTimeRecovery ?? true;
+    const deletionProtection = defaultDeletionProtection(
+      props.namingContext,
+      removalPolicy,
+      props.deletionProtection,
+    );
     const encryption = props.encryption ?? dynamodb.TableEncryption.AWS_MANAGED;
     const enableStream = props.enableStream ?? false;
 
@@ -80,7 +99,7 @@ export class AppTheoryDynamoTable extends Construct {
       },
       ...(ttlAttribute ? { timeToLiveAttribute: ttlAttribute } : {}),
       removalPolicy,
-      deletionProtection: props.deletionProtection,
+      deletionProtection: deletionProtection,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: enablePITR,
       },

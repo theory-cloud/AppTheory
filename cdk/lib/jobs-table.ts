@@ -5,6 +5,9 @@ import type * as kms from "aws-cdk-lib/aws-kms";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
+import type { AppTheoryNamingContext } from "./naming-context";
+import { defaultDeletionProtection } from "./private/secure-defaults";
+
 export interface AppTheoryJobsTableProps {
   /**
    * Optional table name.
@@ -26,7 +29,8 @@ export interface AppTheoryJobsTableProps {
 
   /**
    * Whether deletion protection should be enabled for the table.
-   * @default - AWS default (no deletion protection)
+   * @default undefined (with no naming context: the AWS default, no deletion
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
    */
   readonly deletionProtection?: boolean;
 
@@ -79,6 +83,17 @@ export interface AppTheoryJobsTableProps {
    * Principals to grant DynamoDB read/write permissions to.
    */
   readonly grantReadWriteTo?: iam.IGrantable[];
+
+  /**
+   * Optional naming context. Under a derived naming context the table takes the contract's
+   * Security Hub-aligned defaults: point-in-time recovery on, and deletion
+   * protection on for a RETAIN table.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
 }
 
 /**
@@ -106,6 +121,11 @@ export class AppTheoryJobsTable extends Construct {
     const ttlAttribute = props.timeToLiveAttribute ?? "ttl";
     const enablePITR = props.enablePointInTimeRecovery ?? true;
     const encryption = props.encryption ?? dynamodb.TableEncryption.AWS_MANAGED;
+    const deletionProtection = defaultDeletionProtection(
+      props.namingContext,
+      removalPolicy,
+      props.deletionProtection,
+    );
 
     if (encryption === dynamodb.TableEncryption.CUSTOMER_MANAGED && !props.encryptionKey) {
       throw new Error("AppTheoryJobsTable requires encryptionKey when encryption is CUSTOMER_MANAGED");
@@ -118,7 +138,7 @@ export class AppTheoryJobsTable extends Construct {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: ttlAttribute,
       removalPolicy,
-      deletionProtection: props.deletionProtection,
+      deletionProtection: deletionProtection,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: enablePITR,
       },

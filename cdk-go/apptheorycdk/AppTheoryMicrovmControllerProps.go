@@ -101,7 +101,8 @@ type AppTheoryMicrovmControllerProps struct {
 	//
 	SessionTableBillingMode awsdynamodb.BillingMode `field:"optional" json:"sessionTableBillingMode" yaml:"sessionTableBillingMode"`
 	// Whether deletion protection should be enabled for the session registry table.
-	// Default: - AWS default (no deletion protection).
+	// Default: undefined (with no naming context: the AWS default, no deletion
+	// protection; under a derived naming context: on for a RETAIN table, off otherwise).
 	//
 	SessionTableDeletionProtection *bool `field:"optional" json:"sessionTableDeletionProtection" yaml:"sessionTableDeletionProtection"`
 	// Session registry table encryption setting.

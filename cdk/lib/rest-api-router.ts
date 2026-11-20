@@ -11,6 +11,12 @@ import { Construct } from "constructs";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { configureRestApiRegionalWaf } from "./private/rest-api-waf";
+import {
+    RECOMMENDED_EDGE_REST_API_SECURITY_POLICY,
+    RECOMMENDED_REST_API_SECURITY_POLICY,
+    isEnhancedRestSecurityPolicy,
+    secureDefaults,
+} from "./private/secure-defaults";
 import { restApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
@@ -150,9 +156,33 @@ export interface AppTheoryRestApiRouterDomainOptions {
 
     /**
      * Security policy for the domain.
-     * @default TLS_1_2
+     *
+     * With a derived naming context the default is the policy Security Hub
+     * APIGateway.11 accepts for the endpoint type (regional:
+     * `TLS13_1_2_PFS_PQ_2025_09`, edge: `TLS12_PFS_2025_EDGE`). Without a
+     * naming context the default is `TLS_1_2`.
+     *
+     * The 2025 policies are also a cipher-policy change for clients, the same
+     * caveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only
+     * negotiates an older TLS 1.2 cipher suite is excluded. An enhanced policy
+     * requires an endpoint access mode alongside it: AppTheory derives `STRICT`
+     * (the recommended mode), and `BASIC` remains available through
+     * `domain.endpointAccessMode`.
+     *
+     * @default TLS_1_2, or the APIGateway.11 policy under a derived naming context
      */
     readonly securityPolicy?: apigw.SecurityPolicy;
+
+    /**
+     * Endpoint access mode for an enhanced (`SecurityPolicy_*`) security policy.
+     *
+     * API Gateway requires this for an enhanced policy and rejects it for a
+     * legacy one. When unset, an enhanced effective policy takes `STRICT` and a
+     * legacy policy takes no mode.
+     *
+     * @default STRICT for an enhanced effective policy, otherwise undefined
+     */
+    readonly endpointAccessMode?: apigw.EndpointAccessMode;
 }
 
 /**
@@ -673,11 +703,23 @@ export class AppTheoryRestApiRouter extends Construct {
 
         // Create the domain name
         const endpointType = domainOpts.endpointType ?? apigw.EndpointType.REGIONAL;
+        // Security Hub APIGateway.11 accepts only the 2025 enhanced policies, and
+        // API Gateway rejects a regional policy on an edge domain (and vice
+        // versa). Without a naming context the pre-contract TLS_1_2 default stays.
+        const securityPolicy = domainOpts.securityPolicy
+            ?? (secureDefaults(this.namingContext)
+                ? (endpointType === apigw.EndpointType.EDGE
+                    ? RECOMMENDED_EDGE_REST_API_SECURITY_POLICY
+                    : RECOMMENDED_REST_API_SECURITY_POLICY)
+                : apigw.SecurityPolicy.TLS_1_2);
+        const endpointAccessMode = domainOpts.endpointAccessMode
+            ?? (isEnhancedRestSecurityPolicy(securityPolicy) ? apigw.EndpointAccessMode.STRICT : undefined);
         const dmn = new apigw.DomainName(this, "DomainName", {
             domainName: domainOpts.domainName,
             certificate,
             endpointType,
-            securityPolicy: domainOpts.securityPolicy ?? apigw.SecurityPolicy.TLS_1_2,
+            securityPolicy,
+            ...(endpointAccessMode !== undefined ? { endpointAccessMode } : {}),
         });
         (this as { domainName?: apigw.DomainName }).domainName = dmn;
 

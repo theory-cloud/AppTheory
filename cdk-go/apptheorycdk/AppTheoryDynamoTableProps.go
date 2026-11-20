@@ -22,11 +22,21 @@ type AppTheoryDynamoTableProps struct {
 	GrantReadWriteTo          *[]awsiam.IGrantable             `field:"optional" json:"grantReadWriteTo" yaml:"grantReadWriteTo"`
 	GrantStreamReadTo         *[]awsiam.IGrantable             `field:"optional" json:"grantStreamReadTo" yaml:"grantStreamReadTo"`
 	GrantWriteTo              *[]awsiam.IGrantable             `field:"optional" json:"grantWriteTo" yaml:"grantWriteTo"`
-	PartitionKeyType          awsdynamodb.AttributeType        `field:"optional" json:"partitionKeyType" yaml:"partitionKeyType"`
-	ReadCapacity              *float64                         `field:"optional" json:"readCapacity" yaml:"readCapacity"`
-	RemovalPolicy             awscdk.RemovalPolicy             `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
-	SortKeyType               awsdynamodb.AttributeType        `field:"optional" json:"sortKeyType" yaml:"sortKeyType"`
-	StreamViewType            awsdynamodb.StreamViewType       `field:"optional" json:"streamViewType" yaml:"streamViewType"`
-	TimeToLiveAttribute       *string                          `field:"optional" json:"timeToLiveAttribute" yaml:"timeToLiveAttribute"`
-	WriteCapacity             *float64                         `field:"optional" json:"writeCapacity" yaml:"writeCapacity"`
+	// Optional naming context.
+	//
+	// Under a derived naming context the table takes the contract's
+	// Security Hub-aligned defaults: point-in-time recovery on, and deletion
+	// protection on for a RETAIN table.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext       AppTheoryNamingContext     `field:"optional" json:"namingContext" yaml:"namingContext"`
+	PartitionKeyType    awsdynamodb.AttributeType  `field:"optional" json:"partitionKeyType" yaml:"partitionKeyType"`
+	ReadCapacity        *float64                   `field:"optional" json:"readCapacity" yaml:"readCapacity"`
+	RemovalPolicy       awscdk.RemovalPolicy       `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
+	SortKeyType         awsdynamodb.AttributeType  `field:"optional" json:"sortKeyType" yaml:"sortKeyType"`
+	StreamViewType      awsdynamodb.StreamViewType `field:"optional" json:"streamViewType" yaml:"streamViewType"`
+	TimeToLiveAttribute *string                    `field:"optional" json:"timeToLiveAttribute" yaml:"timeToLiveAttribute"`
+	WriteCapacity       *float64                   `field:"optional" json:"writeCapacity" yaml:"writeCapacity"`
 }

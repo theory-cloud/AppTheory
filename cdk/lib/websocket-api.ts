@@ -10,6 +10,7 @@ import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { defaultDeletionProtection } from "./private/secure-defaults";
 import { retentionFor, webSocketApiAccessLogFormat } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -29,6 +30,12 @@ export interface AppTheoryWebSocketApiProps {
   readonly connectionTableTimeToLiveAttribute?: string;
   readonly connectionTableRemovalPolicy?: RemovalPolicy;
   readonly connectionTableEnablePointInTimeRecovery?: boolean;
+  /**
+   * Whether deletion protection should be enabled for the connection table.
+   * @default undefined (with no naming context: the AWS default, no deletion
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
+   */
+  readonly connectionTableDeletionProtection?: boolean;
 
   readonly enableAccessLogging?: boolean;
   readonly accessLogGroup?: logs.ILogGroup;
@@ -129,6 +136,11 @@ export class AppTheoryWebSocketApi extends Construct {
       const ttlAttribute = props.connectionTableTimeToLiveAttribute ?? "ttl";
       const removalPolicy = props.connectionTableRemovalPolicy ?? RemovalPolicy.RETAIN;
       const enablePITR = props.connectionTableEnablePointInTimeRecovery ?? true;
+      const deletionProtection = defaultDeletionProtection(
+        namingContext,
+        removalPolicy,
+        props.connectionTableDeletionProtection,
+      );
 
       this.connectionTable = new dynamodb.Table(this, "ConnectionTable", {
         tableName: derivedTableName && !derivedTableName.generated ? derivedTableName.name : props.connectionTableName,
@@ -137,6 +149,7 @@ export class AppTheoryWebSocketApi extends Construct {
         sortKey: { name: skName, type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: ttlAttribute,
         removalPolicy,
+        deletionProtection: deletionProtection,
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: enablePITR,
         },

@@ -9,6 +9,7 @@ import { Construct } from "constructs";
 
 import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
+import { defaultMinimumProtocolVersion } from "./private/secure-defaults";
 import { enableCloudFrontStandardLogging } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import { stripTrailingPort, trimRepeatedCharEnd } from "./private/string-utils";
@@ -274,6 +275,31 @@ export interface AppTheoryPathRoutedFrontendProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+
+    /**
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * The frontend's default behavior targets the API origin. When SPA prefixes
+     * route to S3 origins the distribution carries S3 origins, so Security Hub
+     * CloudFront.1 evaluates it, but `/` must reach the API origin; a default
+     * root object would rewrite `/` onto the API, so AppTheory deliberately
+     * sets none and the control reports a residual finding.
+     *
+     * @default undefined
+     */
+    readonly defaultRootObject?: string;
 }
 
 /**
@@ -537,6 +563,12 @@ export class AppTheoryPathRoutedFrontend extends Construct {
             props.apiResponseHeadersPolicy ??
             props.responseHeadersPolicy;
 
+        // Security Hub CloudFront.15 under a derived naming context.
+        const minimumProtocolVersion = defaultMinimumProtocolVersion(
+            namingContext,
+            distributionCertificate !== undefined,
+            props.minimumProtocolVersion,
+        );
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             ...(enableLogging && this.logsBucket
                 ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -544,6 +576,8 @@ export class AppTheoryPathRoutedFrontend extends Construct {
             ...(distributionDomainNames && distributionCertificate
                 ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
                 : {}),
+            ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
+            ...(props.defaultRootObject !== undefined ? { defaultRootObject: props.defaultRootObject } : {}),
             defaultBehavior: {
                 origin: apiOrigin,
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,

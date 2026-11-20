@@ -233,13 +233,14 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
     AppTheoryMcpOwningApiThrottlingOptions: ["burstLimit", "rateLimit"],
     AppTheoryMcpRouteFamily: ["patterns", "rootAuthorizationServerDiscovery"],
     AppTheoryMcpServerOwnedApiOptions: ["apiName", "domain", "stage"],
-    AppTheoryMcpSessionStateOptions: ["enabled", "removalPolicy", "tableName", "ttlMinutes"],
+    AppTheoryMcpSessionStateOptions: ["deletionProtection", "enabled", "removalPolicy", "tableName", "ttlMinutes"],
     AppTheoryMcpServerDomainOptions: [
       "certificate",
       "certificateArn",
       "domainName",
       "hostedZone",
       "mutualTlsAuthentication",
+      "securityPolicy",
     ],
     AppTheoryMcpServerStageOptions: [
       "accessLogRetention",

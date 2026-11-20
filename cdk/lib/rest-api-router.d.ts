@@ -122,9 +122,32 @@ export interface AppTheoryRestApiRouterDomainOptions {
     readonly endpointType?: apigw.EndpointType;
     /**
      * Security policy for the domain.
-     * @default TLS_1_2
+     *
+     * With a derived naming context the default is the policy Security Hub
+     * APIGateway.11 accepts for the endpoint type (regional:
+     * `TLS13_1_2_PFS_PQ_2025_09`, edge: `TLS12_PFS_2025_EDGE`). Without a
+     * naming context the default is `TLS_1_2`.
+     *
+     * The 2025 policies are also a cipher-policy change for clients, the same
+     * caveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only
+     * negotiates an older TLS 1.2 cipher suite is excluded. An enhanced policy
+     * requires an endpoint access mode alongside it: AppTheory derives `STRICT`
+     * (the recommended mode), and `BASIC` remains available through
+     * `domain.endpointAccessMode`.
+     *
+     * @default TLS_1_2, or the APIGateway.11 policy under a derived naming context
      */
     readonly securityPolicy?: apigw.SecurityPolicy;
+    /**
+     * Endpoint access mode for an enhanced (`SecurityPolicy_*`) security policy.
+     *
+     * API Gateway requires this for an enhanced policy and rejects it for a
+     * legacy one. When unset, an enhanced effective policy takes `STRICT` and a
+     * legacy policy takes no mode.
+     *
+     * @default STRICT for an enhanced effective policy, otherwise undefined
+     */
+    readonly endpointAccessMode?: apigw.EndpointAccessMode;
 }
 /**
  * Options for adding a Lambda integration to a route.

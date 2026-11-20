@@ -6,6 +6,13 @@ import (
 
 // DynamoDB-backed MCP session-state configuration.
 type AppTheoryMcpSessionStateOptions struct {
+	// Whether deletion protection should be enabled for the session table.
+	//
+	// Valid only when session state is enabled.
+	// Default: undefined (with no naming context: the AWS default, no deletion
+	// protection; under a derived naming context: on for a RETAIN table, off otherwise).
+	//
+	DeletionProtection *bool `field:"optional" json:"deletionProtection" yaml:"deletionProtection"`
 	// Default: true.
 	//
 	Enabled *bool `field:"optional" json:"enabled" yaml:"enabled"`

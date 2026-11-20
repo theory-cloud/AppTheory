@@ -38,6 +38,20 @@ type AppTheoryRestV1ChallengeRestorationProps struct {
 	//
 	// When set, `certificate` is required.
 	DomainNames *[]*string `field:"optional" json:"domainNames" yaml:"domainNames"`
+	// Minimum TLS protocol version for viewers of `domainNames`.
+	// Default: TLS_V1_2_2025 under a derived naming context with a certificate,
+	// otherwise the CloudFront default for the certificate.
+	//
+	MinimumProtocolVersion awscloudfront.SecurityPolicyProtocol `field:"optional" json:"minimumProtocolVersion" yaml:"minimumProtocolVersion"`
+	// Optional naming context that selects the Security Hub-aligned defaults.
+	//
+	// Under a derived context a distribution that serves `domainNames` through
+	// `certificate` takes the CloudFront.15 `TLS_V1_2_2025` viewer policy. Its
+	// origins are the REST API only, so it carries no S3 origin and CloudFront.1
+	// does not evaluate it; no default root object applies.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// The mandatory origin lock, required with `originReachability: LOCKED`.
 	OriginLock *AppTheoryRestV1OriginLockOptions `field:"optional" json:"originLock" yaml:"originLock"`
 	// Optional CloudFront price class.

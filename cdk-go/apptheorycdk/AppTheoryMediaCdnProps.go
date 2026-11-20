@@ -35,7 +35,14 @@ type AppTheoryMediaCdnProps struct {
 	CloudFrontLogFormat AppTheoryCloudFrontLogFormat `field:"optional" json:"cloudFrontLogFormat" yaml:"cloudFrontLogFormat"`
 	// An optional name/comment for the distribution.
 	Comment *string `field:"optional" json:"comment" yaml:"comment"`
-	// Default root object for the distribution.
+	// Object CloudFront returns for a request to the distribution root.
+	//
+	// With a derived naming context the default is `index.html`: the default
+	// behavior already sends `/` to the S3 bucket through OAC, so the root
+	// object rewrite (`/` -> `/index.html`) changes which object that behavior
+	// returns, not which origin serves it (Security Hub CloudFront.1).
+	// Default: "index.html" under a derived naming context, otherwise undefined
+	//
 	DefaultRootObject *string `field:"optional" json:"defaultRootObject" yaml:"defaultRootObject"`
 	// Domain configuration for custom domain, certificate, and Route53.
 	Domain *MediaCdnDomainConfig `field:"optional" json:"domain" yaml:"domain"`
@@ -56,6 +63,15 @@ type AppTheoryMediaCdnProps struct {
 	//
 	// If not provided and enableLogging is true, a new bucket will be created.
 	LogsBucket awss3.IBucket `field:"optional" json:"logsBucket" yaml:"logsBucket"`
+	// Minimum TLS protocol version for viewers of a custom domain.
+	//
+	// With a derived naming context and a custom certificate the default is
+	// `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+	// widest client support.
+	// Default: TLS_V1_2_2025 under a derived naming context with a certificate,
+	// otherwise the CloudFront default for the certificate.
+	//
+	MinimumProtocolVersion awscloudfront.SecurityPolicyProtocol `field:"optional" json:"minimumProtocolVersion" yaml:"minimumProtocolVersion"`
 	// Optional naming and logging context.
 	//
 	// With the standard logging profile the media bucket takes its name from the
@@ -83,6 +99,21 @@ type AppTheoryMediaCdnProps struct {
 	RemovalPolicy awscdk.RemovalPolicy `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
 	// Response headers policy to apply to the distribution.
 	ResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"responseHeadersPolicy" yaml:"responseHeadersPolicy"`
+	// Bucket that receives S3 server access logs for the media bucket this construct creates, which is what Security Hub S3.9 evaluates.
+	//
+	// Off by default because the log target and its storage cost money. The
+	// target bucket is yours: it takes no naming entry (resource-naming
+	// contract section 4).
+	// Default: no server access logging.
+	//
+	ServerAccessLogsBucket awss3.IBucket `field:"optional" json:"serverAccessLogsBucket" yaml:"serverAccessLogsBucket"`
+	// Key prefix for the server access logs.
+	//
+	// Only used with
+	// `serverAccessLogsBucket`.
+	// Default: no prefix.
+	//
+	ServerAccessLogsPrefix *string `field:"optional" json:"serverAccessLogsPrefix" yaml:"serverAccessLogsPrefix"`
 	// Optional web ACL ID for AWS WAF integration.
 	WebAclId *string `field:"optional" json:"webAclId" yaml:"webAclId"`
 }

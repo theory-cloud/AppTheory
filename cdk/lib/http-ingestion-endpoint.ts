@@ -8,7 +8,9 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
+import { RECOMMENDED_HTTP_API_SECURITY_POLICY, secureDefaults } from "./private/secure-defaults";
 import { collapseRepeatedChar, trimRepeatedChar, trimRepeatedCharEnd } from "./private/string-utils";
+import type { AppTheoryNamingContext } from "./naming-context";
 
 export interface AppTheoryHttpIngestionEndpointDomainOptions {
   /**
@@ -40,6 +42,17 @@ export interface AppTheoryHttpIngestionEndpointDomainOptions {
    * @default undefined
    */
   readonly basePath?: string;
+
+  /**
+   * TLS security policy for the custom domain.
+   *
+   * Under a derived naming context the default is TLS 1.2, the strongest policy
+   * API Gateway v2 offers. Security Hub APIGateway.11 always fails a custom
+   * domain attached to an HTTP API, so no policy satisfies it there.
+   *
+   * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
+   */
+  readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
 
 export interface AppTheoryHttpIngestionEndpointStageOptions {
@@ -144,6 +157,16 @@ export interface AppTheoryHttpIngestionEndpointProps {
    * @default undefined
    */
   readonly stage?: AppTheoryHttpIngestionEndpointStageOptions;
+
+  /**
+   * Optional naming context that selects the Security Hub-aligned defaults.
+   * Under a derived context a custom domain takes TLS 1.2, the strongest policy
+   * API Gateway v2 offers; Security Hub APIGateway.11 always fails a custom
+   * domain attached to an HTTP API.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
 }
 
 /**
@@ -243,7 +266,7 @@ export class AppTheoryHttpIngestionEndpoint extends Construct {
     });
 
     if (props.domain) {
-      this.setupCustomDomain(props.domain);
+      this.setupCustomDomain(props.domain, props.namingContext);
       this.endpoint = joinUrlParts(
         `https://${props.domain.domainName}`,
         props.domain.basePath,
@@ -257,7 +280,10 @@ export class AppTheoryHttpIngestionEndpoint extends Construct {
     }
   }
 
-  private setupCustomDomain(domainOpts: AppTheoryHttpIngestionEndpointDomainOptions): void {
+  private setupCustomDomain(
+    domainOpts: AppTheoryHttpIngestionEndpointDomainOptions,
+    namingContext?: AppTheoryNamingContext,
+  ): void {
     const certificate = domainOpts.certificate ?? (domainOpts.certificateArn
       ? acm.Certificate.fromCertificateArn(this, "ImportedCert", domainOpts.certificateArn) as acm.ICertificate
       : undefined);
@@ -269,6 +295,8 @@ export class AppTheoryHttpIngestionEndpoint extends Construct {
     const domainName = new apigwv2.DomainName(this, "DomainName", {
       domainName: domainOpts.domainName,
       certificate,
+      securityPolicy: domainOpts.securityPolicy
+        ?? (secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined),
     });
     (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
 

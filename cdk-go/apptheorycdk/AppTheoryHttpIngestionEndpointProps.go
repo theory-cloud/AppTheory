@@ -38,6 +38,14 @@ type AppTheoryHttpIngestionEndpointProps struct {
 	// Default: "/ingest".
 	//
 	EndpointPath *string `field:"optional" json:"endpointPath" yaml:"endpointPath"`
+	// Optional naming context that selects the Security Hub-aligned defaults.
+	//
+	// Under a derived context a custom domain takes TLS 1.2, the strongest policy
+	// API Gateway v2 offers; Security Hub APIGateway.11 always fails a custom
+	// domain attached to an HTTP API.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Whether the Lambda invoke permission should be scoped to the ingestion route.
 	//
 	// When false, the construct grants one API-scoped invoke permission instead of one

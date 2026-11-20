@@ -11,6 +11,7 @@ import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { defaultDeletionProtection } from "./private/secure-defaults";
 import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryMicrovmImageLogging, IAppTheoryMicrovmImage } from "./microvm-image";
@@ -270,7 +271,8 @@ export interface AppTheoryMicrovmControllerProps {
   /**
    * Whether deletion protection should be enabled for the session registry table.
    *
-   * @default - AWS default (no deletion protection)
+   * @default undefined (with no naming context: the AWS default, no deletion
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
    */
   readonly sessionTableDeletionProtection?: boolean;
 
@@ -468,6 +470,11 @@ export class AppTheoryMicrovmController extends Construct {
     const removalPolicy = props.sessionTableRemovalPolicy ?? RemovalPolicy.RETAIN;
     const encryption = props.sessionTableEncryption ?? dynamodb.TableEncryption.AWS_MANAGED;
     const enablePITR = props.enableSessionTablePointInTimeRecovery ?? true;
+    const deletionProtection = defaultDeletionProtection(
+      props.namingContext,
+      removalPolicy,
+      props.sessionTableDeletionProtection,
+    );
 
     if (encryption === dynamodb.TableEncryption.CUSTOMER_MANAGED && !props.sessionTableEncryptionKey) {
       throw new Error(
@@ -486,7 +493,7 @@ export class AppTheoryMicrovmController extends Construct {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: "ttl",
       removalPolicy,
-      deletionProtection: props.sessionTableDeletionProtection,
+      deletionProtection: deletionProtection,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: enablePITR,
       },
