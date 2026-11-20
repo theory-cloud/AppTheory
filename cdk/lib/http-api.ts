@@ -112,7 +112,7 @@ export interface AppTheoryHttpApiDomainOptions {
 
   /**
    * TLS security policy.
-   * @default API Gateway default
+   * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
    */
   readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
@@ -411,7 +411,7 @@ export class AppTheoryHttpApi extends Construct {
     }
 
     if (props.domain) {
-      this.configureDomain(props.domain);
+      this.configureDomain(props.domain, props.namingContext);
     }
   }
 
@@ -499,7 +499,7 @@ export class AppTheoryHttpApi extends Construct {
     };
   }
 
-  private configureDomain(options: AppTheoryHttpApiDomainOptions): void {
+  private configureDomain(options: AppTheoryHttpApiDomainOptions, namingContext?: AppTheoryNamingContext): void {
     const certificate = options.certificate ?? (options.certificateArn
       ? acm.Certificate.fromCertificateArn(this, "ImportedCertificate", options.certificateArn)
       : undefined);
@@ -518,6 +518,7 @@ export class AppTheoryHttpApi extends Construct {
       recordTtl: options.recordTtl,
       mutualTlsAuthentication: options.mutualTlsAuthentication,
       securityPolicy: options.securityPolicy,
+      namingContext,
     });
     (this as { domain?: AppTheoryApiDomain }).domain = domain;
   }

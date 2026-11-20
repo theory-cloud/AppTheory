@@ -15,6 +15,11 @@ import { Construct } from "constructs";
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import {
+  RECOMMENDED_HTTP_API_SECURITY_POLICY,
+  defaultDeletionProtection,
+  secureDefaults,
+} from "./private/secure-defaults";
 import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import { buildCorsPreflight } from "./cors";
@@ -352,6 +357,17 @@ export interface AppTheoryMcpServerDomainOptions {
    * @default undefined
    */
   readonly mutualTlsAuthentication?: apigwv2.MTLSConfig;
+
+  /**
+   * TLS security policy for the owned custom domain.
+   *
+   * Under a derived naming context the default is TLS 1.2, the strongest policy
+   * API Gateway v2 offers. Security Hub APIGateway.11 always fails a custom
+   * domain attached to an HTTP API, so no policy satisfies it there.
+   *
+   * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
+   */
+  readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
 
 /** Stage configuration for an AppTheory-owned MCP HTTP API. */
@@ -442,6 +458,14 @@ export interface AppTheoryMcpSessionStateOptions {
    * @default RemovalPolicy.RETAIN
    */
   readonly removalPolicy?: RemovalPolicy;
+
+  /**
+   * Whether deletion protection should be enabled for the session table.
+   * Valid only when session state is enabled.
+   * @default undefined (with no naming context: the AWS default, no deletion
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
+   */
+  readonly deletionProtection?: boolean;
 }
 
 /** One derived MCP OAuth facade route family. */
@@ -1012,12 +1036,15 @@ export class AppTheoryMcpServer extends Construct {
 
     const sessionState = normalizeSessionState(props);
     if (sessionState.enabled) {
-      const namingContext = props.api ? undefined : props.namingContext;
-      const logical = namingContext
+      // Only an owned API derives the session-table name. The secure-default
+      // decision is separate: an attached API still receives the deletion
+      // protection (DynamoDB.6) that the AppTheory-created table needs.
+      const sessionNamingContext = props.api ? undefined : props.namingContext;
+      const logical = sessionNamingContext
         ? props.logicalName ?? defaultLogicalName(this)
         : undefined;
-      const derivedTableName = namingContext && logical
-        ? namingContext.physicalName("dynamodb_table", `${logical}-sessions`)
+      const derivedTableName = sessionNamingContext && logical
+        ? sessionNamingContext.physicalName("dynamodb_table", `${logical}-sessions`)
         : undefined;
       const table = new dynamodb.Table(this, "SessionTable", {
         tableName: derivedTableName && !derivedTableName.generated ? derivedTableName.name : sessionState.tableName,
@@ -1025,6 +1052,11 @@ export class AppTheoryMcpServer extends Construct {
         partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",
         removalPolicy: sessionState.removalPolicy,
+        deletionProtection: defaultDeletionProtection(
+          props.namingContext,
+          sessionState.removalPolicy,
+          sessionState.deletionProtection,
+        ),
         pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
@@ -1039,7 +1071,7 @@ export class AppTheoryMcpServer extends Construct {
       if (!ownedStage) {
         throw new Error("AppTheoryMcpServer: domain configuration requires construct-owned API mode");
       }
-      this.setupCustomDomain(ownedOptions.domain, ownedStage);
+      this.setupCustomDomain(ownedOptions.domain, ownedStage, props.api ? undefined : props.namingContext);
       if (
         originReachability === AppTheoryMcpOriginReachability.LOCKED
         && this.ownedApi !== undefined
@@ -1125,6 +1157,7 @@ export class AppTheoryMcpServer extends Construct {
   private setupCustomDomain(
     options: AppTheoryMcpServerDomainOptions,
     stage: apigwv2.IStage,
+    namingContext?: AppTheoryNamingContext,
   ): void {
     const certificate = options.certificate ?? (options.certificateArn
       ? acm.Certificate.fromCertificateArn(this, "ImportedCert", options.certificateArn) as acm.ICertificate
@@ -1138,6 +1171,8 @@ export class AppTheoryMcpServer extends Construct {
       domainName: options.domainName,
       certificate,
       mtls: options.mutualTlsAuthentication,
+      securityPolicy: options.securityPolicy
+        ?? (secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined),
     });
     (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
     const apiMapping = new apigwv2.ApiMapping(this, "ApiMapping", {
@@ -1182,6 +1217,7 @@ interface NormalizedSessionState {
   readonly tableName?: string;
   readonly ttlMinutes: number;
   readonly removalPolicy: RemovalPolicy;
+  readonly deletionProtection?: boolean;
 }
 
 function normalizeRouteFamily(props: AppTheoryMcpServerProps): NormalizedRouteFamily {
@@ -1436,15 +1472,22 @@ function normalizeSessionState(props: AppTheoryMcpServerProps): NormalizedSessio
     && (tableName !== undefined
       || props.sessionState?.ttlMinutes !== undefined
       || props.sessionState?.removalPolicy !== undefined
+      || props.sessionState?.deletionProtection !== undefined
       || props.sessionTableName !== undefined
       || props.sessionTtlMinutes !== undefined)
   ) {
     throw new Error(
-      "AppTheoryMcpServer: disabled session state cannot configure tableName, ttlMinutes, or removalPolicy",
+      "AppTheoryMcpServer: disabled session state cannot configure tableName, ttlMinutes, removalPolicy, or deletionProtection",
     );
   }
   validatePositiveInteger(ttlMinutes, "sessionState.ttlMinutes");
-  return { enabled, tableName, ttlMinutes, removalPolicy };
+  return {
+    enabled,
+    tableName,
+    ttlMinutes,
+    removalPolicy,
+    deletionProtection: props.sessionState?.deletionProtection,
+  };
 }
 
 function normalizeLegacyAuthConfig(props: AppTheoryMcpServerProps): void {

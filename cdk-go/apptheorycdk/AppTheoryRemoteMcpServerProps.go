@@ -98,6 +98,20 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: false.
 	//
 	EnableWellKnownMcpDiscovery *bool `field:"optional" json:"enableWellKnownMcpDiscovery" yaml:"enableWellKnownMcpDiscovery"`
+	// Optional naming and logging context.
+	//
+	// The construct passes it to the REST API router it builds, so the router
+	// follows the same rules as every other AppTheory REST surface: with the
+	// standard logging profile the API's access logging comes from the contract,
+	// and under a derived naming profile the REST custom domain takes the
+	// Security Hub APIGateway.11 security policy with `endpointAccessMode:
+	// STRICT`. The router's logical name defaults to the kebab-cased construct
+	// id.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Whether Lambda invoke permissions should be scoped to individual REST API methods.
 	//
 	// When false, the construct grants one API-scoped invoke permission per Lambda instead of

@@ -10,6 +10,7 @@ import { Construct } from "constructs";
 import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { defaultMinimumProtocolVersion, secureDefaults } from "./private/secure-defaults";
 import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -126,7 +127,14 @@ export interface AppTheoryMediaCdnProps {
     readonly privateMedia?: PrivateMediaConfig;
 
     /**
-     * Default root object for the distribution.
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * With a derived naming context the default is `index.html`: the default
+     * behavior already sends `/` to the S3 bucket through OAC, so the root
+     * object rewrite (`/` -> `/index.html`) changes which object that behavior
+     * returns, not which origin serves it (Security Hub CloudFront.1).
+     *
+     * @default "index.html" under a derived naming context, otherwise undefined
      */
     readonly defaultRootObject?: string;
 
@@ -155,7 +163,7 @@ export interface AppTheoryMediaCdnProps {
     /**
      * CloudFront standard-logging output format for a CloudWatch Logs
      * destination. Only used under the standard logging profile.
-     * @default AppTheoryCloudFrontLogFormat.W3C
+     * @default AppTheoryCloudFrontLogFormat.JSON
      */
     readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
 
@@ -199,6 +207,38 @@ export interface AppTheoryMediaCdnProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+
+    /**
+     * Bucket that receives S3 server access logs for the media bucket this
+     * construct creates, which is what Security Hub S3.9 evaluates.
+     *
+     * Off by default because the log target and its storage cost money. The
+     * target bucket is yours: it takes no naming entry (resource-naming
+     * contract section 4).
+     *
+     * @default no server access logging
+     */
+    readonly serverAccessLogsBucket?: s3.IBucket;
+
+    /**
+     * Key prefix for the server access logs. Only used with
+     * `serverAccessLogsBucket`.
+     *
+     * @default no prefix
+     */
+    readonly serverAccessLogsPrefix?: string;
+
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
 
     /**
      * Cache policy for the default behavior.
@@ -303,6 +343,14 @@ export class AppTheoryMediaCdn extends Construct {
                 blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
                 encryption: s3.BucketEncryption.S3_MANAGED,
                 enforceSSL: true,
+                ...(props.serverAccessLogsBucket !== undefined
+                    ? {
+                        serverAccessLogsBucket: props.serverAccessLogsBucket,
+                        ...(props.serverAccessLogsPrefix !== undefined
+                            ? { serverAccessLogsPrefix: props.serverAccessLogsPrefix }
+                            : {}),
+                    }
+                    : {}),
                 removalPolicy,
                 autoDeleteObjects,
                 objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
@@ -395,6 +443,20 @@ export class AppTheoryMediaCdn extends Construct {
         };
 
         // Create the distribution
+        // Security Hub CloudFront.15 and CloudFront.1 under a derived naming context.
+        const minimumProtocolVersion = defaultMinimumProtocolVersion(
+            namingContext,
+            distributionCertificate !== undefined,
+            props.minimumProtocolVersion,
+        );
+        // The default behavior is the S3 media bucket over OAC, so a root object
+        // rewrites which object `/` returns without changing the origin.
+        const defaultRootObject =
+            props.defaultRootObject !== undefined
+                ? props.defaultRootObject
+                : secureDefaults(namingContext)
+                    ? "index.html"
+                    : undefined;
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             ...(enableLogging && this.logsBucket
                 ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -402,8 +464,9 @@ export class AppTheoryMediaCdn extends Construct {
             ...(distributionDomainNames && distributionCertificate
                 ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
                 : {}),
+            ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
             defaultBehavior: defaultBehaviorOptions,
-            ...(props.defaultRootObject ? { defaultRootObject: props.defaultRootObject } : {}),
+            ...(defaultRootObject ? { defaultRootObject } : {}),
             ...(props.webAclId ? { webAclId: props.webAclId } : {}),
             ...(props.priceClass ? { priceClass: props.priceClass } : {}),
             ...(props.comment ? { comment: props.comment } : {}),

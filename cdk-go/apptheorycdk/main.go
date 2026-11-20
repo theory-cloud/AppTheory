@@ -258,8 +258,10 @@ func init() {
 		reflect.TypeOf((*AppTheoryEventBridgeBus)(nil)).Elem(),
 		[]_jsii_.Member{
 			_jsii_.MemberMethod{JsiiMethod: "allowAccount", GoMethod: "AllowAccount"},
+			_jsii_.MemberMethod{JsiiMethod: "allowOwningAccount", GoMethod: "AllowOwningAccount"},
 			_jsii_.MemberProperty{JsiiProperty: "eventBus", GoGetter: "EventBus"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "owningAccountPolicy", GoGetter: "OwningAccountPolicy"},
 			_jsii_.MemberProperty{JsiiProperty: "policies", GoGetter: "Policies"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},

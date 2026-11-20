@@ -3,6 +3,7 @@ import { Construct } from "constructs";
 
 import type { AppTheoryNamingContext } from "./naming-context";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { secureDefaults } from "./private/secure-defaults";
 
 /**
  * Properties for an `AppTheoryBucket`.
@@ -29,6 +30,13 @@ export interface AppTheoryBucketProps extends s3.BucketProps {
  * (`aws-cdk-lib` 2.277.0) exposes `bucketNamespace` and `bucketNamePrefix`, so
  * no L1 property override is needed; CloudFormation appends
  * `-{account}-{region}-an` to the prefix.
+ *
+ * Under a derived profile the bucket also enforces TLS (`enforceSSL: true`),
+ * which is the bucket-policy condition Security Hub S3.5 asks for. An explicit
+ * `enforceSSL` still wins. Server access logging (S3.9) stays opt-in through the
+ * inherited `serverAccessLogsBucket` and `serverAccessLogsPrefix` props, because
+ * a log target costs money; the target bucket is the caller's and consumes no
+ * naming entry (resource-naming contract section 4).
  */
 export class AppTheoryBucket extends Construct {
   /**
@@ -58,6 +66,10 @@ export class AppTheoryBucket extends Construct {
       bucketProps.bucketNamespace !== undefined,
     );
     const composed = namingContext.physicalName("s3_bucket", logical);
+    const resolvedProps = {
+      ...bucketProps,
+      enforceSSL: bucketProps.enforceSSL ?? (secureDefaults(namingContext) ? true : undefined),
+    };
 
     if (composed.generated) {
       if (bucketProps.bucketNamePrefix !== undefined || bucketProps.bucketNamespace !== undefined) {
@@ -65,7 +77,7 @@ export class AppTheoryBucket extends Construct {
           `AppTheoryBucket cannot honor an account-regional prefix when s3_bucket:${logical} is a generated entry; CloudFormation generates the name and the bucket keeps the global namespace`,
         );
       }
-      this.bucket = new s3.Bucket(this, "Bucket", { ...bucketProps });
+      this.bucket = new s3.Bucket(this, "Bucket", { ...resolvedProps });
       return;
     }
 
@@ -75,7 +87,7 @@ export class AppTheoryBucket extends Construct {
           `AppTheoryBucket cannot honor an account-regional prefix when the pin for s3_bucket:${logical} owns the name`,
         );
       }
-      this.bucket = new s3.Bucket(this, "Bucket", { ...bucketProps, bucketName: composed.name });
+      this.bucket = new s3.Bucket(this, "Bucket", { ...resolvedProps, bucketName: composed.name });
       return;
     }
 
@@ -83,7 +95,7 @@ export class AppTheoryBucket extends Construct {
       throw new Error(`AppTheoryBucket requires an account-regional prefix for s3_bucket:${logical}`);
     }
     this.bucket = new s3.Bucket(this, "Bucket", {
-      ...bucketProps,
+      ...resolvedProps,
       bucketNamespace: s3.BucketNamespace.ACCOUNT_REGIONAL,
       bucketNamePrefix: composed.bucketNamePrefix,
     });

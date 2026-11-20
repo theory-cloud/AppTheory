@@ -7,8 +7,10 @@ const util = require("node:util");
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
 const cloudfront = require("aws-cdk-lib/aws-cloudfront");
+const dynamodb = require("aws-cdk-lib/aws-dynamodb");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const s3 = require("aws-cdk-lib/aws-s3");
+const { Node } = require("constructs");
 
 const apptheory = require("../lib");
 
@@ -54,6 +56,27 @@ function synth(build) {
   const stack = new cdk.Stack(app, "Stack", { env: { account: "998115851393", region: "us-east-1" } });
   build(stack);
   return assertions.Template.fromStack(stack).toJSON();
+}
+
+function microvmControllerBuild(stack, context, overrides = {}) {
+  return new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+    namingContext: context,
+    controller: {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200 });"),
+      environment: { APP_ENV: "test" },
+    },
+    authorizer: handler(stack, "Authorizer"),
+    microvmImage: {
+      microvmImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/imported",
+      logging: { disabled: true },
+    },
+    ingressNetworkConnectors: [apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "Ingress")],
+    egressNetworkConnectors: [apptheory.AppTheoryMicrovmNetworkConnector.internetEgress(stack, "Egress")],
+    shellIngressNetworkConnector: apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ShellIngress"),
+    ...overrides,
+  });
 }
 
 // ---- N1: the CDK exposes the same primitive ---------------------------------
@@ -449,7 +472,7 @@ test("AppTheorySsrSite standard logging uses CloudWatch Logs delivery", () => {
   assert.equal(sources.length, 1);
   assert.equal(sources[0].Properties?.LogType, "ACCESS_LOGS");
   const destinations = resourcesOfType(template, "AWS::Logs::DeliveryDestination");
-  assert.equal(destinations[0].Properties?.OutputFormat, "w3c");
+  assert.equal(destinations[0].Properties?.OutputFormat, "json");
   const deliveries = resourcesOfType(template, "AWS::Logs::Delivery");
   assert.deepEqual(deliveries[0].Properties?.RecordFields, [
     "timestamp",
@@ -486,9 +509,91 @@ test("AppTheoryPathRoutedFrontend and AppTheoryMediaCdn standard logging use Clo
   ]) {
     const template = synth((stack) => build(stack, labContext(stack)));
     assert.equal(resourcesOfType(template, "AWS::Logs::DeliverySource").length, 1);
-    assert.equal(resourcesOfType(template, "AWS::Logs::DeliveryDestination").length, 1);
+    const destinations = resourcesOfType(template, "AWS::Logs::DeliveryDestination");
+    assert.equal(destinations.length, 1);
+    assert.equal(destinations[0].Properties?.OutputFormat, "json");
     assert.equal(resourcesOfType(template, "AWS::Logs::Delivery").length, 1);
   }
+});
+
+test("CloudFront standard-logging deliveries depend on their own delivery source", () => {
+  // A delivery names its source by a literal string, so CloudFormation has no
+  // edge between the two. The source waits on the distribution ARN, so an
+  // unordered delivery can be created first and fail because its source does
+  // not exist yet. Resolve the source from the template, never by a fixed id.
+  const consumers = {
+    AppTheorySsrSite: (stack, context) =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: handler(stack),
+        namingContext: context,
+        logicalName: "control-plane-site",
+      }),
+    AppTheoryPathRoutedFrontend: (stack, context) =>
+      new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+        apiOriginUrl: "https://api.example.com",
+        namingContext: context,
+        logicalName: "front",
+      }),
+    AppTheoryMediaCdn: (stack, context) =>
+      new apptheory.AppTheoryMediaCdn(stack, "Media", {
+        namingContext: context,
+        logicalName: "media",
+      }),
+  };
+  for (const [label, build] of Object.entries(consumers)) {
+    const template = synth((stack) => build(stack, labContext(stack)));
+    const sourceByPhysicalName = new Map();
+    for (const [logicalId, resource] of Object.entries(template.Resources ?? {})) {
+      if (resource.Type === "AWS::Logs::DeliverySource") {
+        sourceByPhysicalName.set(resource.Properties?.Name, logicalId);
+      }
+    }
+    const deliveries = Object.entries(template.Resources ?? {}).filter(
+      ([, resource]) => resource.Type === "AWS::Logs::Delivery",
+    );
+    assert.equal(deliveries.length, 1, `${label} must deliver standard logs`);
+    for (const [logicalId, delivery] of deliveries) {
+      const sourceId = sourceByPhysicalName.get(delivery.Properties?.DeliverySourceName);
+      assert.ok(sourceId, `${label}: ${logicalId} must name a delivery source in the template`);
+      const dependsOn = Array.isArray(delivery.DependsOn)
+        ? delivery.DependsOn
+        : delivery.DependsOn
+          ? [delivery.DependsOn]
+          : [];
+      assert.ok(
+        dependsOn.includes(sourceId),
+        `${label}: ${logicalId} must depend on ${sourceId}, got ${JSON.stringify(delivery.DependsOn ?? null)}`,
+      );
+    }
+  }
+});
+
+test("CloudFront standard logging refuses the W3C format for a CloudWatch Logs destination", () => {
+  assert.throws(
+    () =>
+      synth((stack) =>
+        new apptheory.AppTheoryMediaCdn(stack, "Media", {
+          namingContext: labContext(stack),
+          logicalName: "media",
+          cloudFrontLogFormat: apptheory.AppTheoryCloudFrontLogFormat.W3C,
+        }),
+      ),
+    /contract section 3[\s\S]*JSON/,
+  );
+});
+
+test("CloudFront standard logging accepts JSON explicitly", () => {
+  const template = synth((stack) =>
+    new apptheory.AppTheoryMediaCdn(stack, "Media", {
+      namingContext: labContext(stack),
+      logicalName: "media",
+      cloudFrontLogFormat: apptheory.AppTheoryCloudFrontLogFormat.JSON,
+    }),
+  );
+  assert.equal(
+    resourcesOfType(template, "AWS::Logs::DeliveryDestination")[0].Properties?.OutputFormat,
+    "json",
+  );
 });
 
 test("CloudFront standard logging can be opted out explicitly", () => {
@@ -601,6 +706,19 @@ test("legacy profiles synthesize byte-identically: AppTheoryRestApiRouter", () =
       router.addLambdaIntegration("/{proxy+}", ["ANY"], handler(stack));
     },
     { pins: { "api_rest:router": "autheory-live-rest" } },
+  );
+});
+
+test("legacy profiles synthesize byte-identically: AppTheoryRemoteMcpServer", () => {
+  assertIdentical(
+    (stack, context) => {
+      new apptheory.AppTheoryRemoteMcpServer(stack, "Mcp", {
+        handler: handler(stack),
+        namingContext: context,
+        ...(context ? {} : { apiName: "autheory-live-mcp" }),
+      });
+    },
+    { pins: { "api_rest:mcp": "autheory-live-mcp" } },
   );
 });
 
@@ -784,6 +902,14 @@ test("every explicit physical-name prop is refused under a naming context", () =
           bucketName: "hand-built",
         }),
     ],
+    [
+      "AppTheoryMicrovmController.apiName",
+      (stack) => microvmControllerBuild(stack, labContext(stack), { apiName: "hand-built" }),
+    ],
+    [
+      "AppTheoryMicrovmController.sessionTableName",
+      (stack) => microvmControllerBuild(stack, labContext(stack), { sessionTableName: "hand-built" }),
+    ],
   ];
   for (const [label, build] of cases) {
     assert.throws(() => synth(build), /naming context is present/, label);
@@ -904,7 +1030,7 @@ test("AppTheoryKeeperVisibility compiles the policy, role and manifest", () => {
   });
   const visibility = new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
     namingContext: context,
-    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
     rules: { include: ["logs/runtime/*", "logs/access/*"], exclude: ["logs/runtime/debug/*"] },
   });
 
@@ -927,7 +1053,7 @@ test("AppTheoryKeeperVisibility compiles the policy, role and manifest", () => {
         Effect: "Allow",
         Principal: { AWS: "arn:aws:iam::191637461429:root" },
         Action: "sts:AssumeRole",
-        Condition: { ArnEquals: { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-runtime" } },
+        Condition: { ArnEquals: { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime" } },
       },
     ],
   });
@@ -952,12 +1078,40 @@ test("AppTheoryKeeperVisibility compiles the policy, role and manifest", () => {
   assert.deepEqual(manifest.future.include, ["logs/access/*", "logs/runtime/*"]);
 });
 
+test("AppTheoryKeeperVisibility renders the preview annotation at synth", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack", { env: { account: "998115851393", region: "us-east-1" } });
+  const context = labContext(stack);
+  new apptheory.AppTheoryHttpApi(stack, "Api", { handler: handler(stack), namingContext: context, logicalName: "main" });
+  const visibility = new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+    namingContext: context,
+    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
+    rules: { include: ["logs/access/*"] },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // The manifest and the annotation are the same preview: the annotation adds
+  // the non-matching sources and prints concrete content, never a lazy token.
+  const manifest = JSON.parse(resourcesOfType(template, "AWS::SSM::Parameter")[0].Properties.Value);
+  const infos = Node.of(visibility).metadata.filter((entry) => entry.type === "aws:cdk:info");
+  assert.ok(infos.length >= 1, "expected the synth-time preview annotation");
+  const rendered = infos.map((entry) => String(entry.data)).join("\n");
+  assert.ok(
+    rendered.includes(manifest.rule_version),
+    `annotation must print the rule version, got: ${rendered}`,
+  );
+  assert.ok(rendered.includes("logs/access/api/main"), "annotation must print a matched source");
+  assert.ok(rendered.includes("logs/access/*"), "annotation must print the selector");
+  assert.doesNotMatch(rendered, /\$\{Token/);
+});
+
 test("AppTheoryKeeperVisibility accepts no rules and reads only the manifest", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "Stack");
   const visibility = new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
     namingContext: labContext(stack),
-    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
     rules: {},
   });
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -974,7 +1128,7 @@ test("AppTheoryKeeperVisibility rejects an invalid selector", () => {
       synth((stack) =>
         new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
           namingContext: labContext(stack),
-          readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+          readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
           rules: { include: ["logs/*/api"] },
         }),
       ),
@@ -1248,4 +1402,119 @@ test("AppTheoryKeeperVisibility refuses an unresolved or malformed reader ARN", 
       arn,
     );
   }
+});
+
+test("AppTheoryKeeperVisibility refuses wildcards in the reader ARN", () => {
+  // ArnEquals matches wildcards, so a reader ARN containing one would admit
+  // every role the pattern matches (FAC-1312-R1-1).
+  for (const arn of [
+    "arn:aws:iam::191637461429:role/cloud-keeper-*",
+    "arn:aws:iam::191637461429:role/*",
+    "arn:aws:iam::191637461429:role/cloud-keeper-?",
+    "arn:aws:iam::191637461429:role/?loud-keeper",
+  ]) {
+    assert.throws(
+      () =>
+        synth((stack) =>
+          new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+            namingContext: labContext(stack),
+            readerPrincipalArn: arn,
+            rules: {},
+          }),
+        ),
+      /wildcard/,
+      arn,
+    );
+  }
+});
+
+// ---- M2 residual: the MicroVM controller takes a naming context -------------
+
+test("AppTheoryMicrovmController derives its API name and standard access logging", () => {
+  const template = synth((stack) => microvmControllerBuild(stack, labContext(stack), { logicalName: "controller" }));
+
+  const apis = resourcesOfType(template, "AWS::ApiGatewayV2::Api");
+  assert.equal(apis.length, 1);
+  assert.equal(apis[0].Properties?.Name, "autheory-lab-controller");
+
+  const accessGroups = resourcesOfType(template, "AWS::Logs::LogGroup").filter((group) =>
+    String(group.Properties?.LogGroupName ?? "").includes("logs_access_api"),
+  );
+  assert.equal(accessGroups.length, 1);
+  assert.equal(
+    accessGroups[0].Properties.LogGroupName,
+    "theorycloud_theorycloud_autheory_lab_logs_access_api_controller",
+  );
+  assert.equal(accessGroups[0].Properties.RetentionInDays, 30);
+
+  const stage = resourcesOfType(template, "AWS::ApiGatewayV2::Stage").find(
+    (resource) => resource.Properties?.AccessLogSettings !== undefined,
+  );
+  assert.ok(stage, "expected an access-logged controller stage");
+  const format = JSON.parse(stage.Properties.AccessLogSettings.Format);
+  assert.deepEqual(Object.keys(format).sort(), [
+    "httpMethod",
+    "integrationLatency",
+    "protocol",
+    "requestId",
+    "requestTime",
+    "responseLength",
+    "routeKey",
+    "sourceIp",
+    "status",
+  ]);
+});
+
+test("AppTheoryMicrovmController allows standard access logging to be opted out", () => {
+  const template = synth((stack) =>
+    microvmControllerBuild(stack, labContext(stack), {
+      logicalName: "controller",
+      stage: { accessLogging: false },
+    }),
+  );
+  const accessGroups = resourcesOfType(template, "AWS::Logs::LogGroup").filter((group) =>
+    String(group.Properties?.LogGroupName ?? "").includes("logs_access_api"),
+  );
+  assert.equal(accessGroups.length, 0);
+});
+
+test("legacy profiles synthesize byte-identically: AppTheoryMicrovmController", () => {
+  assertIdentical(
+    (stack, context) =>
+      microvmControllerBuild(stack, context, {
+        ...(context ? {} : { apiName: "apptheory-controller" }),
+        stage: { accessLogging: true },
+      }),
+    { pins: { "api_http:controller": "apptheory-controller" } },
+  );
+});
+
+// ---- M2 residual: an external ISR table takes no naming entry ---------------
+
+test("AppTheorySsrSite takes no ISR entry when the caller supplies the metadata table", () => {
+  const build = (context) => (stack) => {
+    const table = new dynamodb.Table(stack, "ExternalIsr", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    });
+    return new apptheory.AppTheorySsrSite(stack, "Site", {
+      ssrFunction: handler(stack),
+      namingContext: context(stack),
+      logicalName: "site",
+      isrMetadataTable: table,
+    });
+  };
+
+  // An external table is the caller's resource, so no naming entry is consumed.
+  assert.ok(synth(build((stack) => labContext(stack))));
+
+  // An entry naming the external table is therefore an orphan.
+  assert.throws(
+    () =>
+      synth(
+        build((stack) =>
+          labContext(stack, { pins: { "dynamodb_table:site-isr-metadata": "external-isr" } }),
+        ),
+      ),
+    /match no resource/,
+  );
 });

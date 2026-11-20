@@ -7,6 +7,7 @@ import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { IAppTheoryMicrovmImage } from "./microvm-image";
 import { type IAppTheoryMicrovmNetworkConnector } from "./microvm-network-connector";
 /**
@@ -115,6 +116,25 @@ export interface AppTheoryMicrovmControllerProps {
      */
     readonly apiName?: string;
     /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile API access logging is on by default to a
+     * log group named `logs/access/api/{logicalName}` carrying the contract's
+     * JSON field set. Pass `stage.accessLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The API's logical name. Defaults to the kebab-cased construct id when a
+     * naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
      * Optional stage configuration.
      *
      * @default undefined (default HTTP API stage)
@@ -155,7 +175,8 @@ export interface AppTheoryMicrovmControllerProps {
     /**
      * Whether deletion protection should be enabled for the session registry table.
      *
-     * @default - AWS default (no deletion protection)
+     * @default undefined (with no naming context: the AWS default, no deletion
+     * protection; under a derived naming context: on for a RETAIN table, off otherwise)
      */
     readonly sessionTableDeletionProtection?: boolean;
     /**

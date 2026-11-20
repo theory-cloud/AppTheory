@@ -67,6 +67,23 @@ type AppTheoryMicrovmControllerProps struct {
 	// Default: undefined.
 	//
 	ExecutionRole awsiam.IRole `field:"optional" json:"executionRole" yaml:"executionRole"`
+	// The API's logical name.
+	//
+	// Defaults to the kebab-cased construct id when a
+	// naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
+	// Optional naming and logging context.
+	//
+	// With the standard logging profile API access logging is on by default to a
+	// log group named `logs/access/api/{logicalName}` carrying the contract's
+	// JSON field set. Pass `stage.accessLogging: false` to opt out.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Whether Lambda invoke permissions should be scoped to individual controller routes.
 	//
 	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
@@ -84,7 +101,8 @@ type AppTheoryMicrovmControllerProps struct {
 	//
 	SessionTableBillingMode awsdynamodb.BillingMode `field:"optional" json:"sessionTableBillingMode" yaml:"sessionTableBillingMode"`
 	// Whether deletion protection should be enabled for the session registry table.
-	// Default: - AWS default (no deletion protection).
+	// Default: undefined (with no naming context: the AWS default, no deletion
+	// protection; under a derived naming context: on for a RETAIN table, off otherwise).
 	//
 	SessionTableDeletionProtection *bool `field:"optional" json:"sessionTableDeletionProtection" yaml:"sessionTableDeletionProtection"`
 	// Session registry table encryption setting.

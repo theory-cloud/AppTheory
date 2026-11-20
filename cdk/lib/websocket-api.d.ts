@@ -21,6 +21,12 @@ export interface AppTheoryWebSocketApiProps {
     readonly connectionTableTimeToLiveAttribute?: string;
     readonly connectionTableRemovalPolicy?: RemovalPolicy;
     readonly connectionTableEnablePointInTimeRecovery?: boolean;
+    /**
+     * Whether deletion protection should be enabled for the connection table.
+     * @default undefined (with no naming context: the AWS default, no deletion
+     * protection; under a derived naming context: on for a RETAIN table, off otherwise)
+     */
+    readonly connectionTableDeletionProtection?: boolean;
     readonly enableAccessLogging?: boolean;
     readonly accessLogGroup?: logs.ILogGroup;
     readonly accessLogRetention?: logs.RetentionDays;
