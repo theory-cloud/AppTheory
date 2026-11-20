@@ -62,7 +62,7 @@ var AppTheoryLambdaTrafficShiftType;
     AppTheoryLambdaTrafficShiftType["LINEAR"] = "LINEAR";
 })(AppTheoryLambdaTrafficShiftType || (exports.AppTheoryLambdaTrafficShiftType = AppTheoryLambdaTrafficShiftType = {}));
 class AppTheoryFunction extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunction", version: "7.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunction", version: "7.5.0-rc" };
     fn;
     logGroup;
     alias;
