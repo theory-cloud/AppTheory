@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-security-refresh.sh"
       ],
-      "durationSeconds": 32.871,
+      "durationSeconds": 55.805,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-19T03:08:21Z",
+      "finishedAt": "2026-11-20T14:19:43Z",
       "id": "security-refresh",
       "inputsDigest": "sha256:5a6a730e3e47ba30a0f60aea80939e7e35c83287b8418856c8e61472ce17bf81",
-      "logDigest": "sha256:bfd7196db9eccf8191953efbb06275bcfa220e77383d7d1d3cf80cdd12a8789d",
-      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261119T030748Z-22389.log",
+      "logDigest": "sha256:c93597e6c1180227dad5f9783b181e05e0bb02a17efbe9c8b6904bf9f1bdff8d",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261120T141848Z-86277.log",
       "reused": false,
-      "startedAt": "2026-11-19T03:07:48Z"
+      "startedAt": "2026-11-20T14:18:48Z"
     }
   ],
   "consumed": [],
@@ -40,17 +40,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-19T03:08:21Z",
+  "recordedAt": "2026-11-20T14:19:43Z",
   "releaseOnly": {
-    "digest": "sha256:cefc9b4967b27ef8bbf389866944def6d14026980e1c68c3cb448a331b27bf9d",
-    "fileCount": 477,
-    "normalizedDigest": "sha256:bfd5d1f30a8b46dc79eeb1030bb68bc3e2b08932f0c42078033738a4f52a76d4",
+    "digest": "sha256:67de65f259b215bfa5e82ab36bfb0ce64517b9daeef2d305aecbae2a2bebc797",
+    "fileCount": 529,
+    "normalizedDigest": "sha256:c73be5490abd1c173863468a649766c605cb032eea3bae4354f954a81b438064",
     "version": "7.4.0"
   },
   "reviews": [],
   "scan": {
     "maxAgeSeconds": 86400,
-    "scannedAt": "2026-11-19T03:08:21Z"
+    "scannedAt": "2026-11-20T14:19:43Z"
   },
   "schemaVersion": 1,
   "scope": {
@@ -77,8 +77,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:088d13058955ac3eedb71e0c00190ebea45ca7df132a9944838ba6384fc56dc2",
-    "fileCount": 2674
+    "digest": "sha256:ae6ee44f40a16d212519614bfe104db15873015259df75b695ba79f3323c33aa",
+    "fileCount": 2769
   },
   "verdict": "PASS"
 }
