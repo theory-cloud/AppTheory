@@ -1036,12 +1036,15 @@ export class AppTheoryMcpServer extends Construct {
 
     const sessionState = normalizeSessionState(props);
     if (sessionState.enabled) {
-      const namingContext = props.api ? undefined : props.namingContext;
-      const logical = namingContext
+      // Only an owned API derives the session-table name. The secure-default
+      // decision is separate: an attached API still receives the deletion
+      // protection (DynamoDB.6) that the AppTheory-created table needs.
+      const sessionNamingContext = props.api ? undefined : props.namingContext;
+      const logical = sessionNamingContext
         ? props.logicalName ?? defaultLogicalName(this)
         : undefined;
-      const derivedTableName = namingContext && logical
-        ? namingContext.physicalName("dynamodb_table", `${logical}-sessions`)
+      const derivedTableName = sessionNamingContext && logical
+        ? sessionNamingContext.physicalName("dynamodb_table", `${logical}-sessions`)
         : undefined;
       const table = new dynamodb.Table(this, "SessionTable", {
         tableName: derivedTableName && !derivedTableName.generated ? derivedTableName.name : sessionState.tableName,
@@ -1050,7 +1053,7 @@ export class AppTheoryMcpServer extends Construct {
         timeToLiveAttribute: "expiresAt",
         removalPolicy: sessionState.removalPolicy,
         deletionProtection: defaultDeletionProtection(
-          namingContext,
+          props.namingContext,
           sessionState.removalPolicy,
           sessionState.deletionProtection,
         ),
