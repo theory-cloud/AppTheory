@@ -15,6 +15,7 @@ import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
+import { defaultMinimumProtocolVersion, secureDefaults } from "./private/secure-defaults";
 import type { AppTheoryNamingContext } from "./naming-context";
 
 import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils";
@@ -567,6 +568,31 @@ export interface AppTheorySsrSiteProps {
    * The certificate must be in `us-east-1` for CloudFront.
    */
   readonly certificateArn?: string;
+
+  /**
+   * Minimum TLS protocol version for viewers of a custom domain.
+   *
+   * With a derived naming context and a custom certificate the default is
+   * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+   * widest client support. Without a certificate CloudFront serves the fixed
+   * default certificate and this property has no effect.
+   *
+   * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+   * otherwise the CloudFront default for the certificate
+   */
+  readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+
+  /**
+   * Object CloudFront returns for a request to the distribution root.
+   *
+   * With a derived naming context and `mode: ssg-isr` the default is
+   * `index.html`, because that mode serves the site root from the S3 HTML store
+   * (Security Hub CloudFront.1). `ssr-only` serves the root from the function
+   * URL, a custom origin CloudFront.1 does not evaluate, so no default applies.
+   *
+   * @default "index.html" under a derived naming context in `ssg-isr` mode
+   */
+  readonly defaultRootObject?: string;
 
   readonly webAclId?: string;
 }
@@ -1140,6 +1166,15 @@ export class AppTheorySsrSite extends Construct {
         ? cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS
         : cloudfront.AllowedMethods.ALLOW_ALL;
 
+    // Security Hub CloudFront.15 and CloudFront.1 under a derived naming context.
+    const minimumProtocolVersion = defaultMinimumProtocolVersion(
+      namingContext,
+      distributionCertificate !== undefined,
+      props.minimumProtocolVersion,
+    );
+    const defaultRootObject = props.defaultRootObject
+      ?? (secureDefaults(namingContext) && siteMode === AppTheorySsrSiteMode.SSG_ISR ? "index.html" : undefined);
+
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       ...(enableLogging && this.logsBucket
         ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -1147,6 +1182,8 @@ export class AppTheorySsrSite extends Construct {
       ...(distributionDomainNames && distributionCertificate
         ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
         : {}),
+      ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
+      ...(defaultRootObject !== undefined ? { defaultRootObject } : {}),
       defaultBehavior: {
         origin: defaultOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,

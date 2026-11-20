@@ -230,6 +230,29 @@ export interface AppTheorySsrSiteProps {
      * The certificate must be in `us-east-1` for CloudFront.
      */
     readonly certificateArn?: string;
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support. Without a certificate CloudFront serves the fixed
+     * default certificate and this property has no effect.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+    /**
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * With a derived naming context and `mode: ssg-isr` the default is
+     * `index.html`, because that mode serves the site root from the S3 HTML store
+     * (Security Hub CloudFront.1). `ssr-only` serves the root from the function
+     * URL, a custom origin CloudFront.1 does not evaluate, so no default applies.
+     *
+     * @default "index.html" under a derived naming context in `ssg-isr` mode
+     */
+    readonly defaultRootObject?: string;
     readonly webAclId?: string;
 }
 export interface AppTheorySsrSiteBearerFunctionUrlOrigin {

@@ -220,6 +220,26 @@ export interface AppTheoryPathRoutedFrontendProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+    /**
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * The frontend's root behavior targets the API origin, a custom origin that
+     * Security Hub CloudFront.1 does not evaluate, so AppTheory sets no default.
+     *
+     * @default undefined
+     */
+    readonly defaultRootObject?: string;
 }
 /**
  * A CloudFront distribution for path-routed multi-SPA + API deployments.

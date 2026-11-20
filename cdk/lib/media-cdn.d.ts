@@ -156,6 +156,17 @@ export interface AppTheoryMediaCdnProps {
      */
     readonly comment?: string;
     /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+    /**
      * Cache policy for the default behavior.
      * @default CachePolicy.CACHING_OPTIMIZED
      */

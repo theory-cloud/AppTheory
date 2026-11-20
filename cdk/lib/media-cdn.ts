@@ -10,6 +10,7 @@ import { Construct } from "constructs";
 import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { defaultMinimumProtocolVersion } from "./private/secure-defaults";
 import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -199,6 +200,18 @@ export interface AppTheoryMediaCdnProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
 
     /**
      * Cache policy for the default behavior.
@@ -395,6 +408,12 @@ export class AppTheoryMediaCdn extends Construct {
         };
 
         // Create the distribution
+        // Security Hub CloudFront.15 under a derived naming context.
+        const minimumProtocolVersion = defaultMinimumProtocolVersion(
+            namingContext,
+            distributionCertificate !== undefined,
+            props.minimumProtocolVersion,
+        );
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             ...(enableLogging && this.logsBucket
                 ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -402,6 +421,7 @@ export class AppTheoryMediaCdn extends Construct {
             ...(distributionDomainNames && distributionCertificate
                 ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
                 : {}),
+            ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
             defaultBehavior: defaultBehaviorOptions,
             ...(props.defaultRootObject ? { defaultRootObject: props.defaultRootObject } : {}),
             ...(props.webAclId ? { webAclId: props.webAclId } : {}),
