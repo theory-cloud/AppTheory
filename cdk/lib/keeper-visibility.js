@@ -66,7 +66,7 @@ const MANIFEST_VALUE_LIMIT = {
  * rules; with no visibility block no role, policy or manifest is created.
  */
 class AppTheoryKeeperVisibility extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKeeperVisibility", version: "7.5.0-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKeeperVisibility", version: "7.5.0-rc.1" };
     /**
      * The reader role Keeper assumes.
      */
