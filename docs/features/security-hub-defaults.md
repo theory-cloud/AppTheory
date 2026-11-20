@@ -44,14 +44,14 @@ DynamoDB controls: [DynamoDB.2](https://docs.aws.amazon.com/securityhub/latest/u
 
 | Control | Construct | Default under a derived context | Opt out or override |
 |---|---|---|---|
-| DynamoDB.2 | `AppTheoryDynamoTable`, `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryApp` database and rate-limit tables, `AppTheoryWebSocketApi` connection table, `AppTheoryMcpServer` session table, `AppTheoryMicrovmController` session table, `AppTheoryRemoteMcpServer` session, stream and task tables | Point-in-time recovery on | `enablePointInTimeRecovery: false`, `connectionTableEnablePointInTimeRecovery: false`, `enableSessionTablePointInTimeRecovery: false`; the `AppTheoryRemoteMcpServer` tables have always enabled it and expose no override |
-| DynamoDB.6 | the same tables, including the `AppTheoryRemoteMcpServer` session, stream and task tables | Deletion protection on when the resolved removal policy is `RETAIN`; the `AppTheoryRemoteMcpServer` tables fix `DESTROY`, so DynamoDB.6 reports them by design under the lab removal-policy ruling | `deletionProtection: false`, `connectionTableDeletionProtection`, `sessionState.deletionProtection`, `sessionTableDeletionProtection`; a `DESTROY` removal policy also leaves protection off so the stack still tears down, and the `AppTheoryRemoteMcpServer` tables expose no override |
-| APIGateway.11 | `AppTheoryRestApiRouter`, `AppTheoryRemoteMcpServer` REST domains | `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` for a regional or private domain, `SecurityPolicy_TLS12_PFS_2025_EDGE` for an edge domain, with `endpointAccessMode: STRICT` | `domain.securityPolicy` and `domain.endpointAccessMode` |
+| DynamoDB.2 | `AppTheoryDynamoTable`, `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryApp` database and rate-limit tables, `AppTheoryWebSocketApi` connection table, `AppTheoryMcpServer` session table, `AppTheoryMicrovmController` session table, `AppTheoryRemoteMcpServer` session, stream and task tables | Point-in-time recovery on | `enablePointInTimeRecovery: false`, `connectionTableEnablePointInTimeRecovery: false`, `enableSessionTablePointInTimeRecovery: false`; the `AppTheoryApp` tables, the `AppTheoryMcpServer` session table and the `AppTheoryRemoteMcpServer` tables have always enabled it and expose no override |
+| DynamoDB.6 | the same tables, including the `AppTheoryRemoteMcpServer` session, stream and task tables | Deletion protection on when the resolved removal policy is `RETAIN`; the `AppTheoryRemoteMcpServer` tables fix `DESTROY`, so DynamoDB.6 reports them by design under the lab removal-policy ruling | `deletionProtection: false`, `databaseTableDeletionProtection`, `rateLimitTableDeletionProtection`, `connectionTableDeletionProtection`, `sessionState.deletionProtection`, `sessionTableDeletionProtection`; a `DESTROY` removal policy also leaves protection off so the stack still tears down, and the `AppTheoryRemoteMcpServer` tables expose no override |
+| APIGateway.11 | `AppTheoryRestApiRouter`, `AppTheoryRemoteMcpServer` REST domains | `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` for a regional or private domain, `SecurityPolicy_TLS12_PFS_2025_EDGE` for an edge domain, with an endpoint access mode (AppTheory derives `STRICT`) | `domain.securityPolicy` and `domain.endpointAccessMode` (`BASIC` is valid) |
 | APIGateway.11 | `AppTheoryHttpApi`, `AppTheoryApiDomain`, `AppTheoryHttpIngestionEndpoint`, `AppTheoryMcpServer` owned domain | `TLS_1_2`, the strongest policy API Gateway v2 offers (see the limitation below) | `securityPolicy` on the domain options |
 | CloudFront.15 | `AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`, `AppTheoryRestV1ChallengeRestoration` | `TLSv1.2_2025` on a distribution that serves a custom certificate | `minimumProtocolVersion` |
 | CloudFront.1 | `AppTheorySsrSite` in `ssg-isr` mode, `AppTheoryMediaCdn` | `index.html` where `/` already reaches the S3 default behavior | `defaultRootObject` |
 | EventBridge.3 | `AppTheoryEventBridgeBus` | A resource policy granting the owning account `events:*` on that bus, so same-account principals keep exactly the IAM access they already had and no other account is admitted | `owningAccountResourcePolicy: false` |
-| S3.5 | every bucket AppTheory creates | `enforceSSL` on, which adds the `aws:SecureTransport` deny policy | `enforceSSL: false` |
+| S3.5 | every bucket AppTheory creates | `enforceSSL` on, which adds the `aws:SecureTransport` deny policy | `enforceSSL: false` on `AppTheoryBucket` only: every other AppTheory-created bucket hardcodes TLS and exposes no override, and a bucket you pass in keeps your own setting (the bucket list below names each one) |
 | S3.9 | the data buckets `AppTheorySsrSite` and `AppTheoryMediaCdn` create | **Off.** Server access logging is opt-in because the log target and its storage cost money | `serverAccessLogsBucket` and `serverAccessLogsPrefix` |
 
 Details behind the table:
@@ -68,8 +68,32 @@ Details behind the table:
   `AppTheoryPathRoutedFrontend` (whose `/` must reach the API origin whenever SPA prefixes add S3 origins) keep no
   default and are documented residuals below. `AppTheoryRestV1ChallengeRestoration` carries no S3 origin, so the
   control does not evaluate it.
+- **In `ssg-isr` mode the derived root object reaches the S3 store only while `/` is prerendered.** When `/` is not
+  prerendered, the origin group's Lambda fallback receives `/index.html` instead of `/`, and an app whose SSR routing
+  treats those two paths differently (for example through a broad `ssrPathPatterns` entry) sets `defaultRootObject`
+  explicitly. `defaultRootObject` is the override on every distribution that offers it.
 - **The S3.9 log target consumes no naming entry.** Resource-naming contract section 4 keeps a construct's logging
   resources out of the naming entries, so the bucket you supply here is yours and never needs a `s3_bucket` entry.
+
+### The S3.5 buckets
+
+`AppTheoryBucket` is the only construct that accepts `enforceSSL`. Every other bucket AppTheory creates hardcodes
+TLS: those buckets enforced TLS before this contract and keep doing so under every naming profile. Where a construct
+accepts a bucket prop, supply your own bucket and it keeps the setting you gave it; where the table says `none`, there
+is no override.
+
+| Construct | Bucket AppTheory creates | `enforceSSL` source | Override |
+|---|---|---|---|
+| `AppTheoryBucket` | the logical bucket | derived `true` under a derived context; an explicit prop wins | `enforceSSL` (inherited from `s3.BucketProps`) |
+| `AppTheoryMediaCdn` | the media bucket | hardcoded `true` | supply `bucket` |
+| `AppTheoryMediaCdn` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
+| `AppTheorySsrSite` | the asset bucket | hardcoded `true` | supply `assetsBucket` |
+| `AppTheorySsrSite` | the `ssg-isr` HTML store bucket | hardcoded `true` | supply `htmlStoreBucket` |
+| `AppTheorySsrSite` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
+| `AppTheoryPathRoutedFrontend` | the CloudFront log bucket | hardcoded `true` | supply `logsBucket` |
+| `AppTheoryS3Ingest` | the ingest bucket | hardcoded `true` | supply `bucket` |
+| `AppTheoryS3VersionedIngress` | the release bucket | hardcoded `true` | none |
+| `AppTheoryRemoteMcpServer` | the stream spill bucket | hardcoded `true` | none |
 
 ### CloudFront.1 residuals
 
@@ -80,15 +104,16 @@ default root object where `/` already reaches the S3 default behavior, because t
 
 | Distribution | S3 origin | Default behavior | Root object | Why |
 |---|---|---|---|---|
-| `AppTheorySsrSite` in `ssg-isr` mode | the HTML store | the S3 HTML store with the Lambda fallback | `index.html` | `/` already reaches the S3 store |
+| `AppTheorySsrSite` in `ssg-isr` mode | the HTML store | the S3 HTML store with the Lambda fallback | `index.html` | `/` reaches the S3 store first |
 | `AppTheoryMediaCdn` | the media bucket | the S3 bucket over OAC | `index.html` | `/` already reaches the S3 bucket |
 | `AppTheorySsrSite` in `ssr-only` mode | the asset bucket | the Lambda function URL | none (residual) | `/` must reach the Lambda origin |
 | `AppTheoryPathRoutedFrontend` with SPA origins | the SPA buckets | the API origin | none (residual) | `/` must reach the API origin |
 | `AppTheoryRestV1ChallengeRestoration` | none | the REST API origin | not evaluated | no S3 origin, so the control does not apply |
 
-A finding on the two residual rows is expected, and it is the correct trade: a default root object there would move `/`
-to a different origin, which changes what the distribution serves. Both constructs keep the explicit prop for an app
-that knows its own routing is safe.
+A finding on the two residual rows is expected, and it is the correct trade: a root object would change what `/`
+serves. On `AppTheorySsrSite` in `ssr-only` mode it would move `/` from the Lambda function URL to the asset bucket;
+on `AppTheoryPathRoutedFrontend` it keeps the API origin and hands it `/index.html` instead of `/`. Both constructs
+keep `defaultRootObject` for an app that knows its own routing is safe.
 
 ## Controls the framework deliberately does not address
 
@@ -99,7 +124,7 @@ Factory disabled these controls for the platform because they do not apply to it
 | GuardDuty runtime monitoring controls | Managed at the organization and account level, not by an application construct |
 | IAM password policy controls | Account-level identity configuration; AppTheory creates no human identities |
 | VPC endpoint controls | Network posture belongs to the account and network layer, not to an application construct |
-| CloudFront.4 (origin failover) | An AppTheory distribution fronts a single origin by design; the platform does not buy the second origin |
+| CloudFront.4 (origin failover) | AppTheory fronts one origin per behavior except `ssg-isr`, whose default behavior is an S3/Lambda origin group used as a same-behavior fallback. The platform does not buy a second application origin, so it does not design for this control |
 | CloudFront.5 (access logging) | The control only evaluates legacy S3 standard logging. Under the standard logging profile AppTheory delivers CloudFront access logs to the contract log group through CloudWatch Logs vended delivery, so the control still reports a finding and Factory suppresses it rather than AppTheory downgrading the platform to S3 legacy logging to satisfy a check |
 | CloudFront.17 (trusted key groups) | Only `AppTheoryMediaCdn` supports signed access, and only when private media is configured |
 
@@ -110,8 +135,9 @@ More limits a reader should know:
   (`TLS_1_2`) and does not claim the control for HTTP API domains. An app that must pass APIGateway.11 uses a REST API
   custom domain.
 - **The 2025 TLS policies are a client-compatibility change.** `TLSv1.2_2025` (CloudFront.15) and
-  `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` (APIGateway.11 on a REST regional or private domain, with the
-  `endpointAccessMode: STRICT` API Gateway requires for an enhanced policy) raise the minimum version and cipher suite:
+  `SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09` (APIGateway.11 on a REST regional or private domain; an enhanced policy
+  requires an endpoint access mode, and AppTheory derives `STRICT`, the recommended mode, while `BASIC` stays
+  available through `domain.endpointAccessMode`) raise the minimum version and cipher suite:
   a client that can only negotiate an older TLS 1.2 cipher suite is excluded. Each control accepts only its 2025
   values, so the trade is explicit. `TLSv1.2_2025` is the more compatible of the two CloudFront.15 values, and the
   regional APIGateway.11 policy is the only accepted regional policy that still admits TLS 1.2 (an edge domain takes
