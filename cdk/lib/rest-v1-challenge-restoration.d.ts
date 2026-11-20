@@ -166,9 +166,9 @@ export interface AppTheoryRestV1ChallengeRestorationProps {
      * Optional naming context that selects the Security Hub-aligned defaults.
      *
      * Under a derived context a distribution that serves `domainNames` through
-     * `certificate` takes the CloudFront.15 `TLS_V1_2_2025` viewer policy. The
-     * root is the REST API origin, a custom origin CloudFront.1 does not
-     * evaluate, so no default root object applies.
+     * `certificate` takes the CloudFront.15 `TLS_V1_2_2025` viewer policy. Its
+     * origins are the REST API only, so it carries no S3 origin and CloudFront.1
+     * does not evaluate it; no default root object applies.
      *
      * @default undefined
      */

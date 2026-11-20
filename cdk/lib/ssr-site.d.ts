@@ -246,9 +246,12 @@ export interface AppTheorySsrSiteProps {
      * Object CloudFront returns for a request to the distribution root.
      *
      * With a derived naming context and `mode: ssg-isr` the default is
-     * `index.html`, because that mode serves the site root from the S3 HTML store
-     * (Security Hub CloudFront.1). `ssr-only` serves the root from the function
-     * URL, a custom origin CloudFront.1 does not evaluate, so no default applies.
+     * `index.html`, because that mode's default behavior is the S3 HTML store
+     * (Security Hub CloudFront.1). `ssr-only` also carries an S3 origin (the
+     * asset bucket), so the control evaluates the distribution, but `/` must
+     * reach the function URL; a default root object would rewrite `/` onto the
+     * function URL, so AppTheory deliberately sets none and the control reports
+     * a residual finding.
      *
      * @default "index.html" under a derived naming context in `ssg-isr` mode
      */

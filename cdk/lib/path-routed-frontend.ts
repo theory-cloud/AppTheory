@@ -291,8 +291,11 @@ export interface AppTheoryPathRoutedFrontendProps {
     /**
      * Object CloudFront returns for a request to the distribution root.
      *
-     * The frontend's root behavior targets the API origin, a custom origin that
-     * Security Hub CloudFront.1 does not evaluate, so AppTheory sets no default.
+     * The frontend's default behavior targets the API origin. When SPA prefixes
+     * route to S3 origins the distribution carries S3 origins, so Security Hub
+     * CloudFront.1 evaluates it, but `/` must reach the API origin; a default
+     * root object would rewrite `/` onto the API, so AppTheory deliberately
+     * sets none and the control reports a residual finding.
      *
      * @default undefined
      */

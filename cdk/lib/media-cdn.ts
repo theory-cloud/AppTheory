@@ -10,7 +10,7 @@ import { Construct } from "constructs";
 import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
-import { defaultMinimumProtocolVersion } from "./private/secure-defaults";
+import { defaultMinimumProtocolVersion, secureDefaults } from "./private/secure-defaults";
 import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -127,7 +127,14 @@ export interface AppTheoryMediaCdnProps {
     readonly privateMedia?: PrivateMediaConfig;
 
     /**
-     * Default root object for the distribution.
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * With a derived naming context the default is `index.html`: the default
+     * behavior already sends `/` to the S3 bucket through OAC, so the root
+     * object rewrite (`/` -> `/index.html`) changes which object that behavior
+     * returns, not which origin serves it (Security Hub CloudFront.1).
+     *
+     * @default "index.html" under a derived naming context, otherwise undefined
      */
     readonly defaultRootObject?: string;
 
@@ -436,12 +443,20 @@ export class AppTheoryMediaCdn extends Construct {
         };
 
         // Create the distribution
-        // Security Hub CloudFront.15 under a derived naming context.
+        // Security Hub CloudFront.15 and CloudFront.1 under a derived naming context.
         const minimumProtocolVersion = defaultMinimumProtocolVersion(
             namingContext,
             distributionCertificate !== undefined,
             props.minimumProtocolVersion,
         );
+        // The default behavior is the S3 media bucket over OAC, so a root object
+        // rewrites which object `/` returns without changing the origin.
+        const defaultRootObject =
+            props.defaultRootObject !== undefined
+                ? props.defaultRootObject
+                : secureDefaults(namingContext)
+                    ? "index.html"
+                    : undefined;
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             ...(enableLogging && this.logsBucket
                 ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -451,7 +466,7 @@ export class AppTheoryMediaCdn extends Construct {
                 : {}),
             ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
             defaultBehavior: defaultBehaviorOptions,
-            ...(props.defaultRootObject ? { defaultRootObject: props.defaultRootObject } : {}),
+            ...(defaultRootObject ? { defaultRootObject } : {}),
             ...(props.webAclId ? { webAclId: props.webAclId } : {}),
             ...(props.priceClass ? { priceClass: props.priceClass } : {}),
             ...(props.comment ? { comment: props.comment } : {}),
