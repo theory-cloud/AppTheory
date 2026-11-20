@@ -13295,7 +13295,7 @@
           },
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 114
+            "line": 124
           },
           "name": "allowAccount",
           "parameters": [
@@ -13314,13 +13314,13 @@
         },
         {
           "docs": {
-            "remarks": "Security Hub EventBridge.3 requires a custom bus to carry a resource-based\npolicy. The policy grants the owning account `events:*` on this bus, so every\nsame-account principal keeps exactly the access IAM already gives it, and no\nother account is admitted.",
+            "remarks": "Security Hub EventBridge.3 requires a custom bus to carry a resource-based\npolicy. The policy grants the owning account `events:*` on this bus, so every\nsame-account principal keeps exactly the access IAM already gives it, and no\nother account is admitted.\n\nCall this at most once. Under a derived naming context the constructor\nalready attaches it, so pass `owningAccountResourcePolicy: false` when you\nwant to choose the moment yourself.",
             "see": "https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html",
             "summary": "Attaches the owning-account resource policy."
           },
           "locationInModule": {
             "filename": "lib/eventbridge-bus.ts",
-            "line": 94
+            "line": 98
           },
           "name": "allowOwningAccount",
           "returns": {
@@ -34774,5 +34774,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "6JD9LgJUtN+JTHqwxgcoo48U9pJmK1hhUDFDT44gwRU="
+  "fingerprint": "DGGaSyUpxH+chwW0b/mk10g4qyNpelB107H+BUAqt20="
 }

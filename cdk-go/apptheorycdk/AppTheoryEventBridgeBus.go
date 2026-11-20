@@ -26,6 +26,10 @@ type AppTheoryEventBridgeBus interface {
 	// policy. The policy grants the owning account `events:*` on this bus, so every
 	// same-account principal keeps exactly the access IAM already gives it, and no
 	// other account is admitted.
+	//
+	// Call this at most once. Under a derived naming context the constructor
+	// already attaches it, so pass `owningAccountResourcePolicy: false` when you
+	// want to choose the moment yourself.
 	// See: https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html
 	//
 	AllowOwningAccount() awsevents.CfnEventBusPolicy

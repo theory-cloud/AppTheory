@@ -631,3 +631,18 @@ test("S5: server access logging is opt-in and off by default", () => {
     }),
   );
 });
+
+test("S4: the owning-account policy cannot be attached twice", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack", { env: { account: ACCOUNT, region: "us-east-1" } });
+  const bus = new apptheory.AppTheoryEventBridgeBus(stack, "Bus", { namingContext: labContext(stack) });
+  assert.throws(() => bus.allowOwningAccount(), /already attaches its owning-account resource policy/);
+
+  const optedOut = new apptheory.AppTheoryEventBridgeBus(
+    new cdk.Stack(app, "Stack2", { env: { account: ACCOUNT, region: "us-east-1" } }),
+    "Bus",
+    { namingContext: undefined, owningAccountResourcePolicy: false },
+  );
+  assert.ok(optedOut.allowOwningAccount() !== undefined);
+  assert.throws(() => optedOut.allowOwningAccount(), /already attaches/);
+});

@@ -59,6 +59,10 @@ export declare class AppTheoryEventBridgeBus extends Construct {
      * same-account principal keeps exactly the access IAM already gives it, and no
      * other account is admitted.
      *
+     * Call this at most once. Under a derived naming context the constructor
+     * already attaches it, so pass `owningAccountResourcePolicy: false` when you
+     * want to choose the moment yourself.
+     *
      * @see https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html
      */
     allowOwningAccount(): events.CfnEventBusPolicy;

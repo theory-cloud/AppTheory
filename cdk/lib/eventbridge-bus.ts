@@ -73,7 +73,7 @@ export class AppTheoryEventBridgeBus extends Construct {
     const attachOwningAccountPolicy =
       props.owningAccountResourcePolicy ?? (secureDefaults(props.namingContext) ? true : undefined);
     if (attachOwningAccountPolicy === true) {
-      this.owningAccountPolicy = this.allowOwningAccount();
+      this.allowOwningAccount();
     }
 
     for (const accountId of props.allowedAccountIds ?? []) {
@@ -89,9 +89,18 @@ export class AppTheoryEventBridgeBus extends Construct {
    * same-account principal keeps exactly the access IAM already gives it, and no
    * other account is admitted.
    *
+   * Call this at most once. Under a derived naming context the constructor
+   * already attaches it, so pass `owningAccountResourcePolicy: false` when you
+   * want to choose the moment yourself.
+   *
    * @see https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html
    */
   public allowOwningAccount(): events.CfnEventBusPolicy {
+    if (this.owningAccountPolicy !== undefined) {
+      throw new Error(
+        "AppTheoryEventBridgeBus already attaches its owning-account resource policy; pass owningAccountResourcePolicy: false to attach it yourself",
+      );
+    }
     const stack = Stack.of(this);
     const policy = new events.CfnEventBusPolicy(this, "OwningAccountPolicy", {
       eventBusName: this.eventBus.eventBusName,
@@ -105,6 +114,7 @@ export class AppTheoryEventBridgeBus extends Construct {
         Resource: this.eventBus.eventBusArn,
       },
     });
+    (this as { owningAccountPolicy?: events.CfnEventBusPolicy }).owningAccountPolicy = policy;
     return policy;
   }
 
