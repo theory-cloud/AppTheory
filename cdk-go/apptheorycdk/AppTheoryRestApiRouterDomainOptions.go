@@ -52,6 +52,11 @@ type AppTheoryRestApiRouterDomainOptions struct {
 	// APIGateway.11 accepts for the endpoint type (regional:
 	// `TLS13_1_2_PFS_PQ_2025_09`, edge: `TLS12_PFS_2025_EDGE`). Without a
 	// naming context the default is `TLS_1_2`.
+	//
+	// The 2025 policies are also a cipher-policy change for clients, the same
+	// caveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only
+	// negotiates an older TLS 1.2 cipher suite is excluded. API Gateway
+	// requires `endpointAccessMode: STRICT` alongside an enhanced policy.
 	// Default: TLS_1_2, or the APIGateway.11 policy under a derived naming context
 	//
 	SecurityPolicy awsapigateway.SecurityPolicy `field:"optional" json:"securityPolicy" yaml:"securityPolicy"`

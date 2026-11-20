@@ -35,7 +35,14 @@ type AppTheoryMediaCdnProps struct {
 	CloudFrontLogFormat AppTheoryCloudFrontLogFormat `field:"optional" json:"cloudFrontLogFormat" yaml:"cloudFrontLogFormat"`
 	// An optional name/comment for the distribution.
 	Comment *string `field:"optional" json:"comment" yaml:"comment"`
-	// Default root object for the distribution.
+	// Object CloudFront returns for a request to the distribution root.
+	//
+	// With a derived naming context the default is `index.html`: the default
+	// behavior already sends `/` to the S3 bucket through OAC, so the root
+	// object rewrite (`/` -> `/index.html`) changes which object that behavior
+	// returns, not which origin serves it (Security Hub CloudFront.1).
+	// Default: "index.html" under a derived naming context, otherwise undefined
+	//
 	DefaultRootObject *string `field:"optional" json:"defaultRootObject" yaml:"defaultRootObject"`
 	// Domain configuration for custom domain, certificate, and Route53.
 	Domain *MediaCdnDomainConfig `field:"optional" json:"domain" yaml:"domain"`
