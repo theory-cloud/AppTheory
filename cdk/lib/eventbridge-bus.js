@@ -43,7 +43,7 @@ const secure_defaults_1 = require("./private/secure-defaults");
  * Opinionated custom EventBridge bus with explicit cross-account publish allowlist.
  */
 class AppTheoryEventBridgeBus extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus", version: "7.5.0-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus", version: "7.5.0-rc.1" };
     eventBus;
     policies = [];
     /**
