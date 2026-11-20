@@ -595,6 +595,26 @@ export interface AppTheorySsrSiteProps {
   readonly defaultRootObject?: string;
 
   readonly webAclId?: string;
+
+  /**
+   * Bucket that receives S3 server access logs for the buckets this construct
+   * creates, which is what Security Hub S3.9 evaluates.
+   *
+   * Off by default because the log target and its storage cost money. The target
+   * bucket is yours: it takes no naming entry (resource-naming contract
+   * section 4), and it should not itself be logged.
+   *
+   * @default no server access logging
+   */
+  readonly serverAccessLogsBucket?: s3.IBucket;
+
+  /**
+   * Key prefix for the server access logs. Only used with
+   * `serverAccessLogsBucket`.
+   *
+   * @default no prefix
+   */
+  readonly serverAccessLogsPrefix?: string;
 }
 
 export interface AppTheorySsrSiteBearerFunctionUrlOrigin {
@@ -673,6 +693,17 @@ export class AppTheorySsrSite extends Construct {
     }
     const standardLogging = namingContext?.standardLogging === true && enableLogging;
 
+    // Security Hub S3.9 stays opt-in: the caller supplies the log target, and it
+    // takes no naming entry (resource-naming contract section 4).
+    const serverAccessLogs = props.serverAccessLogsBucket !== undefined
+      ? {
+        serverAccessLogsBucket: props.serverAccessLogsBucket,
+        ...(props.serverAccessLogsPrefix !== undefined
+          ? { serverAccessLogsPrefix: props.serverAccessLogsPrefix }
+          : {}),
+      }
+      : {};
+
     this.assetsBucket =
       props.assetsBucket ??
       new s3.Bucket(this, "AssetsBucket", {
@@ -680,6 +711,7 @@ export class AppTheorySsrSite extends Construct {
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         encryption: s3.BucketEncryption.S3_MANAGED,
         enforceSSL: true,
+        ...serverAccessLogs,
         removalPolicy,
         autoDeleteObjects,
       });
@@ -722,6 +754,7 @@ export class AppTheorySsrSite extends Construct {
           blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
           encryption: s3.BucketEncryption.S3_MANAGED,
           enforceSSL: true,
+          ...serverAccessLogs,
           removalPolicy,
           autoDeleteObjects,
         });

@@ -254,6 +254,24 @@ export interface AppTheorySsrSiteProps {
      */
     readonly defaultRootObject?: string;
     readonly webAclId?: string;
+    /**
+     * Bucket that receives S3 server access logs for the buckets this construct
+     * creates, which is what Security Hub S3.9 evaluates.
+     *
+     * Off by default because the log target and its storage cost money. The target
+     * bucket is yours: it takes no naming entry (resource-naming contract
+     * section 4), and it should not itself be logged.
+     *
+     * @default no server access logging
+     */
+    readonly serverAccessLogsBucket?: s3.IBucket;
+    /**
+     * Key prefix for the server access logs. Only used with
+     * `serverAccessLogsBucket`.
+     *
+     * @default no prefix
+     */
+    readonly serverAccessLogsPrefix?: string;
 }
 export interface AppTheorySsrSiteBearerFunctionUrlOrigin {
     /**

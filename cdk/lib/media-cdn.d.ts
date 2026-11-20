@@ -156,6 +156,24 @@ export interface AppTheoryMediaCdnProps {
      */
     readonly comment?: string;
     /**
+     * Bucket that receives S3 server access logs for the media bucket this
+     * construct creates, which is what Security Hub S3.9 evaluates.
+     *
+     * Off by default because the log target and its storage cost money. The
+     * target bucket is yours: it takes no naming entry (resource-naming
+     * contract section 4).
+     *
+     * @default no server access logging
+     */
+    readonly serverAccessLogsBucket?: s3.IBucket;
+    /**
+     * Key prefix for the server access logs. Only used with
+     * `serverAccessLogsBucket`.
+     *
+     * @default no prefix
+     */
+    readonly serverAccessLogsPrefix?: string;
+    /**
      * Minimum TLS protocol version for viewers of a custom domain.
      *
      * With a derived naming context and a custom certificate the default is
