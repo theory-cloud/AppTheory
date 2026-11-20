@@ -375,8 +375,11 @@ test("R1: no naming context keeps the Remote MCP REST domain template unchanged"
 // CloudFront.15 (recommended TLS security policy) accepts TLSv1.2_2025 and
 // TLSv1.3_2025 and evaluates only distributions with a custom certificate:
 // https://docs.aws.amazon.com/securityhub/latest/userguide/cloudfront-controls.html
-// CloudFront.1 (default root object) applies to S3-origin distributions and
-// does not apply to custom origins.
+// CloudFront.1 (default root object) evaluates a distribution that carries S3
+// origins and fails it when no default root object is configured; it does not
+// apply to a distribution with custom origins only. AppTheory sets a root
+// object only where `/` already reaches the S3 default behavior, because the
+// rewrite `/` -> `/<object>` must not change which origin serves the root.
 
 const TLS_2025 = cloudfront.SecurityPolicyProtocol.TLS_V1_2_2025;
 
@@ -440,7 +443,7 @@ test("S3: a static SSR site root gets the CloudFront.1 default root object", () 
   assert.equal(
     distributions(ssrOnly)[0].DefaultRootObject,
     undefined,
-    "an SSR-only root is served by the function URL, a custom origin the control does not evaluate",
+    "an SSR-only root must reach the function URL, so the rewrite would change routing",
   );
 
   const overridden = synth((stack) =>
@@ -489,6 +492,76 @@ test("S3: the media CDN takes the CloudFront.15 policy and keeps its explicit ro
   assert.equal(
     distributions(untouched)[0].ViewerCertificate.MinimumProtocolVersion,
     cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+  );
+});
+
+// ---- R2: CloudFront.1 per distribution ------------------------------------
+//
+// The control page says it "checks whether an Amazon CloudFront distribution
+// with S3 origins is configured to return a specific object that is the default
+// root object" and "fails if the CloudFront distribution uses S3 origins and
+// doesn't have a default root object configured". AppTheory therefore takes a
+// default only when `/` is already served by the S3 default behavior, and
+// documents the distributions where the rewrite would change routing.
+
+function defaultBehaviorOrigin(config) {
+  return config.Origins.find((origin) => origin.Id === config.DefaultCacheBehavior.TargetOriginId);
+}
+
+test("R2: a derived context gives the media CDN a default root object", () => {
+  const template = synth((stack) => new apptheory.AppTheoryMediaCdn(stack, "Media", { namingContext: labContext(stack) }));
+  const [config] = distributions(template);
+  assert.equal(config.DefaultRootObject, "index.html");
+  assert.ok(
+    defaultBehaviorOrigin(config).S3OriginConfig,
+    "the media CDN root is already served by the S3 default behavior",
+  );
+});
+
+test("R2: an explicit media CDN defaultRootObject still wins", () => {
+  const template = synth((stack) =>
+    new apptheory.AppTheoryMediaCdn(stack, "Media", {
+      namingContext: labContext(stack),
+      defaultRootObject: "health.txt",
+    }),
+  );
+  assert.equal(distributions(template)[0].DefaultRootObject, "health.txt");
+});
+
+test("R2: no naming context leaves the media CDN root object unset", () => {
+  const template = synth((stack) => new apptheory.AppTheoryMediaCdn(stack, "Media", {}));
+  assert.equal(distributions(template)[0].DefaultRootObject, undefined);
+});
+
+test("R2: a distribution whose root must reach a custom origin takes no default root object", () => {
+  const ssrOnly = synth((stack) => ssrSiteBuild(stack, labContext(stack)));
+  const ssrConfig = distributions(ssrOnly)[0];
+  assert.equal(ssrConfig.DefaultRootObject, undefined);
+  assert.ok(
+    ssrConfig.Origins.some((origin) => origin.S3OriginConfig !== undefined),
+    "ssr-only carries the assets S3 origin, so CloudFront.1 evaluates the distribution",
+  );
+  assert.ok(
+    defaultBehaviorOrigin(ssrConfig).CustomOriginConfig !== undefined,
+    "`/` must reach the function URL",
+  );
+
+  const frontend = synth((stack) =>
+    new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+      apiOriginUrl: "https://api.example.com",
+      namingContext: labContext(stack),
+      spaOrigins: [{ bucket: new s3.Bucket(stack, "SpaBucket"), pathPattern: "/l/*" }],
+    }),
+  );
+  const frontendConfig = distributions(frontend)[0];
+  assert.equal(frontendConfig.DefaultRootObject, undefined);
+  assert.ok(
+    frontendConfig.Origins.some((origin) => origin.S3OriginConfig !== undefined),
+    "the SPA origin is S3, so CloudFront.1 evaluates the distribution",
+  );
+  assert.ok(
+    defaultBehaviorOrigin(frontendConfig).CustomOriginConfig !== undefined,
+    "`/` must reach the API origin",
   );
 });
 
