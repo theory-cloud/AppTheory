@@ -112,7 +112,7 @@ default root object where `/` already reaches the S3 default behavior, because t
 | `AppTheoryRestV1ChallengeRestoration` | none | the REST API origin | not evaluated | no S3 origin, so the control does not apply |
 
 A finding on the two residual rows is expected, and it is the correct trade: a root object would change what `/`
-serves. On `AppTheorySsrSite` in `ssr-only` mode it would move `/` from the Lambda function URL to the asset bucket;
+serves. On `AppTheorySsrSite` in `ssr-only` mode it keeps the Lambda origin and hands it `/index.html` instead of `/`;
 on `AppTheoryPathRoutedFrontend` it keeps the API origin and hands it `/index.html` instead of `/`. Both constructs
 keep `defaultRootObject` for an app that knows its own routing is safe.
 
