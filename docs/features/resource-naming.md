@@ -29,6 +29,9 @@ The context comes from stage config. Nothing comes from environment variables.
 A logical name is one or more segments `[a-z0-9]+(-[a-z0-9]+)*` joined by `/`, for example `audit-events` or
 `logs/runtime/api`.
 
+The `namingProfile` also selects the Security Hub-aligned defaults: a `derived` context applies them, while a `legacy`
+context keeps the pinned live template byte for byte. See [Security Hub defaults](./security-hub-defaults.md).
+
 ## Composition
 
 `dash` names are `{app}-{stage}-{logical with / replaced by -}`. `path` names are `{lead}{app}/{stage}/{logical}`.
