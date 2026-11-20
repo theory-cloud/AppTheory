@@ -10653,7 +10653,7 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "When present the tables this construct creates\n(the database table and the rate-limit table) take the contract's Security\nHub-aligned defaults: point-in-time recovery on, and deletion protection on\nfor a RETAIN table.\n\nThe context selects table defaults only. AppTheoryApp does not derive\nphysical names for its HTTP API in the v0.1 resource-naming contract, so it\nconsumes no naming entry.\n\nWith no context the construct synthesizes exactly as before.",
+            "remarks": "Under a derived naming context the tables this construct creates\n(the database table and the rate-limit table) take the contract's Security\nHub-aligned defaults: point-in-time recovery on, and deletion protection on\nfor a RETAIN table.\n\nThe context selects table defaults only. AppTheoryApp does not derive\nphysical names for its HTTP API in the v0.1 resource-naming contract, so it\nconsumes no naming entry.\n\nWith no context the construct synthesizes exactly as before.",
             "summary": "Optional naming context."
           },
           "immutable": true,
@@ -12753,7 +12753,7 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "When present the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
+            "remarks": "Under a derived naming context the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
             "summary": "Optional naming context."
           },
           "immutable": true,
@@ -13987,7 +13987,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; under a derived naming context: on for a RETAIN table, off otherwise)",
             "summary": "Whether deletion protection should be enabled for the table."
           },
           "immutable": true,
@@ -14044,7 +14044,7 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "When present the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
+            "remarks": "Under a derived naming context the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
             "summary": "Optional naming context."
           },
           "immutable": true,
@@ -16804,7 +16804,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; under a derived naming context: on for a RETAIN table, off otherwise)",
             "summary": "Whether deletion protection should be enabled for the table."
           },
           "immutable": true,
@@ -16935,7 +16935,7 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "When present the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
+            "remarks": "Under a derived naming context the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
             "summary": "Optional naming context."
           },
           "immutable": true,
@@ -21877,7 +21877,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; under a derived naming context: on for a RETAIN table, off otherwise)",
             "remarks": "Valid only when session state is enabled.",
             "summary": "Whether deletion protection should be enabled for the session table."
           },
@@ -23172,7 +23172,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; under a derived naming context: on for a RETAIN table, off otherwise)",
             "summary": "Whether deletion protection should be enabled for the session registry table."
           },
           "immutable": true,
@@ -34066,7 +34066,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; under a derived naming context: on for a RETAIN table, off otherwise)",
             "summary": "Whether deletion protection should be enabled for the connection table."
           },
           "immutable": true,
@@ -34774,5 +34774,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "3wTKHFshl6rGQLjHsCSNTaiSfu3sttXK27Z+QUUq9Go="
+  "fingerprint": "6JD9LgJUtN+JTHqwxgcoo48U9pJmK1hhUDFDT44gwRU="
 }

@@ -15,7 +15,7 @@ export interface AppTheoryEventBusTableProps {
   /**
    * Whether deletion protection should be enabled for the table.
    * @default undefined (with no naming context: the AWS default, no deletion
-   * protection; with a naming context: on for a RETAIN table, off otherwise)
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
    */
   readonly deletionProtection?: boolean;
   readonly enableStream?: boolean;
@@ -24,7 +24,7 @@ export interface AppTheoryEventBusTableProps {
   readonly readCapacity?: number;
   readonly writeCapacity?: number;
   /**
-   * Optional naming context. When present the table takes the contract's
+   * Optional naming context. Under a derived naming context the table takes the contract's
    * Security Hub-aligned defaults: point-in-time recovery on, and deletion
    * protection on for a RETAIN table.
    *

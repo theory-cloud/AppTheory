@@ -34,7 +34,7 @@ export interface AppTheoryDynamoTableProps {
     readonly streamViewType?: dynamodb.StreamViewType;
     readonly globalSecondaryIndexes?: AppTheoryDynamoTableGsiProps[];
     /**
-     * Optional naming context. When present the table takes the contract's
+     * Optional naming context. Under a derived naming context the table takes the contract's
      * Security Hub-aligned defaults: point-in-time recovery on, and deletion
      * protection on for a RETAIN table.
      *

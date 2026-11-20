@@ -19,7 +19,7 @@ type AppTheoryWebSocketApiProps struct {
 	ConnectionTable        awsdynamodb.ITable            `field:"optional" json:"connectionTable" yaml:"connectionTable"`
 	// Whether deletion protection should be enabled for the connection table.
 	// Default: undefined (with no naming context: the AWS default, no deletion
-	// protection; with a naming context: on for a RETAIN table, off otherwise).
+	// protection; under a derived naming context: on for a RETAIN table, off otherwise).
 	//
 	ConnectionTableDeletionProtection        *bool                `field:"optional" json:"connectionTableDeletionProtection" yaml:"connectionTableDeletionProtection"`
 	ConnectionTableEnablePointInTimeRecovery *bool                `field:"optional" json:"connectionTableEnablePointInTimeRecovery" yaml:"connectionTableEnablePointInTimeRecovery"`

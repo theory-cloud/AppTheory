@@ -124,7 +124,7 @@ export interface AppTheoryAppProps {
   readonly scopePermissionToRoute?: boolean;
 
   /**
-   * Optional naming context. When present the tables this construct creates
+   * Optional naming context. Under a derived naming context the tables this construct creates
    * (the database table and the rate-limit table) take the contract's Security
    * Hub-aligned defaults: point-in-time recovery on, and deletion protection on
    * for a RETAIN table.

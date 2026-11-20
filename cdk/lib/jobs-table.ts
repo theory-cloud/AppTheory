@@ -30,7 +30,7 @@ export interface AppTheoryJobsTableProps {
   /**
    * Whether deletion protection should be enabled for the table.
    * @default undefined (with no naming context: the AWS default, no deletion
-   * protection; with a naming context: on for a RETAIN table, off otherwise)
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
    */
   readonly deletionProtection?: boolean;
 
@@ -85,7 +85,7 @@ export interface AppTheoryJobsTableProps {
   readonly grantReadWriteTo?: iam.IGrantable[];
 
   /**
-   * Optional naming context. When present the table takes the contract's
+   * Optional naming context. Under a derived naming context the table takes the contract's
    * Security Hub-aligned defaults: point-in-time recovery on, and deletion
    * protection on for a RETAIN table.
    *

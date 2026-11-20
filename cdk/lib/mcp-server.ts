@@ -463,7 +463,7 @@ export interface AppTheoryMcpSessionStateOptions {
    * Whether deletion protection should be enabled for the session table.
    * Valid only when session state is enabled.
    * @default undefined (with no naming context: the AWS default, no deletion
-   * protection; with a naming context: on for a RETAIN table, off otherwise)
+   * protection; under a derived naming context: on for a RETAIN table, off otherwise)
    */
   readonly deletionProtection?: boolean;
 }

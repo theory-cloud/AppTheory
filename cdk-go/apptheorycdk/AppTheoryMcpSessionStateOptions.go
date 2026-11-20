@@ -10,7 +10,7 @@ type AppTheoryMcpSessionStateOptions struct {
 	//
 	// Valid only when session state is enabled.
 	// Default: undefined (with no naming context: the AWS default, no deletion
-	// protection; with a naming context: on for a RETAIN table, off otherwise).
+	// protection; under a derived naming context: on for a RETAIN table, off otherwise).
 	//
 	DeletionProtection *bool `field:"optional" json:"deletionProtection" yaml:"deletionProtection"`
 	// Default: true.

@@ -63,7 +63,7 @@ type AppTheoryAppProps struct {
 	MemorySize   *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
 	// Optional naming context.
 	//
-	// When present the tables this construct creates
+	// Under a derived naming context the tables this construct creates
 	// (the database table and the rate-limit table) take the contract's Security
 	// Hub-aligned defaults: point-in-time recovery on, and deletion protection on
 	// for a RETAIN table.

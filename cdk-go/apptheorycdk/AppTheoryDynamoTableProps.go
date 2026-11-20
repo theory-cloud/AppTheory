@@ -24,7 +24,7 @@ type AppTheoryDynamoTableProps struct {
 	GrantWriteTo              *[]awsiam.IGrantable             `field:"optional" json:"grantWriteTo" yaml:"grantWriteTo"`
 	// Optional naming context.
 	//
-	// When present the table takes the contract's
+	// Under a derived naming context the table takes the contract's
 	// Security Hub-aligned defaults: point-in-time recovery on, and deletion
 	// protection on for a RETAIN table.
 	//
