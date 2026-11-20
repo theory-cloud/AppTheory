@@ -9,7 +9,9 @@ const test = require("node:test");
 
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
+const acm = require("aws-cdk-lib/aws-certificatemanager");
 const apigw = require("aws-cdk-lib/aws-apigateway");
+const apigwv2 = require("aws-cdk-lib/aws-apigatewayv2");
 const cloudfront = require("aws-cdk-lib/aws-cloudfront");
 const dynamodb = require("aws-cdk-lib/aws-dynamodb");
 const lambda = require("aws-cdk-lib/aws-lambda");
@@ -223,4 +225,92 @@ test("S1: a legacy naming context keeps the pinned template and gains no protect
     assert.equal(owned.length, 1, `${name} should create one table`);
     assert.equal(owned[0].Properties?.DeletionProtectionEnabled, undefined, `${name} must keep the live template`);
   }
+});
+
+// ---- S2: API custom domains -----------------------------------------------
+//
+// APIGateway.11 (recommended domain-name security policies):
+// https://docs.aws.amazon.com/securityhub/latest/userguide/apigateway-controls.html
+//
+// The control accepts SecurityPolicy_TLS13_1_3_2025_09,
+// SecurityPolicy_TLS13_1_3_FIPS_2025_09, SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09,
+// SecurityPolicy_TLS13_2025_EDGE and SecurityPolicy_TLS12_PFS_2025_EDGE, and
+// always produces a FAILED finding for a custom domain attached to an HTTP API.
+
+const CERT_ARN = `arn:aws:acm:us-east-1:${ACCOUNT}:certificate/6f0a4b64-0000-0000-0000-000000000000`;
+
+function restRouterWithDomain(stack, context, domain = {}) {
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    namingContext: context,
+    ...(context ? {} : { apiName: "apptheory-live-rest" }),
+    domain: {
+      domainName: "api.example.com",
+      certificateArn: CERT_ARN,
+      ...domain,
+    },
+  });
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], handler(stack));
+  return router;
+}
+
+function restDomain(template) {
+  const domains = resourcesOfType(template, "AWS::ApiGateway::DomainName");
+  assert.equal(domains.length, 1);
+  return domains[0].Properties;
+}
+
+test("S2: a derived context gives a REST custom domain an accepted security policy", () => {
+  const template = synth((stack) => restRouterWithDomain(stack, labContext(stack)));
+  const properties = restDomain(template);
+  assert.equal(properties.SecurityPolicy, apigw.SecurityPolicy.TLS13_1_2_PFS_PQ_2025_09);
+  assert.equal(properties.EndpointAccessMode, "STRICT");
+});
+
+test("S2: an edge REST custom domain takes the edge policy the control accepts", () => {
+  const template = synth((stack) =>
+    restRouterWithDomain(stack, labContext(stack), { endpointType: apigw.EndpointType.EDGE }),
+  );
+  assert.equal(restDomain(template).SecurityPolicy, apigw.SecurityPolicy.TLS12_PFS_2025_EDGE);
+});
+
+test("S2: an explicit REST security policy still wins", () => {
+  const legacy = synth((stack) =>
+    restRouterWithDomain(stack, labContext(stack), { securityPolicy: apigw.SecurityPolicy.TLS_1_2 }),
+  );
+  assert.equal(restDomain(legacy).SecurityPolicy, apigw.SecurityPolicy.TLS_1_2);
+  assert.equal(restDomain(legacy).EndpointAccessMode, undefined);
+
+  const enhanced = synth((stack) =>
+    restRouterWithDomain(stack, labContext(stack), {
+      securityPolicy: apigw.SecurityPolicy.TLS13_1_3_2025_09,
+      endpointAccessMode: apigw.EndpointAccessMode.BASIC,
+    }),
+  );
+  assert.equal(restDomain(enhanced).SecurityPolicy, apigw.SecurityPolicy.TLS13_1_3_2025_09);
+  assert.equal(restDomain(enhanced).EndpointAccessMode, "BASIC");
+});
+
+test("S2: no naming context keeps the REST domain template unchanged", () => {
+  const template = synth((stack) => restRouterWithDomain(stack, undefined));
+  assert.equal(restDomain(template).SecurityPolicy, apigw.SecurityPolicy.TLS_1_2);
+  assert.equal(restDomain(template).EndpointAccessMode, undefined);
+});
+
+test("S2: an HTTP API custom domain defaults to TLS 1.2 under a derived context", () => {
+  const build = (stack, context) =>
+    new apptheory.AppTheoryApiDomain(stack, "Domain", {
+      domainName: "api.example.com",
+      certificate: acm.Certificate.fromCertificateArn(stack, "Cert", CERT_ARN),
+      httpApi: new apptheory.AppTheoryHttpApi(stack, "Api", { handler: handler(stack) }).api,
+      namingContext: context,
+    });
+
+  const template = synth((stack) => build(stack, labContext(stack)));
+  const domains = resourcesOfType(template, "AWS::ApiGatewayV2::DomainName");
+  assert.equal(domains.length, 1);
+  assert.equal(domains[0].Properties.DomainNameConfigurations[0].SecurityPolicy, apigwv2.SecurityPolicy.TLS_1_2);
+
+  const untouched = synth((stack) => build(stack, undefined));
+  const plain = resourcesOfType(untouched, "AWS::ApiGatewayV2::DomainName");
+  assert.equal(plain[0].Properties.DomainNameConfigurations[0].SecurityPolicy, undefined);
 });
