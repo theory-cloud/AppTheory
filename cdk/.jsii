@@ -10204,7 +10204,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/app.ts",
-          "line": 151
+          "line": 172
         },
         "parameters": [
           {
@@ -10230,7 +10230,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 143
+        "line": 164
       },
       "name": "AppTheoryApp",
       "properties": [
@@ -10238,7 +10238,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 144
+            "line": 165
           },
           "name": "api",
           "type": {
@@ -10249,7 +10249,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 145
+            "line": 166
           },
           "name": "fn",
           "type": {
@@ -10260,7 +10260,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 149
+            "line": 170
           },
           "name": "alias",
           "optional": true,
@@ -10272,7 +10272,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 146
+            "line": 167
           },
           "name": "databaseTable",
           "optional": true,
@@ -10284,7 +10284,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 148
+            "line": 169
           },
           "name": "domain",
           "optional": true,
@@ -10296,7 +10296,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 147
+            "line": 168
           },
           "name": "rateLimitTable",
           "optional": true,
@@ -10374,7 +10374,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 93
+            "line": 114
           },
           "name": "certificateArn",
           "optional": true,
@@ -10413,7 +10413,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 95
+            "line": 116
           },
           "name": "cors",
           "optional": true,
@@ -10471,6 +10471,24 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined (with no naming context: today's template, no deletion\nprotection; under a derived naming context: on for the RETAIN table\nAppTheoryApp creates)",
+            "remarks": "Applies only when AppTheory creates the table; a `databaseTable` you supply\nkeeps its own setting.",
+            "summary": "Whether the database table enables deletion protection (Security Hub DynamoDB.6)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 99
+          },
+          "name": "databaseTableDeletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
@@ -10487,7 +10505,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 94
+            "line": 115
           },
           "name": "domain",
           "optional": true,
@@ -10500,7 +10518,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 92
+            "line": 113
           },
           "name": "domainName",
           "optional": true,
@@ -10526,7 +10544,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 89
+            "line": 101
           },
           "name": "enableRateLimiting",
           "optional": true,
@@ -10570,7 +10588,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 108
+            "line": 129
           },
           "name": "hostedZone",
           "optional": true,
@@ -10659,7 +10677,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 140
+            "line": 161
           },
           "name": "namingContext",
           "optional": true,
@@ -10669,10 +10687,27 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined (with no naming context: today's template, no deletion\nprotection; under a derived naming context: on for the RETAIN table\nAppTheoryApp creates)",
+            "summary": "Whether the rate-limit table enables deletion protection (Security Hub DynamoDB.6)."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 90
+            "line": 111
+          },
+          "name": "rateLimitTableDeletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 102
           },
           "name": "rateLimitTableName",
           "optional": true,
@@ -10721,7 +10756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 124
+            "line": 145
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -10752,7 +10787,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 109
+            "line": 130
           },
           "name": "stage",
           "optional": true,
@@ -10811,7 +10846,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 107
+            "line": 128
           },
           "name": "waf",
           "optional": true,
@@ -29465,7 +29500,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api-router.ts",
-          "line": 436
+          "line": 438
         },
         "parameters": [
           {
@@ -29492,7 +29527,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 381
+        "line": 383
       },
       "methods": [
         {
@@ -29501,7 +29536,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 509
+            "line": 511
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -29559,7 +29594,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 385
+            "line": 387
           },
           "name": "api",
           "type": {
@@ -29573,7 +29608,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 390
+            "line": 392
           },
           "name": "stage",
           "type": {
@@ -29587,7 +29622,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 420
+            "line": 422
           },
           "name": "aaaaRecord",
           "optional": true,
@@ -29602,7 +29637,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 425
+            "line": 427
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -29617,7 +29652,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 415
+            "line": 417
           },
           "name": "aRecord",
           "optional": true,
@@ -29632,7 +29667,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 400
+            "line": 402
           },
           "name": "basePathMapping",
           "optional": true,
@@ -29647,7 +29682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 395
+            "line": 397
           },
           "name": "domainName",
           "optional": true,
@@ -29662,7 +29697,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 410
+            "line": 412
           },
           "name": "wafAssociation",
           "optional": true,
@@ -29677,7 +29712,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 405
+            "line": 407
           },
           "name": "webAcl",
           "optional": true,
@@ -29913,7 +29948,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 183
+            "line": 185
           },
           "name": "endpointAccessMode",
           "optional": true,
@@ -29960,13 +29995,13 @@
           "abstract": true,
           "docs": {
             "default": "TLS_1_2, or the APIGateway.11 policy under a derived naming context",
-            "remarks": "With a derived naming context the default is the policy Security Hub\nAPIGateway.11 accepts for the endpoint type (regional:\n`TLS13_1_2_PFS_PQ_2025_09`, edge: `TLS12_PFS_2025_EDGE`). Without a\nnaming context the default is `TLS_1_2`.\n\nThe 2025 policies are also a cipher-policy change for clients, the same\ncaveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only\nnegotiates an older TLS 1.2 cipher suite is excluded. API Gateway\nrequires `endpointAccessMode: STRICT` alongside an enhanced policy.",
+            "remarks": "With a derived naming context the default is the policy Security Hub\nAPIGateway.11 accepts for the endpoint type (regional:\n`TLS13_1_2_PFS_PQ_2025_09`, edge: `TLS12_PFS_2025_EDGE`). Without a\nnaming context the default is `TLS_1_2`.\n\nThe 2025 policies are also a cipher-policy change for clients, the same\ncaveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only\nnegotiates an older TLS 1.2 cipher suite is excluded. An enhanced policy\nrequires an endpoint access mode alongside it: AppTheory derives `STRICT`\n(the recommended mode), and `BASIC` remains available through\n`domain.endpointAccessMode`.",
             "summary": "Security policy for the domain."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 172
+            "line": 174
           },
           "name": "securityPolicy",
           "optional": true,
@@ -29987,7 +30022,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 189
+        "line": 191
       },
       "name": "AppTheoryRestApiRouterIntegrationOptions",
       "properties": [
@@ -30000,7 +30035,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 217
+            "line": 219
           },
           "name": "passthroughBehavior",
           "optional": true,
@@ -30017,7 +30052,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 211
+            "line": 213
           },
           "name": "requestTemplates",
           "optional": true,
@@ -30040,7 +30075,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 198
+            "line": 200
           },
           "name": "streaming",
           "optional": true,
@@ -30057,7 +30092,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 205
+            "line": 207
           },
           "name": "timeout",
           "optional": true,
@@ -30078,7 +30113,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 223
+        "line": 225
       },
       "name": "AppTheoryRestApiRouterProps",
       "properties": [
@@ -30092,7 +30127,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 327
+            "line": 329
           },
           "name": "allowTestInvoke",
           "optional": true,
@@ -30109,7 +30144,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 316
+            "line": 318
           },
           "name": "apiKeySourceType",
           "optional": true,
@@ -30125,7 +30160,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 227
+            "line": 229
           },
           "name": "apiName",
           "optional": true,
@@ -30143,7 +30178,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 358
+            "line": 360
           },
           "name": "authorizationType",
           "optional": true,
@@ -30161,7 +30196,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 348
+            "line": 350
           },
           "name": "authorizer",
           "optional": true,
@@ -30179,7 +30214,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 292
+            "line": 294
           },
           "name": "binaryMediaTypes",
           "optional": true,
@@ -30202,7 +30237,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 265
+            "line": 267
           },
           "name": "cors",
           "optional": true,
@@ -30228,7 +30263,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 304
+            "line": 306
           },
           "name": "deploy",
           "optional": true,
@@ -30244,7 +30279,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 253
+            "line": 255
           },
           "name": "description",
           "optional": true,
@@ -30261,7 +30296,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 271
+            "line": 273
           },
           "name": "domain",
           "optional": true,
@@ -30278,7 +30313,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 285
+            "line": 287
           },
           "name": "endpointTypes",
           "optional": true,
@@ -30301,7 +30336,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 248
+            "line": 250
           },
           "name": "logicalName",
           "optional": true,
@@ -30318,7 +30353,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 298
+            "line": 300
           },
           "name": "minimumCompressionSize",
           "optional": true,
@@ -30336,7 +30371,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 240
+            "line": 242
           },
           "name": "namingContext",
           "optional": true,
@@ -30353,7 +30388,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 310
+            "line": 312
           },
           "name": "retainDeployments",
           "optional": true,
@@ -30371,7 +30406,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 338
+            "line": 340
           },
           "name": "scopePermissionToMethod",
           "optional": true,
@@ -30387,7 +30422,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 258
+            "line": 260
           },
           "name": "stage",
           "optional": true,
@@ -30405,7 +30440,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 279
+            "line": 281
           },
           "name": "waf",
           "optional": true,
@@ -34794,5 +34829,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "Qgn4upJrHxxinGFoy6UTtoNO3rrAgjRnshgGvVNPFWk="
+  "fingerprint": "YkRLxUSrL/DYnQOBiLPDAKcVZQXLdNdvnjPQvH98gRI="
 }

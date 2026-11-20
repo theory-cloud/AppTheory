@@ -23,14 +23,23 @@ type AppTheoryAppProps struct {
 	DatabasePartitionKey *string                        `field:"optional" json:"databasePartitionKey" yaml:"databasePartitionKey"`
 	DatabaseSortKey      *string                        `field:"optional" json:"databaseSortKey" yaml:"databaseSortKey"`
 	DatabaseTable        awsdynamodb.ITable             `field:"optional" json:"databaseTable" yaml:"databaseTable"`
-	DatabaseTableName    *string                        `field:"optional" json:"databaseTableName" yaml:"databaseTableName"`
-	Domain               *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
-	DomainName           *string                        `field:"optional" json:"domainName" yaml:"domainName"`
-	EnableDatabase       *bool                          `field:"optional" json:"enableDatabase" yaml:"enableDatabase"`
-	EnableRateLimiting   *bool                          `field:"optional" json:"enableRateLimiting" yaml:"enableRateLimiting"`
-	Environment          *map[string]*string            `field:"optional" json:"environment" yaml:"environment"`
-	Handler              *string                        `field:"optional" json:"handler" yaml:"handler"`
-	HostedZone           awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
+	// Whether the database table enables deletion protection (Security Hub DynamoDB.6).
+	//
+	// Applies only when AppTheory creates the table; a `databaseTable` you supply
+	// keeps its own setting.
+	// Default: undefined (with no naming context: today's template, no deletion
+	// protection; under a derived naming context: on for the RETAIN table
+	// AppTheoryApp creates).
+	//
+	DatabaseTableDeletionProtection *bool                          `field:"optional" json:"databaseTableDeletionProtection" yaml:"databaseTableDeletionProtection"`
+	DatabaseTableName               *string                        `field:"optional" json:"databaseTableName" yaml:"databaseTableName"`
+	Domain                          *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
+	DomainName                      *string                        `field:"optional" json:"domainName" yaml:"domainName"`
+	EnableDatabase                  *bool                          `field:"optional" json:"enableDatabase" yaml:"enableDatabase"`
+	EnableRateLimiting              *bool                          `field:"optional" json:"enableRateLimiting" yaml:"enableRateLimiting"`
+	Environment                     *map[string]*string            `field:"optional" json:"environment" yaml:"environment"`
+	Handler                         *string                        `field:"optional" json:"handler" yaml:"handler"`
+	HostedZone                      awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 	// Log group the app function writes to.
 	//
 	// When set, AppTheory uses this group unchanged: the caller owns its
@@ -75,8 +84,14 @@ type AppTheoryAppProps struct {
 	// With no context the construct synthesizes exactly as before.
 	// Default: undefined.
 	//
-	NamingContext      AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
-	RateLimitTableName *string                `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
+	// Whether the rate-limit table enables deletion protection (Security Hub DynamoDB.6).
+	// Default: undefined (with no naming context: today's template, no deletion
+	// protection; under a derived naming context: on for the RETAIN table
+	// AppTheoryApp creates).
+	//
+	RateLimitTableDeletionProtection *bool   `field:"optional" json:"rateLimitTableDeletionProtection" yaml:"rateLimitTableDeletionProtection"`
+	RateLimitTableName               *string `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
 	// Stable physical name for the app function's AppTheory-managed IAM role.
 	//
 	// AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.
