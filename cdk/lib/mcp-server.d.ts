@@ -344,6 +344,13 @@ export interface AppTheoryMcpSessionStateOptions {
      * @default RemovalPolicy.RETAIN
      */
     readonly removalPolicy?: RemovalPolicy;
+    /**
+     * Whether deletion protection should be enabled for the session table.
+     * Valid only when session state is enabled.
+     * @default undefined (with no naming context: the AWS default, no deletion
+     * protection; with a naming context: on for a RETAIN table, off otherwise)
+     */
+    readonly deletionProtection?: boolean;
 }
 /** One derived MCP OAuth facade route family. */
 export interface AppTheoryMcpServerFacadeRoute {

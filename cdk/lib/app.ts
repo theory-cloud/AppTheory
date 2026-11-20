@@ -15,6 +15,8 @@ import {
   type AppTheoryHttpApiCorsOptions,
   type AppTheoryHttpApiDomainOptions,
 } from "./http-api";
+import type { AppTheoryNamingContext } from "./naming-context";
+import { defaultDeletionProtection } from "./private/secure-defaults";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 export interface AppTheoryAppProps {
@@ -120,6 +122,22 @@ export interface AppTheoryAppProps {
    * @default true
    */
   readonly scopePermissionToRoute?: boolean;
+
+  /**
+   * Optional naming context. When present the tables this construct creates
+   * (the database table and the rate-limit table) take the contract's Security
+   * Hub-aligned defaults: point-in-time recovery on, and deletion protection on
+   * for a RETAIN table.
+   *
+   * The context selects table defaults only. AppTheoryApp does not derive
+   * physical names for its HTTP API in the v0.1 resource-naming contract, so it
+   * consumes no naming entry.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
 }
 
 export class AppTheoryApp extends Construct {
@@ -165,6 +183,7 @@ export class AppTheoryApp extends Construct {
           ? { name: props.databaseSortKey, type: dynamodb.AttributeType.STRING }
           : undefined,
         timeToLiveAttribute: "ttl",
+        deletionProtection: defaultDeletionProtection(props.namingContext, RemovalPolicy.RETAIN, undefined),
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },
@@ -184,6 +203,7 @@ export class AppTheoryApp extends Construct {
         partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
         sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "ttl",
+        deletionProtection: defaultDeletionProtection(props.namingContext, RemovalPolicy.RETAIN, undefined),
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },

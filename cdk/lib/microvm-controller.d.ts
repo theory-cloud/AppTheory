@@ -175,7 +175,8 @@ export interface AppTheoryMicrovmControllerProps {
     /**
      * Whether deletion protection should be enabled for the session registry table.
      *
-     * @default - AWS default (no deletion protection)
+     * @default undefined (with no naming context: the AWS default, no deletion
+     * protection; with a naming context: on for a RETAIN table, off otherwise)
      */
     readonly sessionTableDeletionProtection?: boolean;
     /**

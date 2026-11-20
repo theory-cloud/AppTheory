@@ -4,6 +4,7 @@ import type * as iam from "aws-cdk-lib/aws-iam";
 import type * as kms from "aws-cdk-lib/aws-kms";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 export interface AppTheoryJobsTableProps {
     /**
      * Optional table name.
@@ -22,7 +23,8 @@ export interface AppTheoryJobsTableProps {
     readonly removalPolicy?: RemovalPolicy;
     /**
      * Whether deletion protection should be enabled for the table.
-     * @default - AWS default (no deletion protection)
+     * @default undefined (with no naming context: the AWS default, no deletion
+     * protection; with a naming context: on for a RETAIN table, off otherwise)
      */
     readonly deletionProtection?: boolean;
     /**
@@ -66,6 +68,16 @@ export interface AppTheoryJobsTableProps {
      * Principals to grant DynamoDB read/write permissions to.
      */
     readonly grantReadWriteTo?: iam.IGrantable[];
+    /**
+     * Optional naming context. When present the table takes the contract's
+     * Security Hub-aligned defaults: point-in-time recovery on, and deletion
+     * protection on for a RETAIN table.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
 }
 /**
  * Opinionated DynamoDB table for import pipeline job ledgers.

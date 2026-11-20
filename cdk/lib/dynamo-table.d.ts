@@ -3,6 +3,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as iam from "aws-cdk-lib/aws-iam";
 import type * as kms from "aws-cdk-lib/aws-kms";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 export interface AppTheoryDynamoTableGsiProps {
     readonly indexName: string;
     readonly partitionKeyName: string;
@@ -32,6 +33,16 @@ export interface AppTheoryDynamoTableProps {
     readonly enableStream?: boolean;
     readonly streamViewType?: dynamodb.StreamViewType;
     readonly globalSecondaryIndexes?: AppTheoryDynamoTableGsiProps[];
+    /**
+     * Optional naming context. When present the table takes the contract's
+     * Security Hub-aligned defaults: point-in-time recovery on, and deletion
+     * protection on for a RETAIN table.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
     readonly grantReadTo?: iam.IGrantable[];
     readonly grantWriteTo?: iam.IGrantable[];
     readonly grantReadWriteTo?: iam.IGrantable[];

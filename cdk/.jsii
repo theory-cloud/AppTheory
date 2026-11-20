@@ -10182,7 +10182,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/app.ts",
-          "line": 133
+          "line": 151
         },
         "parameters": [
           {
@@ -10208,7 +10208,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 125
+        "line": 143
       },
       "name": "AppTheoryApp",
       "properties": [
@@ -10216,7 +10216,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 126
+            "line": 144
           },
           "name": "api",
           "type": {
@@ -10227,7 +10227,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 127
+            "line": 145
           },
           "name": "fn",
           "type": {
@@ -10238,7 +10238,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 131
+            "line": 149
           },
           "name": "alias",
           "optional": true,
@@ -10250,7 +10250,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 128
+            "line": 146
           },
           "name": "databaseTable",
           "optional": true,
@@ -10262,7 +10262,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 130
+            "line": 148
           },
           "name": "domain",
           "optional": true,
@@ -10274,7 +10274,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 129
+            "line": 147
           },
           "name": "rateLimitTable",
           "optional": true,
@@ -10292,7 +10292,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 20
+        "line": 22
       },
       "name": "AppTheoryAppProps",
       "properties": [
@@ -10301,7 +10301,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 21
+            "line": 23
           },
           "name": "appName",
           "type": {
@@ -10313,7 +10313,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 79
+            "line": 81
           },
           "name": "alias",
           "optional": true,
@@ -10326,7 +10326,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 68
+            "line": 70
           },
           "name": "allowAllOutbound",
           "optional": true,
@@ -10339,7 +10339,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 69
+            "line": 71
           },
           "name": "allowPublicSubnet",
           "optional": true,
@@ -10352,7 +10352,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 91
+            "line": 93
           },
           "name": "certificateArn",
           "optional": true,
@@ -10365,7 +10365,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 23
+            "line": 25
           },
           "name": "code",
           "optional": true,
@@ -10378,7 +10378,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 22
+            "line": 24
           },
           "name": "codeAssetPath",
           "optional": true,
@@ -10391,7 +10391,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 93
+            "line": 95
           },
           "name": "cors",
           "optional": true,
@@ -10413,7 +10413,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 83
+            "line": 85
           },
           "name": "databasePartitionKey",
           "optional": true,
@@ -10426,7 +10426,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 84
+            "line": 86
           },
           "name": "databaseSortKey",
           "optional": true,
@@ -10439,7 +10439,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 85
+            "line": 87
           },
           "name": "databaseTable",
           "optional": true,
@@ -10452,7 +10452,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 82
+            "line": 84
           },
           "name": "databaseTableName",
           "optional": true,
@@ -10465,7 +10465,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 92
+            "line": 94
           },
           "name": "domain",
           "optional": true,
@@ -10478,7 +10478,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 90
+            "line": 92
           },
           "name": "domainName",
           "optional": true,
@@ -10491,7 +10491,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 81
+            "line": 83
           },
           "name": "enableDatabase",
           "optional": true,
@@ -10504,7 +10504,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 87
+            "line": 89
           },
           "name": "enableRateLimiting",
           "optional": true,
@@ -10517,7 +10517,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 27
+            "line": 29
           },
           "name": "environment",
           "optional": true,
@@ -10535,7 +10535,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 25
+            "line": 27
           },
           "name": "handler",
           "optional": true,
@@ -10548,7 +10548,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 106
+            "line": 108
           },
           "name": "hostedZone",
           "optional": true,
@@ -10566,7 +10566,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 51
+            "line": 53
           },
           "name": "logGroup",
           "optional": true,
@@ -10586,7 +10586,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 64
+            "line": 66
           },
           "name": "logRemovalPolicy",
           "optional": true,
@@ -10606,7 +10606,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 41
+            "line": 43
           },
           "name": "logRetention",
           "optional": true,
@@ -10619,7 +10619,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 28
+            "line": 30
           },
           "name": "memorySize",
           "optional": true,
@@ -10629,10 +10629,28 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "When present the tables this construct creates\n(the database table and the rate-limit table) take the contract's Security\nHub-aligned defaults: point-in-time recovery on, and deletion protection on\nfor a RETAIN table.\n\nThe context selects table defaults only. AppTheoryApp does not derive\nphysical names for its HTTP API in the v0.1 resource-naming contract, so it\nconsumes no naming entry.\n\nWith no context the construct synthesizes exactly as before.",
+            "summary": "Optional naming context."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 88
+            "line": 140
+          },
+          "name": "namingContext",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContext"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 90
           },
           "name": "rateLimitTableName",
           "optional": true,
@@ -10650,7 +10668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 78
+            "line": 80
           },
           "name": "roleName",
           "optional": true,
@@ -10663,7 +10681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 24
+            "line": 26
           },
           "name": "runtime",
           "optional": true,
@@ -10681,7 +10699,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 122
+            "line": 124
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -10694,7 +10712,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 67
+            "line": 69
           },
           "name": "securityGroups",
           "optional": true,
@@ -10712,7 +10730,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 107
+            "line": 109
           },
           "name": "stage",
           "optional": true,
@@ -10725,7 +10743,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 29
+            "line": 31
           },
           "name": "timeoutSeconds",
           "optional": true,
@@ -10738,7 +10756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 65
+            "line": 67
           },
           "name": "vpc",
           "optional": true,
@@ -10751,7 +10769,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 66
+            "line": 68
           },
           "name": "vpcSubnets",
           "optional": true,
@@ -10771,7 +10789,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 105
+            "line": 107
           },
           "name": "waf",
           "optional": true,
@@ -12316,7 +12334,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/dynamo-table.ts",
-          "line": 47
+          "line": 61
         },
         "parameters": [
           {
@@ -12342,7 +12360,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/dynamo-table.ts",
-        "line": 44
+        "line": 58
       },
       "name": "AppTheoryDynamoTable",
       "properties": [
@@ -12350,7 +12368,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 45
+            "line": 59
           },
           "name": "table",
           "type": {
@@ -12367,7 +12385,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/dynamo-table.ts",
-        "line": 7
+        "line": 10
       },
       "name": "AppTheoryDynamoTableGsiProps",
       "properties": [
@@ -12376,7 +12394,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 8
+            "line": 11
           },
           "name": "indexName",
           "type": {
@@ -12388,7 +12406,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 9
+            "line": 12
           },
           "name": "partitionKeyName",
           "type": {
@@ -12400,7 +12418,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 14
+            "line": 17
           },
           "name": "nonKeyAttributes",
           "optional": true,
@@ -12418,7 +12436,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 10
+            "line": 13
           },
           "name": "partitionKeyType",
           "optional": true,
@@ -12431,7 +12449,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 13
+            "line": 16
           },
           "name": "projectionType",
           "optional": true,
@@ -12444,7 +12462,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 15
+            "line": 18
           },
           "name": "readCapacity",
           "optional": true,
@@ -12457,7 +12475,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 11
+            "line": 14
           },
           "name": "sortKeyName",
           "optional": true,
@@ -12470,7 +12488,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 12
+            "line": 15
           },
           "name": "sortKeyType",
           "optional": true,
@@ -12483,7 +12501,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 16
+            "line": 19
           },
           "name": "writeCapacity",
           "optional": true,
@@ -12501,7 +12519,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/dynamo-table.ts",
-        "line": 19
+        "line": 22
       },
       "name": "AppTheoryDynamoTableProps",
       "properties": [
@@ -12510,7 +12528,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 21
+            "line": 24
           },
           "name": "partitionKeyName",
           "type": {
@@ -12522,7 +12540,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 23
+            "line": 26
           },
           "name": "sortKeyName",
           "type": {
@@ -12534,7 +12552,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 20
+            "line": 23
           },
           "name": "tableName",
           "type": {
@@ -12546,7 +12564,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 26
+            "line": 29
           },
           "name": "billingMode",
           "optional": true,
@@ -12559,7 +12577,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 30
+            "line": 33
           },
           "name": "deletionProtection",
           "optional": true,
@@ -12572,7 +12590,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 31
+            "line": 34
           },
           "name": "enablePointInTimeRecovery",
           "optional": true,
@@ -12585,7 +12603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 34
+            "line": 37
           },
           "name": "enableStream",
           "optional": true,
@@ -12598,7 +12616,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 32
+            "line": 35
           },
           "name": "encryption",
           "optional": true,
@@ -12611,7 +12629,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 33
+            "line": 36
           },
           "name": "encryptionKey",
           "optional": true,
@@ -12624,7 +12642,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 36
+            "line": 39
           },
           "name": "globalSecondaryIndexes",
           "optional": true,
@@ -12642,7 +12660,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 38
+            "line": 52
           },
           "name": "grantReadTo",
           "optional": true,
@@ -12660,7 +12678,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 40
+            "line": 54
           },
           "name": "grantReadWriteTo",
           "optional": true,
@@ -12678,7 +12696,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 41
+            "line": 55
           },
           "name": "grantStreamReadTo",
           "optional": true,
@@ -12696,7 +12714,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 39
+            "line": 53
           },
           "name": "grantWriteTo",
           "optional": true,
@@ -12711,10 +12729,28 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "When present the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
+            "summary": "Optional naming context."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 22
+            "line": 50
+          },
+          "name": "namingContext",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContext"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 25
           },
           "name": "partitionKeyType",
           "optional": true,
@@ -12727,7 +12763,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 27
+            "line": 30
           },
           "name": "readCapacity",
           "optional": true,
@@ -12740,7 +12776,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 29
+            "line": 32
           },
           "name": "removalPolicy",
           "optional": true,
@@ -12753,7 +12789,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 24
+            "line": 27
           },
           "name": "sortKeyType",
           "optional": true,
@@ -12766,7 +12802,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 35
+            "line": 38
           },
           "name": "streamViewType",
           "optional": true,
@@ -12779,7 +12815,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 25
+            "line": 28
           },
           "name": "timeToLiveAttribute",
           "optional": true,
@@ -12792,7 +12828,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 28
+            "line": 31
           },
           "name": "writeCapacity",
           "optional": true,
@@ -13712,7 +13748,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/eventbus-table.ts",
-          "line": 38
+          "line": 57
         },
         "parameters": [
           {
@@ -13739,7 +13775,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/eventbus-table.ts",
-        "line": 35
+        "line": 54
       },
       "methods": [
         {
@@ -13748,7 +13784,7 @@
           },
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 105
+            "line": 130
           },
           "name": "bind",
           "parameters": [
@@ -13774,7 +13810,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 36
+            "line": 55
           },
           "name": "table",
           "type": {
@@ -13791,7 +13827,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/eventbus-table.ts",
-        "line": 19
+        "line": 38
       },
       "name": "AppTheoryEventBusTableBindingOptions",
       "properties": [
@@ -13805,7 +13841,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 32
+            "line": 51
           },
           "name": "envVarName",
           "optional": true,
@@ -13823,7 +13859,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 25
+            "line": 44
           },
           "name": "readOnly",
           "optional": true,
@@ -13841,7 +13877,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/eventbus-table.ts",
-        "line": 6
+        "line": 9
       },
       "name": "AppTheoryEventBusTableProps",
       "properties": [
@@ -13850,7 +13886,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 8
+            "line": 11
           },
           "name": "billingMode",
           "optional": true,
@@ -13860,10 +13896,27 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "summary": "Whether deletion protection should be enabled for the table."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 14
+            "line": 20
+          },
+          "name": "deletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 23
           },
           "name": "enableEventIdIndex",
           "optional": true,
@@ -13876,7 +13929,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 11
+            "line": 14
           },
           "name": "enablePointInTimeRecovery",
           "optional": true,
@@ -13889,7 +13942,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 12
+            "line": 21
           },
           "name": "enableStream",
           "optional": true,
@@ -13899,10 +13952,28 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "When present the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
+            "summary": "Optional naming context."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 15
+            "line": 35
+          },
+          "name": "namingContext",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContext"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 24
           },
           "name": "readCapacity",
           "optional": true,
@@ -13915,7 +13986,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 9
+            "line": 12
           },
           "name": "removalPolicy",
           "optional": true,
@@ -13928,7 +13999,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 13
+            "line": 22
           },
           "name": "streamViewType",
           "optional": true,
@@ -13941,7 +14012,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 7
+            "line": 10
           },
           "name": "tableName",
           "optional": true,
@@ -13954,7 +14025,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 10
+            "line": 13
           },
           "name": "timeToLiveAttribute",
           "optional": true,
@@ -13967,7 +14038,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 16
+            "line": 25
           },
           "name": "writeCapacity",
           "optional": true,
@@ -16457,7 +16528,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/jobs-table.ts",
-          "line": 101
+          "line": 116
         },
         "parameters": [
           {
@@ -16484,7 +16555,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/jobs-table.ts",
-        "line": 98
+        "line": 113
       },
       "methods": [
         {
@@ -16493,7 +16564,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 175
+            "line": 195
           },
           "name": "bindEnvironment",
           "parameters": [
@@ -16511,7 +16582,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 182
+            "line": 202
           },
           "name": "grantReadTo",
           "parameters": [
@@ -16529,7 +16600,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 196
+            "line": 216
           },
           "name": "grantReadWriteTo",
           "parameters": [
@@ -16547,7 +16618,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 189
+            "line": 209
           },
           "name": "grantWriteTo",
           "parameters": [
@@ -16566,7 +16637,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 99
+            "line": 114
           },
           "name": "table",
           "type": {
@@ -16583,7 +16654,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/jobs-table.ts",
-        "line": 8
+        "line": 11
       },
       "name": "AppTheoryJobsTableProps",
       "properties": [
@@ -16596,7 +16667,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 19
+            "line": 22
           },
           "name": "billingMode",
           "optional": true,
@@ -16607,13 +16678,13 @@
         {
           "abstract": true,
           "docs": {
-            "default": "- AWS default (no deletion protection)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
             "summary": "Whether deletion protection should be enabled for the table."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 31
+            "line": 35
           },
           "name": "deletionProtection",
           "optional": true,
@@ -16630,7 +16701,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 43
+            "line": 47
           },
           "name": "enablePointInTimeRecovery",
           "optional": true,
@@ -16647,7 +16718,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 49
+            "line": 53
           },
           "name": "encryption",
           "optional": true,
@@ -16663,7 +16734,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 54
+            "line": 58
           },
           "name": "encryptionKey",
           "optional": true,
@@ -16679,7 +16750,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 71
+            "line": 75
           },
           "name": "grantReadTo",
           "optional": true,
@@ -16700,7 +16771,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 81
+            "line": 85
           },
           "name": "grantReadWriteTo",
           "optional": true,
@@ -16721,7 +16792,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 76
+            "line": 80
           },
           "name": "grantWriteTo",
           "optional": true,
@@ -16737,13 +16808,31 @@
         {
           "abstract": true,
           "docs": {
+            "default": "undefined",
+            "remarks": "When present the table takes the contract's\nSecurity Hub-aligned defaults: point-in-time recovery on, and deletion\nprotection on for a RETAIN table.\n\nWith no context the construct synthesizes exactly as before.",
+            "summary": "Optional naming context."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 96
+          },
+          "name": "namingContext",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContext"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "5",
             "summary": "Provisioned read capacity (only used when billingMode is PROVISIONED)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 60
+            "line": 64
           },
           "name": "readCapacity",
           "optional": true,
@@ -16760,7 +16849,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 25
+            "line": 28
           },
           "name": "removalPolicy",
           "optional": true,
@@ -16777,7 +16866,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 13
+            "line": 16
           },
           "name": "tableName",
           "optional": true,
@@ -16794,7 +16883,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 37
+            "line": 41
           },
           "name": "timeToLiveAttribute",
           "optional": true,
@@ -16811,7 +16900,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 66
+            "line": 70
           },
           "name": "writeCapacity",
           "optional": true,
@@ -18478,7 +18567,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 292
+        "line": 293
       },
       "name": "AppTheoryMcpDenialSignalOptions",
       "properties": [
@@ -18492,7 +18581,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 296
+            "line": 297
           },
           "name": "dimensions",
           "optional": true,
@@ -18515,7 +18604,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 294
+            "line": 295
           },
           "name": "metricName",
           "optional": true,
@@ -18677,7 +18766,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 126
+        "line": 127
       },
       "name": "AppTheoryMcpFacadeAttachment",
       "properties": [
@@ -18690,7 +18779,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 128
+            "line": 129
           },
           "name": "providerId",
           "type": {
@@ -18711,7 +18800,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 284
+        "line": 285
       },
       "name": "AppTheoryMcpFrontDoorHeader",
       "properties": [
@@ -18723,7 +18812,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 286
+            "line": 287
           },
           "name": "headerName",
           "type": {
@@ -18738,7 +18827,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 288
+            "line": 289
           },
           "name": "headerValue",
           "type": {
@@ -18759,7 +18848,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 195
+        "line": 196
       },
       "name": "AppTheoryMcpFrontDoorVerificationOptions",
       "properties": [
@@ -18772,7 +18861,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 274
+            "line": 275
           },
           "name": "asserted",
           "type": {
@@ -18788,7 +18877,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 206
+            "line": 207
           },
           "name": "headerName",
           "type": {
@@ -18805,7 +18894,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 264
+            "line": 265
           },
           "name": "secretParameterKmsKey",
           "optional": true,
@@ -18823,7 +18912,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 250
+            "line": 251
           },
           "name": "secretParameterName",
           "optional": true,
@@ -18841,7 +18930,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 223
+            "line": 224
           },
           "name": "secretValue",
           "optional": true,
@@ -19000,7 +19089,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 138
+        "line": 139
       },
       "members": [
         {
@@ -19037,7 +19126,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 308
+        "line": 309
       },
       "name": "AppTheoryMcpOwningApiDefenseOptions",
       "properties": [
@@ -19050,7 +19139,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 310
+            "line": 311
           },
           "name": "accessLogging",
           "type": {
@@ -19065,7 +19154,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 312
+            "line": 313
           },
           "name": "throttling",
           "type": {
@@ -19085,7 +19174,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 300
+        "line": 301
       },
       "name": "AppTheoryMcpOwningApiThrottlingOptions",
       "properties": [
@@ -19097,7 +19186,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 304
+            "line": 305
           },
           "name": "burstLimit",
           "type": {
@@ -19112,7 +19201,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 302
+            "line": 303
           },
           "name": "rateLimit",
           "type": {
@@ -20170,7 +20259,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 404
+        "line": 405
       },
       "name": "AppTheoryMcpRouteFamily",
       "properties": [
@@ -20183,7 +20272,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 412
+            "line": 413
           },
           "name": "patterns",
           "type": {
@@ -20205,7 +20294,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 419
+            "line": 420
           },
           "name": "rootAuthorizationServerDiscovery",
           "optional": true,
@@ -20225,7 +20314,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 95
+        "line": 96
       },
       "members": [
         {
@@ -20254,7 +20343,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 76
+        "line": 77
       },
       "members": [
         {
@@ -20285,7 +20374,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 132
+        "line": 133
       },
       "name": "AppTheoryMcpRuntimePostureOptions",
       "properties": [
@@ -20297,7 +20386,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 134
+            "line": 135
           },
           "name": "requireBearerToken",
           "type": {
@@ -20318,7 +20407,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/mcp-server.ts",
-          "line": 813
+          "line": 822
         },
         "parameters": [
           {
@@ -20344,7 +20433,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 749
+        "line": 758
       },
       "name": "AppTheoryMcpServer",
       "properties": [
@@ -20352,7 +20441,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 754
+            "line": 763
           },
           "name": "api",
           "type": {
@@ -20369,7 +20458,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 788
+            "line": 797
           },
           "name": "endpoint",
           "type": {
@@ -20384,7 +20473,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 774
+            "line": 783
           },
           "name": "endpoints",
           "type": {
@@ -20404,7 +20493,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 791
+            "line": 800
           },
           "name": "mcpPath",
           "type": {
@@ -20415,7 +20504,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 775
+            "line": 784
           },
           "name": "mcpPaths",
           "type": {
@@ -20435,7 +20524,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 794
+            "line": 803
           },
           "name": "protectedResourceMetadataPath",
           "type": {
@@ -20446,7 +20535,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 776
+            "line": 785
           },
           "name": "protectedResourceMetadataPaths",
           "type": {
@@ -20462,7 +20551,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 777
+            "line": 786
           },
           "name": "routeInventory",
           "type": {
@@ -20477,7 +20566,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 764
+            "line": 773
           },
           "name": "transportPosture",
           "type": {
@@ -20488,7 +20577,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 799
+            "line": 808
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -20500,7 +20589,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 797
+            "line": 806
           },
           "name": "apiMapping",
           "optional": true,
@@ -20512,7 +20601,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 798
+            "line": 807
           },
           "name": "cnameRecord",
           "optional": true,
@@ -20524,7 +20613,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 796
+            "line": 805
           },
           "name": "domainName",
           "optional": true,
@@ -20540,7 +20629,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 811
+            "line": 820
           },
           "name": "frontDoorOriginHeader",
           "optional": true,
@@ -20552,7 +20641,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 755
+            "line": 764
           },
           "name": "ownedApi",
           "optional": true,
@@ -20564,7 +20653,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 756
+            "line": 765
           },
           "name": "sessionTable",
           "optional": true,
@@ -20585,7 +20674,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 328
+        "line": 329
       },
       "name": "AppTheoryMcpServerDomainOptions",
       "properties": [
@@ -20597,7 +20686,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 330
+            "line": 331
           },
           "name": "domainName",
           "type": {
@@ -20613,7 +20702,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 333
+            "line": 334
           },
           "name": "certificate",
           "optional": true,
@@ -20630,7 +20719,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 336
+            "line": 337
           },
           "name": "certificateArn",
           "optional": true,
@@ -20647,7 +20736,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 342
+            "line": 343
           },
           "name": "hostedZone",
           "optional": true,
@@ -20665,7 +20754,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 354
+            "line": 355
           },
           "name": "mutualTlsAuthentication",
           "optional": true,
@@ -20686,7 +20775,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 448
+        "line": 457
       },
       "name": "AppTheoryMcpServerFacadeRoute",
       "properties": [
@@ -20695,7 +20784,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 457
+            "line": 466
           },
           "name": "authorizationRoutesAttached",
           "type": {
@@ -20707,7 +20796,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 454
+            "line": 463
           },
           "name": "authorizePattern",
           "type": {
@@ -20719,7 +20808,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 452
+            "line": 461
           },
           "name": "discoveryCanonicalPattern",
           "type": {
@@ -20731,7 +20820,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 453
+            "line": 462
           },
           "name": "discoverySuffixPattern",
           "type": {
@@ -20743,7 +20832,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 450
+            "line": 459
           },
           "name": "mcpMethods",
           "type": {
@@ -20760,7 +20849,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 449
+            "line": 458
           },
           "name": "mcpPattern",
           "type": {
@@ -20772,7 +20861,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 451
+            "line": 460
           },
           "name": "protectedResourcePattern",
           "type": {
@@ -20784,7 +20873,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 456
+            "line": 465
           },
           "name": "registerPattern",
           "type": {
@@ -20796,7 +20885,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 455
+            "line": 464
           },
           "name": "tokenPattern",
           "type": {
@@ -20816,7 +20905,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 389
+        "line": 390
       },
       "name": "AppTheoryMcpServerOwnedApiOptions",
       "properties": [
@@ -20828,7 +20917,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 391
+            "line": 392
           },
           "name": "apiName",
           "optional": true,
@@ -20844,7 +20933,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 394
+            "line": 395
           },
           "name": "domain",
           "optional": true,
@@ -20862,7 +20951,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 400
+            "line": 401
           },
           "name": "stage",
           "optional": true,
@@ -20883,7 +20972,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 470
+        "line": 479
       },
       "name": "AppTheoryMcpServerProps",
       "properties": [
@@ -20895,7 +20984,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 472
+            "line": 481
           },
           "name": "handler",
           "type": {
@@ -20912,7 +21001,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 549
+            "line": 558
           },
           "name": "api",
           "optional": true,
@@ -20929,7 +21018,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 696
+            "line": 705
           },
           "name": "apiName",
           "optional": true,
@@ -20947,7 +21036,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 558
+            "line": 567
           },
           "name": "attachedApiStageName",
           "optional": true,
@@ -20965,7 +21054,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 686
+            "line": 695
           },
           "name": "authorizationServerIssuer",
           "optional": true,
@@ -20983,7 +21072,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 542
+            "line": 551
           },
           "name": "cors",
           "optional": true,
@@ -21009,7 +21098,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 626
+            "line": 635
           },
           "name": "denialSignal",
           "optional": true,
@@ -21026,7 +21115,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 732
+            "line": 741
           },
           "name": "domain",
           "optional": true,
@@ -21043,7 +21132,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 721
+            "line": 730
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -21061,7 +21150,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 588
+            "line": 597
           },
           "name": "facade",
           "optional": true,
@@ -21079,7 +21168,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 620
+            "line": 629
           },
           "name": "frontDoorVerification",
           "optional": true,
@@ -21097,7 +21186,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 693
+            "line": 702
           },
           "name": "jwksUri",
           "optional": true,
@@ -21115,7 +21204,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 716
+            "line": 725
           },
           "name": "logicalName",
           "optional": true,
@@ -21133,7 +21222,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 679
+            "line": 688
           },
           "name": "mcpPath",
           "optional": true,
@@ -21151,7 +21240,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 708
+            "line": 717
           },
           "name": "namingContext",
           "optional": true,
@@ -21169,7 +21258,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 605
+            "line": 614
           },
           "name": "originReachability",
           "optional": true,
@@ -21187,7 +21276,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 672
+            "line": 681
           },
           "name": "ownedApi",
           "optional": true,
@@ -21204,7 +21293,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 633
+            "line": 642
           },
           "name": "owningApiDefense",
           "optional": true,
@@ -21222,7 +21311,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 568
+            "line": 577
           },
           "name": "routeFamily",
           "optional": true,
@@ -21240,7 +21329,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 534
+            "line": 543
           },
           "name": "routeIdMode",
           "optional": true,
@@ -21258,7 +21347,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 513
+            "line": 522
           },
           "name": "routeModel",
           "optional": true,
@@ -21276,7 +21365,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 597
+            "line": 606
           },
           "name": "runtimePosture",
           "optional": true,
@@ -21294,7 +21383,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 487
+            "line": 496
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -21312,7 +21401,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 666
+            "line": 675
           },
           "name": "sessionState",
           "optional": true,
@@ -21329,7 +21418,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 724
+            "line": 733
           },
           "name": "sessionTableName",
           "optional": true,
@@ -21346,7 +21435,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 727
+            "line": 736
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -21363,7 +21452,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 737
+            "line": 746
           },
           "name": "stage",
           "optional": true,
@@ -21381,7 +21470,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 645
+            "line": 654
           },
           "name": "transportAuthorizer",
           "optional": true,
@@ -21399,7 +21488,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 579
+            "line": 588
           },
           "name": "transportPosture",
           "optional": true,
@@ -21417,7 +21506,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 660
+            "line": 669
           },
           "name": "upstreamCallbackPath",
           "optional": true,
@@ -21438,7 +21527,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 461
+        "line": 470
       },
       "name": "AppTheoryMcpServerRouteInventory",
       "properties": [
@@ -21447,7 +21536,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 466
+            "line": 475
           },
           "name": "callbackPattern",
           "type": {
@@ -21459,7 +21548,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 462
+            "line": 471
           },
           "name": "contractVersion",
           "type": {
@@ -21471,7 +21560,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 465
+            "line": 474
           },
           "name": "rootAuthorizationServerAttached",
           "type": {
@@ -21483,7 +21572,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 464
+            "line": 473
           },
           "name": "rootAuthorizationServerPattern",
           "type": {
@@ -21495,7 +21584,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 463
+            "line": 472
           },
           "name": "routes",
           "type": {
@@ -21520,7 +21609,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 358
+        "line": 359
       },
       "name": "AppTheoryMcpServerStageOptions",
       "properties": [
@@ -21532,7 +21621,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 363
+            "line": 364
           },
           "name": "accessLogging",
           "optional": true,
@@ -21550,7 +21639,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 370
+            "line": 371
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -21566,7 +21655,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 360
+            "line": 361
           },
           "name": "stageName",
           "optional": true,
@@ -21583,7 +21672,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 385
+            "line": 386
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -21599,7 +21688,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 373
+            "line": 374
           },
           "name": "throttlingEnabled",
           "optional": true,
@@ -21616,7 +21705,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 379
+            "line": 380
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -21637,10 +21726,28 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 423
+        "line": 424
       },
       "name": "AppTheoryMcpSessionStateOptions",
       "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "remarks": "Valid only when session state is enabled.",
+            "summary": "Whether deletion protection should be enabled for the session table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 453
+          },
+          "name": "deletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
         {
           "abstract": true,
           "docs": {
@@ -21649,7 +21756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 425
+            "line": 426
           },
           "name": "enabled",
           "optional": true,
@@ -21667,7 +21774,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 444
+            "line": 445
           },
           "name": "removalPolicy",
           "optional": true,
@@ -21685,7 +21792,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 431
+            "line": 432
           },
           "name": "tableName",
           "optional": true,
@@ -21703,7 +21810,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 438
+            "line": 439
           },
           "name": "ttlMinutes",
           "optional": true,
@@ -21791,7 +21898,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 316
+        "line": 317
       },
       "name": "AppTheoryMcpTransportAuthorizerOptions",
       "properties": [
@@ -21805,7 +21912,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 320
+            "line": 321
           },
           "name": "audience",
           "optional": true,
@@ -21827,7 +21934,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 324
+            "line": 325
           },
           "name": "authorizerName",
           "optional": true,
@@ -21844,7 +21951,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 322
+            "line": 323
           },
           "name": "identitySource",
           "optional": true,
@@ -21867,7 +21974,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 318
+            "line": 319
           },
           "name": "issuer",
           "optional": true,
@@ -21887,7 +21994,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 114
+        "line": 115
       },
       "members": [
         {
@@ -22419,7 +22526,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-controller.ts",
-          "line": 382
+          "line": 384
         },
         "parameters": [
           {
@@ -22445,7 +22552,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 344
+        "line": 346
       },
       "name": "AppTheoryMicrovmController",
       "properties": [
@@ -22456,7 +22563,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 348
+            "line": 350
           },
           "name": "api",
           "type": {
@@ -22470,7 +22577,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 363
+            "line": 365
           },
           "name": "controllerFunction",
           "type": {
@@ -22484,7 +22591,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 373
+            "line": 375
           },
           "name": "endpoint",
           "type": {
@@ -22498,7 +22605,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 358
+            "line": 360
           },
           "name": "routeAuthorizer",
           "type": {
@@ -22512,7 +22619,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 368
+            "line": 370
           },
           "name": "sessionTable",
           "type": {
@@ -22526,7 +22633,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 353
+            "line": 355
           },
           "name": "stage",
           "type": {
@@ -22540,7 +22647,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 378
+            "line": 380
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -22565,7 +22672,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 137
+        "line": 138
       },
       "name": "AppTheoryMicrovmControllerFunctionProps",
       "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerFunctionProps"
@@ -22580,7 +22687,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 142
+        "line": 143
       },
       "name": "AppTheoryMicrovmControllerProps",
       "properties": [
@@ -22593,7 +22700,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 157
+            "line": 158
           },
           "name": "authorizer",
           "type": {
@@ -22609,7 +22716,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 149
+            "line": 150
           },
           "name": "controller",
           "type": {
@@ -22625,7 +22732,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 178
+            "line": 179
           },
           "name": "egressNetworkConnectors",
           "type": {
@@ -22646,7 +22753,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 171
+            "line": 172
           },
           "name": "ingressNetworkConnectors",
           "type": {
@@ -22666,7 +22773,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 162
+            "line": 163
           },
           "name": "microvmImage",
           "type": {
@@ -22682,7 +22789,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 187
+            "line": 188
           },
           "name": "shellIngressNetworkConnector",
           "type": {
@@ -22698,7 +22805,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 204
+            "line": 205
           },
           "name": "apiName",
           "optional": true,
@@ -22716,7 +22823,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 333
+            "line": 335
           },
           "name": "authorizerCacheTtl",
           "optional": true,
@@ -22733,7 +22840,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 317
+            "line": 319
           },
           "name": "authorizerHeaderName",
           "optional": true,
@@ -22750,7 +22857,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 324
+            "line": 326
           },
           "name": "authorizerName",
           "optional": true,
@@ -22767,7 +22874,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 282
+            "line": 284
           },
           "name": "enableSessionTablePointInTimeRecovery",
           "optional": true,
@@ -22785,7 +22892,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 197
+            "line": 198
           },
           "name": "executionRole",
           "optional": true,
@@ -22803,7 +22910,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 225
+            "line": 226
           },
           "name": "logicalName",
           "optional": true,
@@ -22821,7 +22928,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 217
+            "line": 218
           },
           "name": "namingContext",
           "optional": true,
@@ -22839,7 +22946,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 247
+            "line": 248
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -22856,7 +22963,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 261
+            "line": 262
           },
           "name": "sessionTableBillingMode",
           "optional": true,
@@ -22867,13 +22974,13 @@
         {
           "abstract": true,
           "docs": {
-            "default": "- AWS default (no deletion protection)",
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
             "summary": "Whether deletion protection should be enabled for the session registry table."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 275
+            "line": 277
           },
           "name": "sessionTableDeletionProtection",
           "optional": true,
@@ -22890,7 +22997,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 289
+            "line": 291
           },
           "name": "sessionTableEncryption",
           "optional": true,
@@ -22907,7 +23014,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 296
+            "line": 298
           },
           "name": "sessionTableEncryptionKey",
           "optional": true,
@@ -22924,7 +23031,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 254
+            "line": 255
           },
           "name": "sessionTableName",
           "optional": true,
@@ -22941,7 +23048,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 303
+            "line": 305
           },
           "name": "sessionTableReadCapacity",
           "optional": true,
@@ -22958,7 +23065,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 268
+            "line": 269
           },
           "name": "sessionTableRemovalPolicy",
           "optional": true,
@@ -22975,7 +23082,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 310
+            "line": 312
           },
           "name": "sessionTableWriteCapacity",
           "optional": true,
@@ -22992,7 +23099,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 232
+            "line": 233
           },
           "name": "stage",
           "optional": true,
@@ -23013,7 +23120,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 91
+        "line": 92
       },
       "name": "AppTheoryMicrovmControllerStageOptions",
       "properties": [
@@ -23026,7 +23133,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 104
+            "line": 105
           },
           "name": "accessLogging",
           "optional": true,
@@ -23044,7 +23151,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 112
+            "line": 113
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -23061,7 +23168,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 97
+            "line": 98
           },
           "name": "stageName",
           "optional": true,
@@ -23078,7 +23185,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 126
+            "line": 127
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -23095,7 +23202,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 119
+            "line": 120
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -33403,7 +33510,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/websocket-api.ts",
-          "line": 67
+          "line": 74
         },
         "parameters": [
           {
@@ -33429,7 +33536,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/websocket-api.ts",
-        "line": 61
+        "line": 68
       },
       "name": "AppTheoryWebSocketApi",
       "properties": [
@@ -33437,7 +33544,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 62
+            "line": 69
           },
           "name": "api",
           "type": {
@@ -33448,7 +33555,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 63
+            "line": 70
           },
           "name": "stage",
           "type": {
@@ -33459,7 +33566,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 65
+            "line": 72
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -33471,7 +33578,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 64
+            "line": 71
           },
           "name": "connectionTable",
           "optional": true,
@@ -33489,7 +33596,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/websocket-api.ts",
-        "line": 16
+        "line": 17
       },
       "name": "AppTheoryWebSocketApiProps",
       "properties": [
@@ -33498,7 +33605,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 17
+            "line": 18
           },
           "name": "handler",
           "type": {
@@ -33510,7 +33617,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 37
+            "line": 44
           },
           "name": "accessLogFormat",
           "optional": true,
@@ -33523,7 +33630,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 34
+            "line": 41
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -33536,7 +33643,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 36
+            "line": 43
           },
           "name": "accessLogRemovalPolicy",
           "optional": true,
@@ -33549,7 +33656,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 35
+            "line": 42
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -33562,7 +33669,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 21
+            "line": 22
           },
           "name": "apiName",
           "optional": true,
@@ -33575,7 +33682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 18
+            "line": 19
           },
           "name": "connectHandler",
           "optional": true,
@@ -33588,7 +33695,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 24
+            "line": 25
           },
           "name": "connectionTable",
           "optional": true,
@@ -33598,10 +33705,27 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "undefined (with no naming context: the AWS default, no deletion\nprotection; with a naming context: on for a RETAIN table, off otherwise)",
+            "summary": "Whether deletion protection should be enabled for the connection table."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 31
+            "line": 38
+          },
+          "name": "connectionTableDeletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 32
           },
           "name": "connectionTableEnablePointInTimeRecovery",
           "optional": true,
@@ -33614,7 +33738,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 26
+            "line": 27
           },
           "name": "connectionTableName",
           "optional": true,
@@ -33627,7 +33751,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 27
+            "line": 28
           },
           "name": "connectionTablePartitionKeyName",
           "optional": true,
@@ -33640,7 +33764,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 30
+            "line": 31
           },
           "name": "connectionTableRemovalPolicy",
           "optional": true,
@@ -33653,7 +33777,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 28
+            "line": 29
           },
           "name": "connectionTableSortKeyName",
           "optional": true,
@@ -33666,7 +33790,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 29
+            "line": 30
           },
           "name": "connectionTableTimeToLiveAttribute",
           "optional": true,
@@ -33679,7 +33803,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 20
+            "line": 21
           },
           "name": "defaultHandler",
           "optional": true,
@@ -33692,7 +33816,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 19
+            "line": 20
           },
           "name": "disconnectHandler",
           "optional": true,
@@ -33705,7 +33829,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 33
+            "line": 40
           },
           "name": "enableAccessLogging",
           "optional": true,
@@ -33718,7 +33842,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 25
+            "line": 26
           },
           "name": "enableConnectionTable",
           "optional": true,
@@ -33736,7 +33860,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 58
+            "line": 65
           },
           "name": "logicalName",
           "optional": true,
@@ -33754,7 +33878,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 50
+            "line": 57
           },
           "name": "namingContext",
           "optional": true,
@@ -33767,7 +33891,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 22
+            "line": 23
           },
           "name": "stageName",
           "optional": true,
@@ -34290,5 +34414,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "71ZohxFS/xHBZuSm+5ruHHiRgnwzMsZrePqH82Bi81g="
+  "fingerprint": "MwgcortKFf8ZfGVdGPczqQj2SrwD4qZPwHQiNuGBEEs="
 }

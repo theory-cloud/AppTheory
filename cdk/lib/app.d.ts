@@ -9,6 +9,7 @@ import { Construct } from "constructs";
 import { AppTheoryApiDomain } from "./api-domain";
 import { AppTheoryFunction, type AppTheoryFunctionAliasOptions } from "./function";
 import { AppTheoryHttpApi, type AppTheoryHttpApiCorsOptions, type AppTheoryHttpApiDomainOptions } from "./http-api";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 export interface AppTheoryAppProps {
     readonly appName: string;
@@ -108,6 +109,21 @@ export interface AppTheoryAppProps {
      * @default true
      */
     readonly scopePermissionToRoute?: boolean;
+    /**
+     * Optional naming context. When present the tables this construct creates
+     * (the database table and the rate-limit table) take the contract's Security
+     * Hub-aligned defaults: point-in-time recovery on, and deletion protection on
+     * for a RETAIN table.
+     *
+     * The context selects table defaults only. AppTheoryApp does not derive
+     * physical names for its HTTP API in the v0.1 resource-naming contract, so it
+     * consumes no naming entry.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
 }
 export declare class AppTheoryApp extends Construct {
     readonly api: AppTheoryHttpApi;

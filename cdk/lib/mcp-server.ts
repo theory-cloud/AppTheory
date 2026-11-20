@@ -15,6 +15,7 @@ import { Construct } from "constructs";
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { defaultDeletionProtection } from "./private/secure-defaults";
 import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import { buildCorsPreflight } from "./cors";
@@ -442,6 +443,14 @@ export interface AppTheoryMcpSessionStateOptions {
    * @default RemovalPolicy.RETAIN
    */
   readonly removalPolicy?: RemovalPolicy;
+
+  /**
+   * Whether deletion protection should be enabled for the session table.
+   * Valid only when session state is enabled.
+   * @default undefined (with no naming context: the AWS default, no deletion
+   * protection; with a naming context: on for a RETAIN table, off otherwise)
+   */
+  readonly deletionProtection?: boolean;
 }
 
 /** One derived MCP OAuth facade route family. */
@@ -1025,6 +1034,11 @@ export class AppTheoryMcpServer extends Construct {
         partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",
         removalPolicy: sessionState.removalPolicy,
+        deletionProtection: defaultDeletionProtection(
+          namingContext,
+          sessionState.removalPolicy,
+          sessionState.deletionProtection,
+        ),
         pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
@@ -1182,6 +1196,7 @@ interface NormalizedSessionState {
   readonly tableName?: string;
   readonly ttlMinutes: number;
   readonly removalPolicy: RemovalPolicy;
+  readonly deletionProtection?: boolean;
 }
 
 function normalizeRouteFamily(props: AppTheoryMcpServerProps): NormalizedRouteFamily {
@@ -1436,15 +1451,22 @@ function normalizeSessionState(props: AppTheoryMcpServerProps): NormalizedSessio
     && (tableName !== undefined
       || props.sessionState?.ttlMinutes !== undefined
       || props.sessionState?.removalPolicy !== undefined
+      || props.sessionState?.deletionProtection !== undefined
       || props.sessionTableName !== undefined
       || props.sessionTtlMinutes !== undefined)
   ) {
     throw new Error(
-      "AppTheoryMcpServer: disabled session state cannot configure tableName, ttlMinutes, or removalPolicy",
+      "AppTheoryMcpServer: disabled session state cannot configure tableName, ttlMinutes, removalPolicy, or deletionProtection",
     );
   }
   validatePositiveInteger(ttlMinutes, "sessionState.ttlMinutes");
-  return { enabled, tableName, ttlMinutes, removalPolicy };
+  return {
+    enabled,
+    tableName,
+    ttlMinutes,
+    removalPolicy,
+    deletionProtection: props.sessionState?.deletionProtection,
+  };
 }
 
 function normalizeLegacyAuthConfig(props: AppTheoryMcpServerProps): void {
