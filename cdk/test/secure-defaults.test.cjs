@@ -324,6 +324,52 @@ test("S2: an HTTP API custom domain defaults to TLS 1.2 under a derived context"
   assert.equal(plain[0].Properties.DomainNameConfigurations[0].SecurityPolicy, undefined);
 });
 
+// ---- R1: AppTheoryRemoteMcpServer -----------------------------------------
+//
+// The construct builds its REST API through AppTheoryRestApiRouter, so a naming
+// context has to reach that internal router: the REST custom domain then takes
+// the APIGateway.11 policy and endpoint access mode like every other REST
+// domain. Without a context the template must not move.
+
+function remoteMcpWithDomain(stack, context, domain = {}) {
+  return new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: handler(stack),
+    ...(context ? { namingContext: context } : { apiName: "apptheory-live-mcp" }),
+    domain: { domainName: "mcp.example.com", certificateArn: CERT_ARN, ...domain },
+  });
+}
+
+test("R1: a derived context gives the Remote MCP REST domain the APIGateway.11 policy", () => {
+  const template = synth((stack) => remoteMcpWithDomain(stack, labContext(stack)));
+  const properties = restDomain(template);
+  assert.equal(properties.SecurityPolicy, apigw.SecurityPolicy.TLS13_1_2_PFS_PQ_2025_09);
+  assert.equal(properties.EndpointAccessMode, "STRICT");
+});
+
+test("R1: explicit Remote MCP domain props still override the derived policy", () => {
+  const legacy = synth((stack) =>
+    remoteMcpWithDomain(stack, labContext(stack), { securityPolicy: apigw.SecurityPolicy.TLS_1_2 }),
+  );
+  assert.equal(restDomain(legacy).SecurityPolicy, apigw.SecurityPolicy.TLS_1_2);
+  assert.equal(restDomain(legacy).EndpointAccessMode, undefined);
+
+  const enhanced = synth((stack) =>
+    remoteMcpWithDomain(stack, labContext(stack), {
+      securityPolicy: apigw.SecurityPolicy.TLS13_1_3_2025_09,
+      endpointAccessMode: apigw.EndpointAccessMode.BASIC,
+    }),
+  );
+  assert.equal(restDomain(enhanced).SecurityPolicy, apigw.SecurityPolicy.TLS13_1_3_2025_09);
+  assert.equal(restDomain(enhanced).EndpointAccessMode, "BASIC");
+});
+
+test("R1: no naming context keeps the Remote MCP REST domain template unchanged", () => {
+  const template = synth((stack) => remoteMcpWithDomain(stack, undefined));
+  const properties = restDomain(template);
+  assert.equal(properties.SecurityPolicy, apigw.SecurityPolicy.TLS_1_2);
+  assert.equal(properties.EndpointAccessMode, undefined);
+});
+
 // ---- S3: CloudFront -------------------------------------------------------
 //
 // CloudFront.15 (recommended TLS security policy) accepts TLSv1.2_2025 and

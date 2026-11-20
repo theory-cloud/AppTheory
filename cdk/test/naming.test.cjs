@@ -709,6 +709,19 @@ test("legacy profiles synthesize byte-identically: AppTheoryRestApiRouter", () =
   );
 });
 
+test("legacy profiles synthesize byte-identically: AppTheoryRemoteMcpServer", () => {
+  assertIdentical(
+    (stack, context) => {
+      new apptheory.AppTheoryRemoteMcpServer(stack, "Mcp", {
+        handler: handler(stack),
+        namingContext: context,
+        ...(context ? {} : { apiName: "autheory-live-mcp" }),
+      });
+    },
+    { pins: { "api_rest:mcp": "autheory-live-mcp" } },
+  );
+});
+
 test("legacy profiles synthesize byte-identically: AppTheoryWebSocketApi", () => {
   assertIdentical(
     (stack, context) =>
