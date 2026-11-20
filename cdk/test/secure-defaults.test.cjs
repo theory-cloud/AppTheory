@@ -55,6 +55,15 @@ function tables(template) {
   return resourcesOfType(template, "AWS::DynamoDB::Table");
 }
 
+function renderedString(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(renderedString).join("");
+  if (value && typeof value === "object" && Array.isArray(value["Fn::Join"])) {
+    return renderedString(value["Fn::Join"][1]);
+  }
+  return JSON.stringify(value);
+}
+
 function microvmControllerBuild(stack, context, overrides = {}) {
   return new apptheory.AppTheoryMicrovmController(stack, "Controller", {
     namingContext: context,
@@ -463,4 +472,58 @@ test("S3: the REST v1 challenge-restoration front door takes the CloudFront.15 p
     distributions(untouched)[0].ViewerCertificate.MinimumProtocolVersion,
     cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
   );
+});
+
+// ---- S4: EventBridge ------------------------------------------------------
+//
+// EventBridge.3 (a custom event bus has a resource-based policy attached):
+// https://docs.aws.amazon.com/securityhub/latest/userguide/eventbridge-controls.html
+
+function busPolicies(template) {
+  return resourcesOfType(template, "AWS::Events::EventBusPolicy").map((resource) => resource.Properties);
+}
+
+test("S4: a custom bus takes an owning-account resource policy under a derived context", () => {
+  const template = synth(
+    (stack) => new apptheory.AppTheoryEventBridgeBus(stack, "Bus", { namingContext: labContext(stack) }),
+  );
+  const policies = busPolicies(template);
+  assert.equal(policies.length, 1);
+  assert.equal(policies[0].Statement.Effect, "Allow");
+  assert.match(renderedString(policies[0].Statement.Principal.AWS), /^arn:.+:iam::998115851393:root$/);
+  assert.equal(policies[0].Statement.Action, "events:*");
+  assert.equal(policies[0].StatementId, "AllowOwningAccount");
+  assert.equal(policies[0].StatementId, "AllowOwningAccount");
+  assert.deepEqual(policies[0].Statement.Resource, { "Fn::GetAtt": [policies[0].EventBusName["Ref"], "Arn"] });
+});
+
+test("S4: an explicit cross-account allowlist still adds its own statements", () => {
+  const template = synth(
+    (stack) =>
+      new apptheory.AppTheoryEventBridgeBus(stack, "Bus", {
+        namingContext: labContext(stack),
+        allowedAccountIds: ["111122223333"],
+      }),
+  );
+  const policies = busPolicies(template);
+  assert.equal(policies.length, 2);
+  const partner = policies.find((policy) => policy.StatementId !== "AllowOwningAccount");
+  assert.deepEqual(partner.Statement.Principal, { AWS: "111122223333" });
+  assert.equal(partner.Statement.Action, "events:PutEvents");
+});
+
+test("S4: the owning-account policy can be turned off explicitly", () => {
+  const template = synth(
+    (stack) =>
+      new apptheory.AppTheoryEventBridgeBus(stack, "Bus", {
+        namingContext: labContext(stack),
+        owningAccountResourcePolicy: false,
+      }),
+  );
+  assert.equal(busPolicies(template).length, 0);
+});
+
+test("S4: no naming context keeps the bus template unchanged", () => {
+  const template = synth((stack) => new apptheory.AppTheoryEventBridgeBus(stack, "Bus", {}));
+  assert.equal(busPolicies(template).length, 0);
 });
