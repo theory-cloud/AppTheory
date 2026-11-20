@@ -41,7 +41,7 @@ const route53 = __importStar(require("aws-cdk-lib/aws-route53"));
 const constructs_1 = require("constructs");
 const secure_defaults_1 = require("./private/secure-defaults");
 class AppTheoryApiDomain extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApiDomain", version: "7.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApiDomain", version: "7.5.0-rc" };
     domainName;
     apiMapping;
     cnameRecord;

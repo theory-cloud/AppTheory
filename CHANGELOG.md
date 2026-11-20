@@ -1,5 +1,44 @@
 # Changelog
 
+## [7.5.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.4.0...v7.5.0-rc) (2026-11-19)
+
+
+### Features
+
+* **cdk:** add the naming context, derived names, standard logging and keeper visibility ([9bc925f](https://github.com/theory-cloud/AppTheory/commit/9bc925fdbf61d9b6065dd6bab9520ef379ad46f5))
+* **cdk:** adopt r2 naming, refuse explicit names under a context ([8117d73](https://github.com/theory-cloud/AppTheory/commit/8117d738e7f3bd88d268664a3401a0ee98fed5d2))
+* **naming:** adopt resource-naming contract r3 and close the [#1312](https://github.com/theory-cloud/AppTheory/issues/1312) gate findings ([fcc3441](https://github.com/theory-cloud/AppTheory/commit/fcc3441634dd3ac1cad14643eb12666f5d51cc47))
+* **naming:** adopt the r2 generated-name and api_websocket rules ([f76a7f6](https://github.com/theory-cloud/AppTheory/commit/f76a7f6c4db7e80c60eee83d62e6469f0a92cb2d))
+* **naming:** implement the resource-naming contract primitive ([5f91a9e](https://github.com/theory-cloud/AppTheory/commit/5f91a9ee8ef5ead2978afa72d499cdca38f092e7))
+* **naming:** naming primitive, standard logging and Keeper visibility (docs/145 M2) ([188588c](https://github.com/theory-cloud/AppTheory/commit/188588c6151dead34011c015d7810b22334d899b))
+
+
+### Bug Fixes
+
+* **cdk:** consume an access-log naming entry only when the group is ours ([02428f6](https://github.com/theory-cloud/AppTheory/commit/02428f67866d858a8bffe7811bb5b7692d9653ea))
+* **cdk:** keep access-log groups out of naming and apply r3 trust and hints ([16fb80a](https://github.com/theory-cloud/AppTheory/commit/16fb80a7b0c24e48c1f61e28862e3deeedac0960))
+* **cdk:** refresh the example template hashes for the changed runtime asset ([ac1560f](https://github.com/theory-cloud/AppTheory/commit/ac1560fe82f80313735ae8da07c1602e7cafbc78))
+* **cdk:** refresh the runtime-vendoring example asset hashes ([2923203](https://github.com/theory-cloud/AppTheory/commit/2923203c894613afc7999c675f7cc5cbbf5957a7))
+* **cdk:** refresh the runtime-vendoring example asset hashes ([69f9464](https://github.com/theory-cloud/AppTheory/commit/69f94647eef9c8fbb934f3ab2fa3100e0b09c4d2))
+* **ci:** bind prefix negation above comparison in the release-lane guard ([bb86f28](https://github.com/theory-cloud/AppTheory/commit/bb86f282242a0f5fe54b055b195e66462ef30e90))
+* **ci:** guard the code-owner review lane in place of the deleted dispatch lane ([f25d1e1](https://github.com/theory-cloud/AppTheory/commit/f25d1e10be274daac50323fcee4888a550dc84a8))
+* **ci:** run the release delta smoke on the code-owner review ([6250dfb](https://github.com/theory-cloud/AppTheory/commit/6250dfb271fdd9920ca1b72961bdb8e839058ac3))
+* **ci:** scope the precedence self-test to the event-name term ([79d26c1](https://github.com/theory-cloud/AppTheory/commit/79d26c16ea28c5fa7e50306142dc1f80eae8e085))
+* **evidence:** compare release-only JSON documents after canonical projection ([8b4dce1](https://github.com/theory-cloud/AppTheory/commit/8b4dce15b912103c224a1068486847e7a858bd3f))
+* **evidence:** compare release-only JSON documents after canonical projection ([2eba65d](https://github.com/theory-cloud/AppTheory/commit/2eba65dfbfb98fd5cd86d4edc8f6f9d48d40fe5f))
+* **evidence:** recollect the ten records the JSON projection stales ([489fa49](https://github.com/theory-cloud/AppTheory/commit/489fa49bfe1d1eea099ffab4e201ed68a75c6180))
+* **evidence:** state the back-merge matrix claim the projection now proves ([0358b3a](https://github.com/theory-cloud/AppTheory/commit/0358b3afa00a16413381ed10bd534613cbbffc10))
+* **naming:** keep the primitive and runners inside the lint budgets ([577ee69](https://github.com/theory-cloud/AppTheory/commit/577ee69258e4df8e1a231670c9bf066a7893ec94))
+* **naming:** reject generated API names and adopt contract r3 fixtures ([97f1fc5](https://github.com/theory-cloud/AppTheory/commit/97f1fc51ac5da8978adfdb31a735aef0de1add76))
+* **release:** back-merge main 7.4.0 into staging ([b28b239](https://github.com/theory-cloud/AppTheory/commit/b28b2392a84e6a61b6c7ad47fb2b8940050a973c))
+* **release:** back-merge main 7.4.0 into staging ([33ceac0](https://github.com/theory-cloud/AppTheory/commit/33ceac00bc1ca265e44ed6dc2a660f2f068409a2))
+* **release:** describe the code-owner review gate for generated release PRs ([d9ff19a](https://github.com/theory-cloud/AppTheory/commit/d9ff19af936bd38ffc11440d53121da17c8b63ad))
+* **release:** merge premain 7.4.0-rc history into staging ([e37c780](https://github.com/theory-cloud/AppTheory/commit/e37c7802e54dc3e1d27bf7640fd4c6eff5b35b82))
+* **release:** merge premain 7.4.0-rc history into staging ([cc4e537](https://github.com/theory-cloud/AppTheory/commit/cc4e53798e7dd4f49a29c14cd7ca6e287e0888ef))
+* **release:** promote staging to premain (resource naming, standard logging, Keeper visibility) ([bdd3783](https://github.com/theory-cloud/AppTheory/commit/bdd3783388d5e5a9bec0c7161190dfb760058815))
+* **release:** remove the dead generated-release-PR self-dispatch lane ([61a1fa1](https://github.com/theory-cloud/AppTheory/commit/61a1fa1a1e290e30436a952e2ab165c29b2ba1a4))
+* **release:** remove the dead generated-release-PR self-dispatch lane and its 20-minute sweep ([4d36065](https://github.com/theory-cloud/AppTheory/commit/4d36065eda7bc3e6898362222c8528e496fa553f))
+
 ## [7.4.0](https://github.com/theory-cloud/AppTheory/compare/v7.3.1...v7.4.0) (2026-11-17)
 
 
