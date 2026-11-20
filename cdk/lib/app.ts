@@ -85,9 +85,30 @@ export interface AppTheoryAppProps {
   readonly databasePartitionKey?: string;
   readonly databaseSortKey?: string;
   readonly databaseTable?: dynamodb.ITable;
+  /**
+   * Whether the database table enables deletion protection (Security Hub
+   * DynamoDB.6).
+   *
+   * Applies only when AppTheory creates the table; a `databaseTable` you supply
+   * keeps its own setting.
+   *
+   * @default undefined (with no naming context: today's template, no deletion
+   * protection; under a derived naming context: on for the RETAIN table
+   * AppTheoryApp creates)
+   */
+  readonly databaseTableDeletionProtection?: boolean;
 
   readonly enableRateLimiting?: boolean;
   readonly rateLimitTableName?: string;
+  /**
+   * Whether the rate-limit table enables deletion protection (Security Hub
+   * DynamoDB.6).
+   *
+   * @default undefined (with no naming context: today's template, no deletion
+   * protection; under a derived naming context: on for the RETAIN table
+   * AppTheoryApp creates)
+   */
+  readonly rateLimitTableDeletionProtection?: boolean;
 
   readonly domainName?: string;
   readonly certificateArn?: string;
@@ -183,7 +204,11 @@ export class AppTheoryApp extends Construct {
           ? { name: props.databaseSortKey, type: dynamodb.AttributeType.STRING }
           : undefined,
         timeToLiveAttribute: "ttl",
-        deletionProtection: defaultDeletionProtection(props.namingContext, RemovalPolicy.RETAIN, undefined),
+        deletionProtection: defaultDeletionProtection(
+          props.namingContext,
+          RemovalPolicy.RETAIN,
+          props.databaseTableDeletionProtection,
+        ),
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },
@@ -203,7 +228,11 @@ export class AppTheoryApp extends Construct {
         partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
         sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "ttl",
-        deletionProtection: defaultDeletionProtection(props.namingContext, RemovalPolicy.RETAIN, undefined),
+        deletionProtection: defaultDeletionProtection(
+          props.namingContext,
+          RemovalPolicy.RETAIN,
+          props.rateLimitTableDeletionProtection,
+        ),
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },

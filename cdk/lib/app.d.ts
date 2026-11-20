@@ -75,8 +75,29 @@ export interface AppTheoryAppProps {
     readonly databasePartitionKey?: string;
     readonly databaseSortKey?: string;
     readonly databaseTable?: dynamodb.ITable;
+    /**
+     * Whether the database table enables deletion protection (Security Hub
+     * DynamoDB.6).
+     *
+     * Applies only when AppTheory creates the table; a `databaseTable` you supply
+     * keeps its own setting.
+     *
+     * @default undefined (with no naming context: today's template, no deletion
+     * protection; under a derived naming context: on for the RETAIN table
+     * AppTheoryApp creates)
+     */
+    readonly databaseTableDeletionProtection?: boolean;
     readonly enableRateLimiting?: boolean;
     readonly rateLimitTableName?: string;
+    /**
+     * Whether the rate-limit table enables deletion protection (Security Hub
+     * DynamoDB.6).
+     *
+     * @default undefined (with no naming context: today's template, no deletion
+     * protection; under a derived naming context: on for the RETAIN table
+     * AppTheoryApp creates)
+     */
+    readonly rateLimitTableDeletionProtection?: boolean;
     readonly domainName?: string;
     readonly certificateArn?: string;
     readonly domain?: AppTheoryHttpApiDomainOptions;

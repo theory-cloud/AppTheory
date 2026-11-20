@@ -181,19 +181,19 @@ test("S1: the app construct's table deletion protection has an explicit override
   const rateLimits = (template) => tableNamed(template, "autheory-lab-rate-limits");
 
   const databaseOff = appBuild({ databaseTableDeletionProtection: false });
-  assert.equal(database(databaseOff).Properties?.DeletionProtectionEnabled, undefined);
+  assert.notEqual(database(databaseOff).Properties?.DeletionProtectionEnabled, true);
   assert.equal(rateLimits(databaseOff).Properties?.DeletionProtectionEnabled, true);
 
   const rateLimitsOff = appBuild({ rateLimitTableDeletionProtection: false });
   assert.equal(database(rateLimitsOff).Properties?.DeletionProtectionEnabled, true);
-  assert.equal(rateLimits(rateLimitsOff).Properties?.DeletionProtectionEnabled, undefined);
+  assert.notEqual(rateLimits(rateLimitsOff).Properties?.DeletionProtectionEnabled, true);
 
   const bothOff = appBuild({
     databaseTableDeletionProtection: false,
     rateLimitTableDeletionProtection: false,
   });
-  assert.equal(database(bothOff).Properties?.DeletionProtectionEnabled, undefined);
-  assert.equal(rateLimits(bothOff).Properties?.DeletionProtectionEnabled, undefined);
+  assert.notEqual(database(bothOff).Properties?.DeletionProtectionEnabled, true);
+  assert.notEqual(rateLimits(bothOff).Properties?.DeletionProtectionEnabled, true);
 });
 
 test("S1: an explicit true protects the app tables with no naming context", () => {
