@@ -42,6 +42,17 @@ export interface AppTheoryHttpIngestionEndpointDomainOptions {
    * @default undefined
    */
   readonly basePath?: string;
+
+  /**
+   * TLS security policy for the custom domain.
+   *
+   * Under a derived naming context the default is TLS 1.2, the strongest policy
+   * API Gateway v2 offers. Security Hub APIGateway.11 always fails a custom
+   * domain attached to an HTTP API, so no policy satisfies it there.
+   *
+   * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
+   */
+  readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
 
 export interface AppTheoryHttpIngestionEndpointStageOptions {
@@ -284,7 +295,8 @@ export class AppTheoryHttpIngestionEndpoint extends Construct {
     const domainName = new apigwv2.DomainName(this, "DomainName", {
       domainName: domainOpts.domainName,
       certificate,
-      securityPolicy: secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined,
+      securityPolicy: domainOpts.securityPolicy
+        ?? (secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined),
     });
     (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
 

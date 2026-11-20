@@ -357,6 +357,17 @@ export interface AppTheoryMcpServerDomainOptions {
    * @default undefined
    */
   readonly mutualTlsAuthentication?: apigwv2.MTLSConfig;
+
+  /**
+   * TLS security policy for the owned custom domain.
+   *
+   * Under a derived naming context the default is TLS 1.2, the strongest policy
+   * API Gateway v2 offers. Security Hub APIGateway.11 always fails a custom
+   * domain attached to an HTTP API, so no policy satisfies it there.
+   *
+   * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
+   */
+  readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
 
 /** Stage configuration for an AppTheory-owned MCP HTTP API. */
@@ -1157,7 +1168,8 @@ export class AppTheoryMcpServer extends Construct {
       domainName: options.domainName,
       certificate,
       mtls: options.mutualTlsAuthentication,
-      securityPolicy: secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined,
+      securityPolicy: options.securityPolicy
+        ?? (secureDefaults(namingContext) ? RECOMMENDED_HTTP_API_SECURITY_POLICY : undefined),
     });
     (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
     const apiMapping = new apigwv2.ApiMapping(this, "ApiMapping", {

@@ -240,6 +240,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "domainName",
       "hostedZone",
       "mutualTlsAuthentication",
+      "securityPolicy",
     ],
     AppTheoryMcpServerStageOptions: [
       "accessLogRetention",
