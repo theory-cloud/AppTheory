@@ -142,7 +142,7 @@ function logPrefix(values) {
  * and Python CDK bindings share one implementation.
  */
 class AppTheoryResourceNaming {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryResourceNaming", version: "7.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryResourceNaming", version: "7.5.0-rc" };
     constructor() { }
     /**
      * Validate the bound context grammar. Throws on an invalid context.
