@@ -5,21 +5,21 @@
         "bash",
         "scripts/verify-security-refresh.sh"
       ],
-      "durationSeconds": 33.652,
+      "durationSeconds": 31.342,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-21T08:41:51Z",
+      "finishedAt": "2026-11-21T12:23:15Z",
       "id": "security-refresh",
       "inputsDigest": "sha256:8299be2e8ca67ac22745fca9715ce624f9cd9ab8edc68aa0079cfe64fb7b3c57",
-      "logDigest": "sha256:c3becf3759664e6875f25a08cef29d764ccf461dcf34f0566548dc85a34aee37",
-      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261121T084118Z-76304.log",
+      "logDigest": "sha256:d9b67d58407fbc8dd88ebe51a4931fd326e914522d1156bafcfd1ecb644cfed7",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261121T122244Z-19455.log",
       "reused": false,
-      "startedAt": "2026-11-21T08:41:18Z"
+      "startedAt": "2026-11-21T12:22:44Z"
     }
   ],
   "consumed": [],
   "dependency": {
-    "digest": "sha256:93d7c49c272c175fcb5420e31657236c9621a7b334c9d77f27b51b0a3766cccf",
+    "digest": "sha256:4b4eab44edc1d89ce6bc5470b153a640b038d04ef3f3ee55fc42f5c3344be68d",
     "fileCount": 35
   },
   "description": "Dependency vulnerability refresh bounded by the tracked max age, verified on the promotion pull request so a stale scan record fails there",
@@ -40,17 +40,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-21T08:41:51Z",
+  "recordedAt": "2026-11-21T12:23:15Z",
   "releaseOnly": {
-    "digest": "sha256:a4009e2e9aac4fe3b189cb9a5837b0f4de9f8854a26c78ec90c8a1ef60c979d9",
+    "digest": "sha256:38a0d48e68da85197e2a321cb2d8f67ce55a9b531cfcdedb8ac88d7d885eee2d",
     "fileCount": 529,
     "normalizedDigest": "sha256:60172da9c728b7d19a1c5409445101b109676350ca175a22eee492de87ec1816",
-    "version": "7.5.0-rc"
+    "version": "7.5.0-rc.1"
   },
   "reviews": [],
   "scan": {
     "maxAgeSeconds": 86400,
-    "scannedAt": "2026-11-21T08:41:51Z"
+    "scannedAt": "2026-11-21T12:23:15Z"
   },
   "schemaVersion": 1,
   "scope": {
