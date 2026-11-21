@@ -73,15 +73,15 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
-### SEC-2 dependency-audit exceptions: three live operator-ruled exceptions
+### SEC-2 dependency-audit exceptions: two live operator-ruled exceptions
 
-SEC-2 grants **no dependency-audit exceptions** beyond the three live ones below (E2 and E3 are AWS-published chains
-in the CDK lockfile class; E5 is the 2026-11-17 dev-only picomatch chain). Each is an exact match (lockfile, package,
-version, node path / dependency chain, and advisory ids) and is **self-expiring and fail-closed**: it carries a hard
-`recheck_by` deadline, a removal probe runs on every invocation so a stale exception cannot survive by never matching
-again (registry-backed for the jsii chain and for E5's `ts/` shape, lockfile-local for the bundled path and E5's
-`cdk/` shape), and when a removal condition is met the checker fails with a clear message. Any
-*other* finding, in any lockfile, still fails the gate. Nothing beyond these three may be added without a new operator
+SEC-2 grants **no dependency-audit exceptions** beyond the two live ones below (E2 is the AWS-published jsii
+dev-toolchain chain in the CDK lockfile class; E5 is the 2026-11-17 dev-only picomatch chain). Each is an exact match
+(lockfile, package, version, node path / dependency chain, and advisory ids) and is **self-expiring and
+fail-closed**: it carries a hard `recheck_by` deadline, a removal probe runs on every invocation so a stale exception
+cannot survive by never matching again (registry-backed for the jsii chain and for E5's `ts/` shape, lockfile-local
+for E5's `cdk/` shape), and when a removal condition is met the checker fails with a clear message. Any
+*other* finding, in any lockfile, still fails the gate. Nothing beyond these two may be added without a new operator
 ruling.
 
 Operator rulings, quoted verbatim:
@@ -130,18 +130,16 @@ ruling, not a new exception grant: on **2026-11-01** the npm registry's latest p
 **3.0.3**, so no patched release exists and the removal condition remains unmet. The checker records the
 renewal and its evidence in `E2.renewal`.
 
-**E3 - minimatch 10.2.6 bundled inside aws-cdk-lib.** Finding `GHSA-g3hv-75wg-m249` (moderate,
-`CVE-2026-118764`) on `minimatch@10.2.6` at `node_modules/aws-cdk-lib/node_modules/minimatch`
-(bundled), reached only through aws-cdk-lib's own bundled `minimatch`; npm lists the derived
-`aws-cdk-lib` entry as pure propagation. AWS publishes it and only AWS can publish a tarball that bundles
-the patched release (`minimatch 11.0.1` exists on npm but cannot be installed into the bundled subtree);
-the latest published aws-cdk-lib (2.277.0, the version this repository pins) still declares a bundled
-minimatch `^10.2.6`, so no aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
-ships it. Scope: the same full bundled-path set as E1 - the cdk lockfile plus all fifteen
-`examples/cdk/*/package-lock.json` files, including the three LOCAL-A1 additions. Owner: AppTheory
-steward (Factory dependency sweeps). **Removal condition:** the pinned `aws-cdk-lib` bundles
-`minimatch >= 11.0.1`. **Hard recheck by 2026-12-01.** Operator ruling: 2026-10-03 (the
-bundled-dependency ruling quoted above), extended 2026-10-04.
+**E3 (retired 2026-11-21) - minimatch 10.2.6 bundled inside aws-cdk-lib.** Finding
+`GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at
+`node_modules/aws-cdk-lib/node_modules/minimatch` (bundled), reached only through aws-cdk-lib's own bundled
+`minimatch`. **Removal condition:** the pinned `aws-cdk-lib` bundles `minimatch >= 11.0.1`. **That condition was met
+on 2026-11-21:** this repository moved the exact peer/dev pin to `aws-cdk-lib` 2.278.0, whose public npm tarball
+(registry integrity checked) bundles `minimatch 11.0.9`. The exception,
+its `recheck_by`, and its removal probe were removed as standard maintenance, not a new exception grant. The
+bundled-graph anchor now asserts the fixed bundle positively (exact `minimatch 11.0.9`, never below the `11.0.1`
+floor, plus `brace-expansion 5.0.13`), so an affected bundled copy, a second `minimatch` instance, or any
+node-path drift still fails closed as an unexpected finding.
 
 **E5 - picomatch <= 4.0.7 in the dev-only lint and build toolchains (added 2026-11-17).** Finding
 `GHSA-fc5q-39xc-vjpf` (high, `CVE-2026-112366`) on `picomatch`, whose advisory range is `<= 4.0.7` with **no
@@ -193,8 +191,7 @@ imports `makeRe` (upstream #570). The dev-only override, the exception, its regi
 and its recheck deadline were removed; `ts/package-lock.json` now resolves a single `minimatch@11.0.9` for
 every consumer (moved from `11.0.1` on 2026-11-17 when `eslint` 10.15.0 raised its own range to `^11.0.5`). Operator ruling: 2026-11-01 (the dev-only exception quoted above).
 
-The AWS-published exceptions (E2, E3) live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`,
-together with E5's `cdk/` shape; the npm and OSV scanner paths match findings against that same list,
+The remaining exceptions (E2 and E5's `cdk/` shape) live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm and OSV scanner paths match findings against that same list,
 `scripts/verify-cdk-audit.sh` and `gov-verify-rubric.sh`'s `osv_scan_lockfile` accept a non-zero scanner exit only
 when the checker emits the `exception-applied:` machine marker, and the checker's `--self-test` battery proves the
 negative cases (a different advisory id, version, node path, or lockfile, a non-dev copy, an expired `recheck_by`, or
