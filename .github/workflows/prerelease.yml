@@ -1,5 +1,15 @@
 name: Prerelease (premain)
 
+# Prerelease publisher (premain).
+#
+# This workflow publishes only for the commit that is the recorded merge of the
+# generated `release-please--branches--premain` PR. Every other push to premain
+# is generation phase and belongs to prerelease-pr.yml; the publisher classifies
+# that commit and skips publication instead of treating an expected Release
+# Please no-op as a failed publish. `workflow_dispatch` is a publication/recovery
+# action: it runs only at a recorded release-PR merge and otherwise fails closed
+# with a recovery instruction.
+
 on:
   push:
     branches: ["premain"]
@@ -15,7 +25,48 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Single authority for the release phase. A channel push is publication-
+  # authoritative only when GitHub records it as the merge commit of the trusted
+  # generated release PR (base `premain`, head
+  # `release-please--branches--premain`, merge_commit_sha == this commit). Every
+  # other push is generation phase: prerelease-pr.yml owns it and this publisher
+  # must neither publish nor report a failed publish. An unreadable or ambiguous
+  # provenance response fails closed before any release state is touched.
+  release-phase:
+    runs-on: ubuntu-latest
+    outputs:
+      phase: ${{ steps.classify.outputs.phase }}
+    steps:
+      - name: Checkout (release phase)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Classify release phase
+        id: classify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          phase="$(scripts/classify-release-phase.sh \
+            --channel prerelease \
+            --head "${GITHUB_SHA}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --event-name "${GITHUB_EVENT_NAME}")"
+          echo "phase=${phase}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Release phase: ${phase}"
+            echo ""
+            if [[ "${phase}" == "publish" ]]; then
+              echo "\`${GITHUB_SHA}\` is the recorded merge of \`release-please--branches--premain\`; the publisher owns the RC release."
+            else
+              echo "\`${GITHUB_SHA}\` is not the recorded merge of \`release-please--branches--premain\`."
+              echo "This push generated or updated the RC pull request; the generation lane owns it and nothing is published."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   release-please:
+    needs: release-phase
+    if: needs.release-phase.outputs.phase == 'publish'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (release preflight)
