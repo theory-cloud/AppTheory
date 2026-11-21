@@ -697,7 +697,7 @@ class WorkerFlagTests(unittest.TestCase):
         def must_not_run(*_args, **_kwargs):
             raise AssertionError("a missing four-lane span must not write a lease or preflight")
 
-        def fail_lease(_profile, _checkout, *, slot, port, span=1):
+        def fail_lease(_profile, _checkout, *, slot, port, span=1, external=False):
             seen["span"] = span
             raise harness.HarnessFailure("no free span of 4 adjacent local-profile slots")
 
@@ -775,6 +775,129 @@ class WorkerFlagTests(unittest.TestCase):
                 with self.assertRaises(harness.HarnessFailure) as owned:
                     harness.plan_worker_lanes(profile, lease, 2)
         self.assertIn("already owns", str(owned.exception))
+
+    def test_pinned_occupied_primary_is_refused_before_lease_or_teardown(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+
+        def project_owns(project: str) -> bool:
+            # The recorded post-cleanup state: s2 still holds a fixture, s3-s5 free.
+            return project.endswith("-s2")
+
+        with mock.patch.object(harness, "port_open", return_value=False):
+            with mock.patch.object(harness, "_project_owns", side_effect=project_owns):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.acquire_lease(profile, "00000000", slot=2, port=None, span=4)
+        self.assertIn("worker lane 1 needs slot s2", str(raised.exception))
+        self.assertIn("already owns", str(raised.exception))
+
+        def must_not_run(*_args, **_kwargs):
+            raise AssertionError("an occupied pinned primary must not write a lease or preflight")
+
+        with tempfile.TemporaryDirectory(prefix="apptheory-workers-") as scratch:
+            with mock.patch.object(harness, "STATE_DIR", Path(scratch)):
+                with mock.patch.object(harness, "discover", return_value={}):
+                    with mock.patch.object(harness, "validate_manifest", return_value=[]):
+                        with mock.patch.object(harness, "_project_owns", side_effect=project_owns):
+                            with mock.patch.object(harness, "port_open", return_value=False):
+                                with mock.patch.object(harness, "write_lease", side_effect=must_not_run):
+                                    with mock.patch.object(harness, "preflight", side_effect=must_not_run):
+                                        stderr = io.StringIO()
+                                        with contextlib.redirect_stderr(stderr):
+                                            self.assertEqual(
+                                                2, harness.main(["--slot", "2", "--workers", "4"])
+                                            )
+                                        self.assertIn("worker lane 1 needs slot s2", stderr.getvalue())
+                                        self.assertFalse(list(Path(scratch).glob("lease-*.json")))
+
+        # The supported reuse paths stay intact: a serial run may reclaim this
+        # checkout's own s2 container, and an external service on the pinned
+        # slot is reused instead of refused.
+        with mock.patch.object(harness, "port_open", return_value=False):
+            with mock.patch.object(harness, "_project_owns", side_effect=project_owns):
+                serial = harness.acquire_lease(profile, "00000000", slot=2, port=None, span=1)
+                external = harness.acquire_lease(
+                    profile, "00000000", slot=2, port=None, span=4, external=True
+                )
+        self.assertEqual(2, serial.slot)
+        self.assertEqual(2, external.slot)
+
+    def test_lane_availability_includes_the_function_url_port(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        base, http, aux = harness.slot_ports(profile, 2)
+        function_url = http + 2
+
+        def port_open(_host: str, port: int, timeout: float = 0.5) -> bool:
+            return port == function_url
+
+        with mock.patch.object(harness, "port_open", side_effect=port_open):
+            with mock.patch.object(harness, "_project_owns", return_value=False):
+                self.assertFalse(
+                    harness._slot_available(profile, "00000000", 2, reclaim_owned=False)
+                )
+                # Only s2's Function URL port is occupied, so the four-lane
+                # allocation must skip that slot and take the s3 span.
+                lease = harness.acquire_lease(profile, "00000000", slot=None, port=None, span=4)
+        self.assertEqual(3, lease.slot)
+
+        # A selected span preflights the same port for its extra lanes.
+        extra_function_url = harness.slot_ports(profile, 3)[1] + 2
+
+        def extra_open(_host: str, port: int, timeout: float = 0.5) -> bool:
+            return port == extra_function_url
+
+        lane0 = harness.Lease(
+            checkout="t", slot=2, port=base, project="p", http_port=http, aux_port=aux
+        )
+        with mock.patch.object(harness, "port_open", side_effect=extra_open):
+            with mock.patch.object(harness, "_project_owns", return_value=False):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.plan_worker_lanes(profile, lane0, 2)
+        self.assertIn("worker lane 2", str(raised.exception))
+        self.assertIn(str(extra_function_url), str(raised.exception))
+
+    def test_only_filter_keeps_the_selected_row_through_dispatch(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        base, http, aux = harness.slot_ports(profile, 0)
+        lease = harness.Lease(checkout="t", slot=0, port=base, project="p", http_port=http, aux_port=aux)
+        lane = harness.WorkerLane(index=0, slot=0, port_base=http, aux_port=aux)
+        entry = harness.Entry(
+            key="only-row", kind="entrypoint", data={"class": "L1", "run": "only-row"}
+        )
+        seen: dict[str, object] = {}
+
+        class FakeScheduler:
+            def __init__(self, _harnesses, _lanes, tasks, _report, _runners):
+                seen["tasks"] = [(task.entry.key, task.entry.runner) for task in tasks]
+
+            def run(self):
+                return {"only-row": ("PASS", "the selected row ran")}, []
+
+        with tempfile.TemporaryDirectory(prefix="apptheory-only-") as scratch:
+            with mock.patch.object(harness, "STATE_DIR", Path(scratch)):
+                with mock.patch.object(harness, "load_manifest", return_value=(profile, [entry])):
+                    with mock.patch.object(harness, "discover", return_value={}):
+                        with mock.patch.object(harness, "validate_manifest", return_value=[]):
+                            with mock.patch.object(harness, "worker_resources", return_value=frozenset()):
+                                with mock.patch.object(harness, "acquire_lease", return_value=lease):
+                                    with mock.patch.object(
+                                        harness, "plan_worker_lanes", return_value=[lane]
+                                    ):
+                                        with mock.patch.object(harness, "build_env", return_value={}):
+                                            with mock.patch.object(harness, "write_lease"):
+                                                with mock.patch.object(harness, "preflight"):
+                                                    with mock.patch.object(harness, "prepare"):
+                                                        with mock.patch.object(
+                                                            harness, "RowScheduler", FakeScheduler
+                                                        ):
+                                                            out = io.StringIO()
+                                                            with contextlib.redirect_stdout(out):
+                                                                status = harness.main(
+                                                                    ["--only", "only-row", "--workers", "1"]
+                                                                )
+        self.assertEqual(0, status)
+        self.assertEqual([("only-row", "only-row")], seen["tasks"])
+        self.assertIn("filter:     only-row", out.getvalue())
+        self.assertIn("only-row", out.getvalue())
 
     def test_bad_workers_is_rejected_before_any_lease_or_container(self) -> None:
         def must_not_run(*_args, **_kwargs):

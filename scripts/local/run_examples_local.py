@@ -810,37 +810,112 @@ def write_lease(lease: Lease, compose_file: Path) -> None:
     _lease_path(lease.checkout).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def lane_bind_ports(port_base: int, aux_port: int) -> tuple[int, ...]:
+    """Every host port one worker lane's rows may bind.
+
+    A lane's rows bind the primary HTTP listener, the lane's auxiliary listener,
+    and the next port for an unpinned Function URL (``port_base + 2``). The
+    DynamoDB endpoint is separate and shared by the run, so availability checks
+    cover these three ports; a slot's DynamoDB port is added only where the
+    harness itself would bind it.
+    """
+    return (port_base, aux_port, port_base + 2)
+
+
 def _slot_available(profile: dict, checkout: str, slot: int, *, reclaim_owned: bool) -> bool:
     """Whether one slot's ports can be used by this lease.
 
     A serial run may reclaim the checkout's own profile container (preflight
     recreates it with an empty database). A multi-worker run must not touch a
     container another run left behind, so every lane in its span has to be
-    genuinely free.
+    genuinely free. The check covers every port a lane can bind, including the
+    unpinned Function URL port, not just the DynamoDB/HTTP/aux triple.
     """
     base, http, aux = slot_ports(profile, slot)
-    busy = any(port_open("127.0.0.1", value) for value in (base, http, aux))
+    busy = any(port_open("127.0.0.1", value) for value in (base, *lane_bind_ports(http, aux)))
     if reclaim_owned:
         return (not busy) or _project_owns(f"apptheory-examples-local-{checkout}-s{slot}")
     return (not busy) and not _project_owns(f"apptheory-examples-local-{checkout}-s{slot}")
 
 
+def _require_free_lane(
+    profile: dict, checkout: str, slot: int, *, lane_number: int, include_dynamodb: bool
+) -> None:
+    """Refuse a lane whose container or listeners another run still holds."""
+    base, http, aux = slot_ports(profile, slot)
+    project = f"apptheory-examples-local-{checkout}-s{slot}"
+    if _project_owns(project):
+        raise HarnessFailure(
+            f"worker lane {lane_number} needs slot s{slot}, which {project} already owns; "
+            "lower EXAMPLES_WORKERS or stop that profile container first (a serial "
+            "--workers 1 run may reclaim this checkout's own slot)"
+        )
+    ports = (base, *lane_bind_ports(http, aux)) if include_dynamodb else lane_bind_ports(http, aux)
+    busy = [port for port in ports if port_open("127.0.0.1", port)]
+    if busy:
+        raise HarnessFailure(
+            f"worker lane {lane_number} needs ports {min(ports)}-{max(ports)}, but "
+            f"{', '.join(str(port) for port in busy)} already answered; "
+            "lower EXAMPLES_WORKERS or stop the process that holds them"
+        )
+
+
 def acquire_lease(
-    profile: dict, checkout: str, *, slot: int | None, port: int | None, span: int = 1
+    profile: dict,
+    checkout: str,
+    *,
+    slot: int | None,
+    port: int | None,
+    span: int = 1,
+    external: bool = False,
 ) -> Lease:
     span = max(1, int(span))
     if slot is not None and port is not None:
         raise HarnessFailure("--slot and --port are mutually exclusive")
     if slot is not None:
-        if slot < 0 or slot >= slot_count(profile):
-            raise HarnessFailure(f"--slot must be within 0..{slot_count(profile) - 1}")
+        total = slot_count(profile)
+        if slot < 0 or slot >= total:
+            raise HarnessFailure(f"--slot must be within 0..{total - 1}")
         chosen = slot
+        if span > 1 and not external:
+            # A multi-worker run must not reclaim a container another run left
+            # behind, even when the developer pinned the primary slot. Refuse
+            # before a lease is written or preflight can run `compose down -v`.
+            if chosen + span > total:
+                raise HarnessFailure(
+                    f"--slot {slot} with --workers {span} needs {span} adjacent profile slots, "
+                    f"but slot s{slot} is the last usable one; lower EXAMPLES_WORKERS"
+                )
+            for index in range(span):
+                _require_free_lane(
+                    profile,
+                    checkout,
+                    chosen + index,
+                    lane_number=index + 1,
+                    include_dynamodb=index == 0,
+                )
         base, http, aux = slot_ports(profile, chosen)
     elif port is not None:
         if port in PORT_RESERVED:
             raise HarnessFailure(f"--port {port} is reserved for {PORT_RESERVED[port]}")
         chosen = -1
         base, http, aux = port, port + 1, port + 2
+        if span > 1 and not external:
+            stride = int(profile["ports"]["stride"])
+            for index in range(span):
+                lane_port = http + index * stride
+                ports = (
+                    (base, *lane_bind_ports(lane_port, lane_port + 1))
+                    if index == 0
+                    else lane_bind_ports(lane_port, lane_port + 1)
+                )
+                busy = [value for value in ports if port_open("127.0.0.1", value)]
+                if busy:
+                    raise HarnessFailure(
+                        f"worker lane {index + 1} needs ports {min(ports)}-{max(ports)}, but "
+                        f"{', '.join(str(value) for value in busy)} already answered; "
+                        "lower EXAMPLES_WORKERS or stop the process that holds them"
+                    )
     else:
         preferred = int(checkout, 16) % slot_count(profile)
         total = slot_count(profile)
@@ -9110,42 +9185,71 @@ def parse_workers(value: str) -> int:
 def plan_worker_lanes(profile: dict, lease: Lease, requested: int) -> list[WorkerLane]:
     """Reserve one free port block per worker before preflight changes state.
 
-    Lane 0 keeps today's slot ports. Each extra lane takes the next slot in the
-    profile's range; that slot must have free listeners and must not belong to a
-    compose project this checkout already owns. Nothing is started here, so an
-    over-capacity request is refused before a container or port is claimed.
+    Lane 0 is the primary slot; each extra lane takes the next slot in the
+    profile's range. A multi-worker run requires every lane in its span --
+    including a pinned primary -- to have free listeners and to own no compose
+    project another run left behind. A serial run keeps the historical reuse
+    path and can reclaim this checkout's own primary container. Nothing is
+    started here, so an occupied or over-capacity request is refused before a
+    lease is written, a container is created or a port is claimed.
     """
     lanes = [WorkerLane(index=0, slot=lease.slot, port_base=lease.http_port, aux_port=lease.aux_port)]
     stride = int(profile["ports"]["stride"])
     total = slot_count(profile)
+
+    if requested > 1 and lease.slot >= 0 and lease.slot + requested > total:
+        raise HarnessFailure(
+            f"--workers {requested} needs {requested} adjacent profile slots, but "
+            f"slot s{lease.slot} is the last usable one; lower EXAMPLES_WORKERS"
+        )
+
+    if requested > 1:
+        # The primary lane is part of the multi-worker span. A pinned primary
+        # that still holds a fixture must be refused here, before preflight can
+        # run `compose down -v` on it.
+        if lease.slot >= 0:
+            _require_free_lane(
+                profile,
+                lease.checkout,
+                lease.slot,
+                lane_number=1,
+                include_dynamodb=not lease.external,
+            )
+        else:
+            ports = ((lease.port, *lane_bind_ports(lease.http_port, lease.aux_port))
+                     if not lease.external
+                     else lane_bind_ports(lease.http_port, lease.aux_port))
+            busy = [port for port in ports if port_open("127.0.0.1", port)]
+            if busy:
+                raise HarnessFailure(
+                    f"worker lane 1 needs ports {min(ports)}-{max(ports)}, but "
+                    f"{', '.join(str(port) for port in busy)} already answered; "
+                    "lower EXAMPLES_WORKERS or stop the process that holds them"
+                )
+
     for index in range(1, requested):
         if lease.slot >= 0:
             slot = lease.slot + index
-            if slot >= total:
-                raise HarnessFailure(
-                    f"--workers {requested} needs {requested} adjacent profile slots, but "
-                    f"slot s{lease.slot} is the last usable one; lower EXAMPLES_WORKERS"
-                )
             base, http, aux = slot_ports(profile, slot)
-            project = f"apptheory-examples-local-{lease.checkout}-s{slot}"
-            if _project_owns(project):
-                raise HarnessFailure(
-                    f"worker lane {index + 1} needs slot s{slot}, which {project} already owns; "
-                    "lower EXAMPLES_WORKERS or stop that profile container first"
-                )
-            block = (base, http, aux)
+            _require_free_lane(
+                profile,
+                lease.checkout,
+                slot,
+                lane_number=index + 1,
+                include_dynamodb=False,
+            )
         else:
             slot = -1
             http = lease.http_port + index * stride
             base, aux = http - 1, http + 1
-            block = (base, http, aux)
-        busy = [port for port in block if port_open("127.0.0.1", port)]
-        if busy:
-            raise HarnessFailure(
-                f"worker lane {index + 1} needs ports {block[0]}-{block[2]}, but "
-                f"{', '.join(str(port) for port in busy)} already answered; "
-                "lower EXAMPLES_WORKERS or stop the process that holds them"
-            )
+            ports = lane_bind_ports(http, aux)
+            busy = [port for port in ports if port_open("127.0.0.1", port)]
+            if busy:
+                raise HarnessFailure(
+                    f"worker lane {index + 1} needs ports {min(ports)}-{max(ports)}, but "
+                    f"{', '.join(str(port) for port in busy)} already answered; "
+                    "lower EXAMPLES_WORKERS or stop the process that holds them"
+                )
         lanes.append(WorkerLane(index=index, slot=slot, port_base=http, aux_port=aux))
     return lanes
 
@@ -9426,9 +9530,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {error}", file=sys.stderr)
         return 2
 
+    only_names: set[str] = set()
     if args.only:
-        wanted = {name.strip() for name in args.only.split(",") if name.strip()}
-        entries = [entry for entry in entries if not entry.pending and entry.runner in wanted]
+        only_names = {name.strip() for name in args.only.split(",") if name.strip()}
+        entries = [entry for entry in entries if not entry.pending and entry.runner in only_names]
     executed = [entry for entry in entries if entry.runner]
 
     # Reject a bad worker request, and a row without a resource classification,
@@ -9442,9 +9547,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     checkout = checkout_identifier(ROOT)
-    wanted = min(requested, max(1, len(executed)))
+    # Keep the selected filter names separate from this integer lane count:
+    # `--only` retries must still report and dispatch their row.
+    lane_count = min(requested, max(1, len(executed)))
     try:
-        lease = acquire_lease(profile, checkout, slot=args.slot, port=args.port, span=wanted)
+        lease = acquire_lease(
+            profile,
+            checkout,
+            slot=args.slot,
+            port=args.port,
+            span=lane_count,
+            external=args.external,
+        )
         lease.external = args.external
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         lock_fd = os.open(STATE_DIR / f"lock-{checkout}", os.O_RDWR | os.O_CREAT, 0o600)
@@ -9462,7 +9576,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        lanes = plan_worker_lanes(profile, lease, wanted)
+        lanes = plan_worker_lanes(profile, lease, lane_count)
     except HarnessFailure as failure:
         lease.release()
         print(f"examples-local: {failure.message}", file=sys.stderr)
@@ -9501,7 +9615,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.only:
-        print(f"  filter:     {', '.join(sorted(wanted))}")
+        print(f"  filter:     {', '.join(sorted(only_names))}")
 
     results: dict[str, tuple[str, str]] = {}
     failures: list[tuple[Entry, HarnessFailure]] = []

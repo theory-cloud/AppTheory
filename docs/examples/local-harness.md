@@ -163,14 +163,38 @@ serial run is never reported as N-way execution.
 Each worker is one **lane**, and a lane is one port slot: a multi-worker run
 reserves a contiguous span of free slots from the profile range (`8130–8199` by
 default), lane 1 takes the first slot of that span, and each extra lane takes
-the next one. It never reclaims a slot whose container is already running, so a
-fixture another run left behind is left alone. A run binds its listeners from
-its lane's port base upward, so two rows never bind the same listener, and the
-outer Docker-validation and checkout locks stay where they were — outside this
-harness, held once per run, never per worker. The extra lanes are ports only:
-they start no container and leave nothing behind when they exit.
-`--workers 1` keeps the historical serial behavior, including reclaiming this
-checkout's own profile container.
+the next one. The availability decision preflights every port a lane's rows can
+bind, not just the DynamoDB/HTTP/aux triple: the primary HTTP listener, the
+auxiliary listener, and the next port for an unpinned Function URL
+(`port_base + 2`, for example `8193` on a lane whose port base is `8191`). A
+listener on any of them makes the slot unavailable.
+
+A multi-worker run never reclaims a slot whose container is already running, so
+a fixture another run left behind is left alone. That rule includes the
+**primary** lane when `--slot` pins it: `--slot 2 --workers 4` is refused before
+a lease is written or preflight can run `compose down -v` when s2 still owns a
+fixture. The supported reuse paths are unchanged: `--workers 1` keeps the
+historical serial behavior and may reclaim this checkout's own profile
+container, and `--external` reuses the externally supplied DynamoDB Local on the
+pinned slot without starting or tearing down a compose project. A pinned
+multi-worker slot whose extra lanes are occupied, or whose primary is busy, is
+refused with the lane, slot and port named.
+
+A run binds its listeners from its lane's port base upward, so two rows never
+bind the same listener, and the outer Docker-validation and checkout locks stay
+where they were — outside this harness, held once per run, never per worker.
+The extra lanes are ports only: they start no container and leave nothing behind
+when they exit.
+
+To retry one failed row without running the full harness, pass `--only` with its
+runner name and `--workers 1`:
+
+```bash
+python3 scripts/local/run_examples_local.py --only examples/cdk/local-iam/scripts/port-pinning.sh --workers 1
+```
+
+The filter selects the row set; it is kept separate from the integer lane
+count, so the selected row is still reported and dispatched exactly once.
 
 Rows are allowed to overlap only when they hold no common resource:
 
