@@ -133,6 +133,57 @@ variables. `--external` tells the harness that CI supplies DynamoDB Local as a
 service container: it waits for the leased port instead of starting a compose
 container that would fight for it.
 
+## Worker concurrency
+
+The default run is serial and is the reference: `make examples-local` and
+`--workers 1` are the same run. A developer who has a second core to spare can
+run independent rows at once without weakening any assertion:
+
+```bash
+make examples-local EXAMPLES_WORKERS=2
+python3 scripts/local/run_examples_local.py --workers 4
+```
+
+`EXAMPLES_WORKERS` is harness-only. It is not an operator environment variable
+for deploys, no example reads it, and the Makefile only forwards it to this
+harness as `--workers`. The harness refuses anything that is not a whole number
+from 1 to 4 before it takes a lease, creates a container or claims a port; a
+request that needs a slot already held by a container (or a port already in
+use) is refused the same way, with the slot or port named.
+
+Each worker is one **lane**, and a lane is one port slot: lane 1 keeps the
+checkout's slot (`8130–8139` by default) and each extra lane takes the next slot
+in the same range. A run binds its listeners from its lane's port base upward,
+so two rows never bind the same listener, and the outer Docker-validation and
+checkout locks stay where they were — outside this harness, held once per run,
+never per worker. The extra lanes are ports only: they start no container and
+leave nothing behind when they exit.
+
+Rows are allowed to overlap only when they hold no common resource:
+
+| Resource key | Held by |
+| --- | --- |
+| `app:<example>` | every row that drives that CDK example: its DynamoDB tables, queues, buckets, `node_modules` and CDK staging tree |
+| `synth:all` plus every `app:` key | `cdk-synth-all`, which runs `npm ci` in each example and removes its `node_modules` |
+| `host:sns-18120` | `sqs-sns-targets`, which binds the fixed SNS capture port |
+| `ports:second-block` | the four co-residence rows that start a second run at `port_base + 40`; they run only on lane 1, so the extra block stays outside every other lane |
+| `mcp:*`, `testkit:*`, `microvm:workloads`, `table:rate-limits`, `runtime:conformance` | the standalone rows that use that surface |
+
+Dispatch order is the manifest order: a lane takes the lowest-index pending row
+whose resources are free, so rows that share an example run one at a time and
+the row set is exactly the manifest's rows, each once. One row is special:
+`cdk-synth-all` holds every example, so it cannot start while any app row is in
+flight. It would otherwise be starved behind a continuous stream of app rows and
+run last, leaving lanes idle once the stream drained, so while it is pending
+lanes still start standalone rows but no longer start a conflicting app row; it
+begins as soon as the in-flight rows finish. A row without a declared resource
+set fails closed before the run starts, so a new example cannot become
+concurrent by accident. The header reports the requested and effective worker
+count, and every row line ends with its own elapsed seconds (plus the lane when
+more than one is active), so a developer can see which rows overlap and where
+the time goes. The summary, `counts:` line and exit code are the same as a serial
+run.
+
 ## Discovery and the manifest
 
 Entrypoints are discovered from the tree, not from a hand-maintained list:

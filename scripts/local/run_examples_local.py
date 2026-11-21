@@ -98,6 +98,11 @@ GO_MAIN_RE = re.compile(r"^func main\(\)", re.MULTILINE)
 GO_IGNORE_RE = re.compile(r"^//go:build\s+ignore\b", re.MULTILINE)
 DEFAULT_TIMEOUT = 900
 FAILURE_OUTPUT_LINES = 60
+# Optional harness-local worker concurrency. Four is the largest number of
+# lanes the leased port range (one slot of `stride` ports per lane) can hold on
+# this profile without reaching into another checkout's slot; each lane is one
+# extra row at a time, and rows that share mutable state stay serialized.
+MAX_EXAMPLES_WORKERS = 4
 RATE_LIMIT_TABLE = "rate-limits"
 LOCAL_RUNNER_APP = "examples/cdk/hello-world"
 LOCAL_RUNNER_BIN = STATE_DIR / "bin" / "apptheory-local"
@@ -258,6 +263,18 @@ class Harness:
     env: dict
     lease: Lease
     timeout: int = DEFAULT_TIMEOUT
+    # ``port_base`` is the first port this lane may bind and ``aux_port`` the
+    # per-lane auxiliary port. The serial harness (and the primary worker lane)
+    # keeps today's slot ports; each extra worker lane takes the next slot in
+    # the checkout's leased range, so two rows never bind the same listener.
+    port_base: int = 0
+    aux_port: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.port_base:
+            self.port_base = self.lease.http_port
+        if not self.aux_port:
+            self.aux_port = self.lease.aux_port
 
     def run(
         self,
@@ -1140,7 +1157,7 @@ def run_rate_limited_http(harness: Harness) -> str:
         "rate-limit table provisioning",
     )
 
-    port = harness.lease.http_port
+    port = harness.port_base
     base = f"http://127.0.0.1:{port}"
     env = dict(harness.env)
     env["LISTEN_ADDR"] = f"127.0.0.1:{port}"
@@ -1314,7 +1331,7 @@ def run_local_runner(harness: Harness, lang: str) -> str:
                 "--backend",
                 "dynamodb",
                 "--port-base",
-                str(harness.lease.http_port),
+                str(harness.port_base),
                 "--name-prefix",
                 prefix,
             ],
@@ -2088,7 +2105,7 @@ def run_seed_restv1(harness: Harness) -> str:
             "--seed",
             "echo seed-broke >&2; exit 9",
             "--port-base",
-            str(harness.lease.http_port),
+            str(harness.port_base),
             "--name-prefix",
             local_app_prefix(harness, "seed-failure"),
         ],
@@ -4206,7 +4223,7 @@ def start_local_app(
         "--profile",
         str(ROOT / LOCAL_PROFILE),
         "--port-base",
-        str(port_base if port_base is not None else harness.lease.http_port),
+        str(port_base if port_base is not None else harness.port_base),
         "--name-prefix",
         prefix,
     ]
@@ -4392,7 +4409,7 @@ def start_local_session(
         "--profile",
         str(ROOT / LOCAL_PROFILE),
         "--port-base",
-        str(port_base if port_base is not None else harness.lease.http_port),
+        str(port_base if port_base is not None else harness.port_base),
         "--name-prefix",
         prefix,
     ]
@@ -6742,7 +6759,7 @@ def _wait_for_workload(process: subprocess.Popen, port: int, language: str, seco
 
 
 def _run_microvm_workload(harness: Harness, language: str, expected_language: str) -> str:
-    port = harness.lease.aux_port
+    port = harness.aux_port
     if port_open("127.0.0.1", port):
         raise HarnessFailure(f"microvm workload port {port} is already in use")
     log = tempfile.NamedTemporaryFile(prefix=f"a4-microvm-{language}-", suffix=".log", delete=False)
@@ -8406,7 +8423,7 @@ def _tls_listener_port(harness: Harness, plan: dict, logical_id: str) -> int:
         if not (api.get("routes") or []):
             continue
         if str(api.get("logicalId")) == logical_id:
-            return harness.lease.http_port + index
+            return harness.port_base + index
         index += 1
     raise HarnessFailure(f"the local-tls plan serves no listener for {logical_id!r}")
 
@@ -8830,6 +8847,456 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
 }
 
 
+# --- worker scheduling -------------------------------------------------------
+#
+# ``--workers`` (``EXAMPLES_WORKERS=N``) splits the row list across N lanes.
+# One lane is one port block: lane 0 keeps today's slot, and each extra lane
+# takes the next slot in the checkout's leased range, so two rows never bind the
+# same listener. Concurrency is opt-in per row through the resource keys below:
+# an example's app directory (its DynamoDB tables, queues, buckets, node_modules
+# and CDK staging tree), a fixed host port, a shared build tree, or the one local
+# table the rate-limit row provisions. A row runs only when every key it
+# declares is free, which is why rows driving the same example stay serialized.
+#
+# A lane is one slot of ``stride`` ports (10 here). A run binds its listeners
+# from its lane's port base upward, which is the same budget the harness already
+# gives a checkout's slot; the four-lane maximum keeps every lane's block inside
+# the range. The four rows that open a second co-resident run at
+# ``port_base + 40`` are pinned to lane 0, so that block never lands inside a
+# lane this run reserved.
+
+APP_RUNNERS: dict[str, tuple[str, ...]] = {
+    "hello-world": (
+        "local-runner-go",
+        "local-runner-ts",
+        "local-runner-py",
+        "stage-prefixed-http",
+    ),
+    "edge-gateway": ("edge-gateway",),
+    "import-pipeline": ("import-ingest", "import-worker", "codebuild-import"),
+    "kinesis-cloudwatch-logs": ("kinesis-handler", "kinesis-signing", "data-dir-kms"),
+    "lambda-packaging": ("lambda-packaging",),
+    "lambda-role": (
+        "lambda-role-index",
+        "lambda-role-encrypted",
+        "lambda-role-custom",
+        "lambda-role-authorizers",
+        "s3-sse",
+        "data-dir-s3",
+    ),
+    "lesser-parity": (
+        "lesser-parity-api",
+        "lesser-parity-graphql",
+        "lesser-parity-sse",
+        "lesser-parity-worker",
+        "data-dir-dynamodb",
+    ),
+    "local-iam": (
+        "local-iam-caller-go",
+        "local-iam-caller-node",
+        "local-iam-caller-py",
+        "local-iam-function-url",
+        "local-iam-grants",
+        "local-iam-refusals",
+        "local-port-pinning",
+        "local-port-unpinned",
+        "local-port-refusals",
+        "local-iam-shared-plane",
+        "local-co-residence-ca",
+        "local-co-residence-iam",
+    ),
+    "local-mcp-auth-facade": (
+        "mcp-facade-rotation-chain",
+        "mcp-facade-stale-predecessor",
+        "mcp-facade-concurrent-refresh",
+        "mcp-facade-restart-mid-chain",
+        "mcp-facade-retry-storm",
+        "mcp-facade-genuine-replay",
+        "mcp-facade-legacy-continuity",
+    ),
+    "local-resources": (
+        "local-resources-custom",
+        "local-resources-inventory",
+        "local-resources-ses-receipt",
+        "local-s3-versioning",
+        "local-co-residence-backends",
+        "local-mail-send-read",
+        "local-mail-receipt",
+    ),
+    "local-tls": (
+        "local-tls-surfaces",
+        "local-tls-callback-go",
+        "local-tls-callback-node",
+        "local-tls-callback-py",
+        "local-tls-oidc",
+        "local-tls-webauthn",
+        "local-tls-aux-cert",
+        "local-tls-awssdk-go",
+        "local-tls-awssdk-node",
+        "local-tls-awssdk-py",
+        "local-tls-cloudfront-origin",
+        "local-tls-cloudfront-redirect",
+        "local-tls-cloudfront-http-only-error",
+    ),
+    "media-cdn": ("media-cdn-gateway",),
+    "microvm-controller": ("microvm-controller", "microvm-conformance"),
+    "multilang": (
+        "multilang-go",
+        "multilang-ts",
+        "multilang-py",
+        "dev-loop-watch-go",
+        "dev-loop-watch-ts",
+        "dev-loop-watch-py",
+        "dev-loop-watch-two-edit",
+    ),
+    "path-routed-frontend": ("path-routed-gateway",),
+    "restv1-router": (
+        "restv1-api",
+        "restv1-graphql",
+        "restv1-inventory",
+        "restv1-sse",
+        "intrinsic-limits",
+        "stage-prefixed-rest",
+        "seed-restv1",
+    ),
+    "s3-vectors-semantic-search": ("s3-vectors",),
+    "sqs-queue": (
+        "sqs-producer",
+        "sqs-sns-publisher",
+        "sqs-sns-targets",
+        "sqs-event-targets",
+        "sqs-s3-notifications",
+        "sqs-worker",
+        "sqs-dlq",
+        "data-dir-sqs",
+    ),
+    "ssr-site": ("ssr-site-gateway", "ssr-assets-manifest", "ssr-assets-upload"),
+    "ssr-only-provided-assets-site": ("ssr-only-gateway",),
+}
+
+# Rows that drive no example app: each owns the resource its key names.
+STANDALONE_ROWS: dict[str, tuple[str, ...]] = {
+    "mcp:tools-only-go": ("mcp-go-tools-only",),
+    "mcp:tools-only-ts": ("mcp-tools-only-ts",),
+    "mcp:tools-only-py": ("mcp-tools-only-py",),
+    "mcp:tools-resources-prompts": ("mcp-go-tools-resources-prompts",),
+    "mcp:resumable-sse": ("mcp-go-resumable-sse",),
+    "microvm:workloads": ("microvm-workload-go", "microvm-workload-py", "microvm-workload-ts"),
+    "testkit:ts": ("testkit-ts", "testkit-ts-streaming"),
+    "testkit:py": ("testkit-py",),
+    "table:rate-limits": ("rate-limited-http",),
+    "runtime:conformance": ("runtime-api-conformance",),
+}
+
+# Rows that additionally bind a host-global port or a fixed local table.
+EXTRA_RESOURCES: dict[str, tuple[str, ...]] = {
+    "sqs-sns-targets": ("host:sns-18120",),
+    # These four rows start a second co-resident run at port_base + 40, which
+    # reaches four slots above the lane. They keep today's primary-lane ports
+    # and run only on lane 0, so the extra block never lands inside another
+    # lane this run reserved.
+    "local-iam-shared-plane": ("ports:second-block",),
+    "local-co-residence-ca": ("ports:second-block",),
+    "local-co-residence-iam": ("ports:second-block",),
+    "local-co-residence-backends": ("ports:second-block",),
+}
+
+# Resource keys a row may hold only on the primary lane (lane 0).
+PRIMARY_LANE_ONLY: frozenset[str] = frozenset({"ports:second-block"})
+
+# A row that holds every app family (`cdk-synth-all`) can only start when no
+# app row is in flight. Without a rule it is starved behind a continuous stream
+# of single-app rows and runs last, leaving the other lanes idle once the stream
+# drains. While such a row is pending, lanes may still start rows whose
+# resources are disjoint from it (standalone rows) but must not start a
+# conflicting one, so the wide row begins as soon as the in-flight rows finish.
+WIDE_TASK_KEYS: frozenset[str] = frozenset({"synth:all"})
+
+
+def _row_resources() -> dict[str, frozenset[str]]:
+    table: dict[str, frozenset[str]] = {}
+    for app, names in APP_RUNNERS.items():
+        for name in names:
+            table[name] = frozenset({f"app:{app}"})
+    for key, names in STANDALONE_ROWS.items():
+        for name in names:
+            table[name] = frozenset({key})
+    for name, extras in EXTRA_RESOURCES.items():
+        table[name] = table[name] | frozenset(extras)
+    # The synth row runs `npm ci` in every example and removes each app's
+    # node_modules afterwards, and it restages the shared TypeScript runtime
+    # closure, so it holds every app family at once instead of one key.
+    table["cdk-synth-all"] = frozenset({f"app:{app}" for app in APP_RUNNERS} | {"synth:all"})
+    return table
+
+
+ROW_RESOURCES: dict[str, frozenset[str]] = _row_resources()
+
+
+def worker_resources(runner: str) -> frozenset[str]:
+    """The mutable resources a row holds; an unclassified row fails closed."""
+    resources = ROW_RESOURCES.get(runner)
+    if resources is None:
+        raise HarnessFailure(
+            f"{runner}: no declared worker resource set; classify the row in ROW_RESOURCES "
+            "before it may run under EXAMPLES_WORKERS"
+        )
+    return resources
+
+
+@dataclass(frozen=True)
+class WorkerLane:
+    """One worker's port block. Lane 0 is today's slot."""
+
+    index: int
+    slot: int
+    port_base: int
+    aux_port: int
+
+
+def parse_workers(value: str) -> int:
+    """Validate ``EXAMPLES_WORKERS``/``--workers`` before anything is allocated."""
+    text = str(value).strip()
+    try:
+        count = int(text, 10)
+    except ValueError as exc:
+        raise HarnessFailure(
+            f"EXAMPLES_WORKERS/--workers must be a whole number, got {value!r}"
+        ) from exc
+    if count < 1:
+        raise HarnessFailure(f"EXAMPLES_WORKERS/--workers must be at least 1, got {count}")
+    if count > MAX_EXAMPLES_WORKERS:
+        raise HarnessFailure(
+            f"EXAMPLES_WORKERS/--workers {count} is above the harness maximum of "
+            f"{MAX_EXAMPLES_WORKERS} lanes (one port slot each); lower it"
+        )
+    return count
+
+
+def plan_worker_lanes(profile: dict, lease: Lease, requested: int) -> list[WorkerLane]:
+    """Reserve one free port block per worker before preflight changes state.
+
+    Lane 0 keeps today's slot ports. Each extra lane takes the next slot in the
+    profile's range; that slot must have free listeners and must not belong to a
+    compose project this checkout already owns. Nothing is started here, so an
+    over-capacity request is refused before a container or port is claimed.
+    """
+    lanes = [WorkerLane(index=0, slot=lease.slot, port_base=lease.http_port, aux_port=lease.aux_port)]
+    stride = int(profile["ports"]["stride"])
+    total = slot_count(profile)
+    for index in range(1, requested):
+        if lease.slot >= 0:
+            slot = lease.slot + index
+            if slot >= total:
+                raise HarnessFailure(
+                    f"--workers {requested} needs {requested} adjacent profile slots, but "
+                    f"slot s{lease.slot} is the last usable one; lower EXAMPLES_WORKERS"
+                )
+            base, http, aux = slot_ports(profile, slot)
+            project = f"apptheory-examples-local-{lease.checkout}-s{slot}"
+            if _project_owns(project):
+                raise HarnessFailure(
+                    f"worker lane {index + 1} needs slot s{slot}, which {project} already owns; "
+                    "lower EXAMPLES_WORKERS or stop that profile container first"
+                )
+            block = (base, http, aux)
+        else:
+            slot = -1
+            http = lease.http_port + index * stride
+            base, aux = http - 1, http + 1
+            block = (base, http, aux)
+        busy = [port for port in block if port_open("127.0.0.1", port)]
+        if busy:
+            raise HarnessFailure(
+                f"worker lane {index + 1} needs ports {block[0]}-{block[2]}, but "
+                f"{', '.join(str(port) for port in busy)} already answered; "
+                "lower EXAMPLES_WORKERS or stop the process that holds them"
+            )
+        lanes.append(WorkerLane(index=index, slot=slot, port_base=http, aux_port=aux))
+    return lanes
+
+
+@dataclass
+class RowTask:
+    index: int
+    total: int
+    entry: Entry
+    resources: frozenset[str]
+
+
+class RowReport:
+    """Row start and result blocks, each written whole under one lock."""
+
+    def __init__(self, workers: int) -> None:
+        self.workers = workers
+        self.lock = threading.Lock()
+
+    def _lane(self, lane: WorkerLane) -> str:
+        return f" w{lane.index + 1}" if self.workers > 1 else ""
+
+    def start(self, task: RowTask, lane: WorkerLane) -> None:
+        with self.lock:
+            print(
+                f"  [{task.index:>2}/{task.total}] {task.entry.label:<64} "
+                f"{task.entry.class_name:<3} RUN{self._lane(lane)}",
+                flush=True,
+            )
+
+    def finish(
+        self,
+        task: RowTask,
+        lane: WorkerLane,
+        status: str,
+        detail: str,
+        failure: HarnessFailure | None,
+        seconds: float,
+    ) -> None:
+        suffix = f"  [{seconds:.1f}s{self._lane(lane)}]"
+        block = [
+            f"  [{task.index:>2}/{task.total}] {task.entry.label:<64} "
+            f"{task.entry.class_name:<3} {status}"
+            + (f"  {detail}" if detail else "")
+            + suffix
+        ]
+        if failure is not None:
+            block.append(f"        {failure.message}")
+            if failure.output.strip():
+                block.extend(f"        | {line}" for line in _tail(failure.output).splitlines())
+        with self.lock:
+            print("\n".join(block), flush=True)
+
+
+class RowScheduler:
+    """Run rows across lanes, one row per lane, honouring resource keys.
+
+    Dispatch order is the manifest order: a lane always takes the lowest-index
+    pending row whose resources are free. A row whose key is held waits, so two
+    rows that drive the same example never overlap and the row set is exactly
+    the manifest's rows, each once.
+    """
+
+    def __init__(
+        self,
+        harnesses: list[Harness],
+        lanes: list[WorkerLane],
+        tasks: list[RowTask],
+        report: RowReport,
+        runners: dict[str, Callable[[Harness], str]],
+    ) -> None:
+        self.harnesses = harnesses
+        self.lanes = lanes
+        self.pending = list(tasks)
+        self.report = report
+        self.runners = runners
+        self.cond = threading.Condition()
+        self.held: dict[str, int] = {}
+        self.active = 0
+        self.stopping = False
+        self.results: dict[str, tuple[str, str]] = {}
+        self.failed: dict[str, HarnessFailure] = {}
+        self.tasks = list(tasks)
+
+    def run(self) -> tuple[dict[str, tuple[str, str]], list[tuple[Entry, HarnessFailure]]]:
+        threads = [
+            threading.Thread(
+                target=self._lane,
+                args=(index,),
+                name=f"examples-worker-{index + 1}",
+            )
+            for index in range(len(self.harnesses))
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            for thread in threads:
+                while thread.is_alive():
+                    thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            self.stop()
+            for thread in threads:
+                thread.join()
+            raise
+        failures = [
+            (task.entry, self.failed[task.entry.key])
+            for task in self.tasks
+            if task.entry.key in self.failed
+        ]
+        return self.results, failures
+
+    def stop(self) -> None:
+        """Stop dispatching; in-flight rows finish and tear their fixtures down."""
+        with self.cond:
+            self.stopping = True
+            self.cond.notify_all()
+
+    def _lane(self, lane_index: int) -> None:
+        harness = self.harnesses[lane_index]
+        lane = self.lanes[lane_index]
+        while True:
+            with self.cond:
+                while True:
+                    if self.stopping:
+                        return
+                    task = self._pick(lane_index)
+                    if task is not None:
+                        break
+                    if not self.pending:
+                        return
+                    self.cond.wait()
+            self._run_task(harness, lane, task)
+            with self.cond:
+                self.active -= 1
+                for key in task.resources:
+                    self.held.pop(key, None)
+                self.cond.notify_all()
+
+    def _pick(self, lane_index: int) -> RowTask | None:
+        wide = next(
+            (task for task in self.pending if not task.resources.isdisjoint(WIDE_TASK_KEYS)),
+            None,
+        )
+        for task in self.pending:
+            if wide is not None:
+                if task is wide:
+                    if self.active:
+                        continue
+                elif not task.resources.isdisjoint(wide.resources):
+                    # Do not starve the wide row behind a stream of rows it
+                    # will have to wait for anyway.
+                    continue
+            if any(key in self.held for key in task.resources):
+                continue
+            if lane_index != 0 and not task.resources.isdisjoint(PRIMARY_LANE_ONLY):
+                continue
+            self.pending.remove(task)
+            for key in task.resources:
+                self.held[key] = self.held.get(key, 0) + 1
+            self.active += 1
+            return task
+        return None
+
+    def _run_task(self, harness: Harness, lane: WorkerLane, task: RowTask) -> None:
+        started = time.monotonic()
+        self.report.start(task, lane)
+        status = "PASS"
+        detail = ""
+        failure: HarnessFailure | None = None
+        try:
+            detail = self.runners[task.entry.runner](harness)
+        except HarnessFailure as exc:
+            status, detail, failure = "FAIL", exc.message, exc
+        except Exception as exc:  # noqa: BLE001 - a harness bug fails the row, not the run
+            failure = HarnessFailure(f"{type(exc).__name__}: {exc}", traceback.format_exc())
+            status, detail = "FAIL", failure.message
+        seconds = time.monotonic() - started
+        with self.cond:
+            self.results[task.entry.key] = (status, detail)
+            if failure is not None:
+                self.failed[task.entry.key] = failure
+            self.cond.notify_all()
+        self.report.finish(task, lane, status, detail, failure, seconds)
+
+
 # --- reporting --------------------------------------------------------------
 
 
@@ -8890,6 +9357,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="debug filter: run only these row runners (comma separated); CI never passes it",
     )
+    parser.add_argument(
+        "--workers",
+        default="1",
+        metavar="N",
+        help=(
+            "run up to N independent rows at once (default 1, serial; max "
+            f"{MAX_EXAMPLES_WORKERS}); rows that share an example or a fixed port stay serialized"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -8911,6 +9387,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {error}", file=sys.stderr)
         return 2
 
+    if args.only:
+        wanted = {name.strip() for name in args.only.split(",") if name.strip()}
+        entries = [entry for entry in entries if not entry.pending and entry.runner in wanted]
+    executed = [entry for entry in entries if entry.runner]
+
+    # Reject a bad worker request, and a row without a resource classification,
+    # before a lease is taken, a container is created or a port is claimed.
+    try:
+        requested = parse_workers(args.workers)
+        for entry in executed:
+            worker_resources(entry.runner)
+    except HarnessFailure as failure:
+        print(f"examples-local: {failure.message}", file=sys.stderr)
+        return 2
+
     checkout = checkout_identifier(ROOT)
     try:
         lease = acquire_lease(profile, checkout, slot=args.slot, port=args.port)
@@ -8930,7 +9421,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"examples-local: {failure.message}", file=sys.stderr)
         return 2
 
-    harness = Harness(env=build_env(lease), lease=lease)
+    try:
+        lanes = plan_worker_lanes(profile, lease, min(requested, max(1, len(executed))))
+    except HarnessFailure as failure:
+        lease.release()
+        print(f"examples-local: {failure.message}", file=sys.stderr)
+        return 2
+
+    env = build_env(lease)
+    harnesses = [
+        Harness(env=env, lease=lease, port_base=lane.port_base, aux_port=lane.aux_port)
+        for lane in lanes
+    ]
+    harness = harnesses[0]
     write_lease(lease, compose_file)
 
     print("AppTheory local examples harness")
@@ -8938,6 +9441,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  profile:    {profile['composeFile']} ({profile['dynamodbLocal']['image']})")
     print(f"  lease:      {lease.project} (slot {lease.slot}, DynamoDB Local on 127.0.0.1:{lease.port}"
           f"{', externally managed' if lease.external else ''})")
+    print(f"  workers:    {requested} requested, {len(lanes)} effective"
+          + (
+              " (serial)"
+              if len(lanes) == 1
+              else " (lane ports " + ", ".join(str(lane.port_base) for lane in lanes) + ")"
+          ))
     print(f"  discovered: {len(discovered)} entrypoints; manifest entries: {len(entries)}")
     print()
     print("preflight")
@@ -8952,36 +9461,32 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.only:
-        wanted = {name.strip() for name in args.only.split(",") if name.strip()}
-        entries = [entry for entry in entries if not entry.pending and entry.runner in wanted]
         print(f"  filter:     {', '.join(sorted(wanted))}")
 
-    executed = [entry for entry in entries if entry.runner]
     results: dict[str, tuple[str, str]] = {}
     failures: list[tuple[Entry, HarnessFailure]] = []
 
     print()
-    total = len(executed)
-    for index, entry in enumerate(executed, start=1):
-        print(
-            f"  [{index:>2}/{total}] {entry.label:<64} {entry.class_name:<3} RUN",
-            flush=True,
+    tasks = [
+        RowTask(
+            index=index,
+            total=len(executed),
+            entry=entry,
+            resources=worker_resources(entry.runner),
         )
-        try:
-            detail = RUNNERS[entry.runner](harness)
-            results[entry.key] = ("PASS", detail)
-            print(f"  [{index:>2}/{total}] {entry.label:<64} {entry.class_name:<3} PASS  {detail}")
-        except HarnessFailure as failure:
-            results[entry.key] = ("FAIL", failure.message)
-            failures.append((entry, failure))
-            print(f"  [{index:>2}/{total}] {entry.label:<64} {entry.class_name:<3} FAIL")
-            print_failure(entry.label, failure)
-        except Exception as exc:  # noqa: BLE001 - a harness bug must fail the row, not abort the run
-            failure = HarnessFailure(f"{type(exc).__name__}: {exc}", traceback.format_exc())
-            results[entry.key] = ("FAIL", failure.message)
-            failures.append((entry, failure))
-            print(f"  [{index:>2}/{total}] {entry.label:<64} {entry.class_name:<3} FAIL")
-            print_failure(entry.label, failure)
+        for index, entry in enumerate(executed, start=1)
+    ]
+    report = RowReport(workers=len(lanes))
+    scheduler = RowScheduler(harnesses, lanes, tasks, report, RUNNERS)
+    try:
+        results, failures = scheduler.run()
+    except KeyboardInterrupt:
+        print(
+            "\nexamples-local: interrupted; in-flight rows finished their teardown",
+            file=sys.stderr,
+        )
+        lease.release()
+        return 130
 
     print()
     print("parity")
@@ -9500,7 +10005,7 @@ def run_local_iam_shared_plane(harness: Harness) -> str:
         shared_dir=shared,
         # Two co-resident runs of one row need two port blocks; the peer takes
         # the next block above the harness slot.
-        port_base=harness.lease.http_port + 40,
+        port_base=harness.port_base + 40,
     )
     try:
         peer_rest = None
@@ -9663,7 +10168,7 @@ def _plan_refusal(harness: Harness, app: str, port_base: int, pins: tuple[str, .
 
 
 def run_local_port_pinning(harness: Harness) -> str:
-    base = harness.lease.http_port
+    base = harness.port_base
     plan = plan_local_app(harness, LOCAL_IAM_APP)
     rest_id = _plan_api_id(plan, "restv1")
     http_id = _plan_api_id(plan, "httpv2")
@@ -9708,7 +10213,7 @@ def run_local_port_pinning(harness: Harness) -> str:
 
 
 def run_local_port_unpinned(harness: Harness) -> str:
-    base = harness.lease.http_port
+    base = harness.port_base
     session = start_local_session(harness, LOCAL_IAM_APP, name="port-unpinned")
     try:
         apis = {api.get("class"): api for api in session.info.get("apis") or []}
@@ -9725,7 +10230,7 @@ def run_local_port_unpinned(harness: Harness) -> str:
 
 
 def run_local_port_refusals(harness: Harness) -> str:
-    base = harness.lease.http_port
+    base = harness.port_base
     plan = plan_local_app(harness, LOCAL_IAM_APP)
     rest_id = _plan_api_id(plan, "restv1")
     http_id = _plan_api_id(plan, "httpv2")
@@ -9741,7 +10246,7 @@ def run_local_port_refusals(harness: Harness) -> str:
 
 def run_local_co_residence_ca(harness: Harness) -> str:
     shared = _home_scratch("a4-w3m1-ca-")
-    base = harness.lease.http_port
+    base = harness.port_base
     peer_plan = plan_local_app(harness, LOCAL_IAM_PEER_APP)
     peer_rest_id = _plan_api_id(peer_plan, "restv1")
     plan = plan_local_app(harness, LOCAL_IAM_APP)
@@ -9800,7 +10305,7 @@ def run_local_co_residence_ca(harness: Harness) -> str:
 
 
 def run_local_co_residence_iam(harness: Harness) -> str:
-    base = harness.lease.http_port
+    base = harness.port_base
     peer_base = base + 40
     shared = _home_scratch("a4-w3m1-co-residence-")
     network = f"a4-w3m1-x3-{os.getpid()}-{int(time.time() * 1000)}"
@@ -10016,7 +10521,7 @@ def _endpoint_host(endpoint: str | None) -> str:
 def run_local_co_residence_backends(harness: Harness) -> str:
     """X6c: two co-resident runs on one shared network each resolve their own
     scoped backend aliases, and neither sees the other's store."""
-    base = harness.lease.http_port
+    base = harness.port_base
     network = f"a4-w3m1-x6-{os.getpid()}-{int(time.time() * 1000)}"
     plan = plan_local_app(harness, LOCAL_RESOURCES_APP)
     target = _version_store_logical_id(plan)
@@ -10175,9 +10680,9 @@ def run_local_mail_send_read(harness: Harness) -> str:
     try:
         mail = _mail_surface(session)
         surfaces = session.info.get("listeners") or []
-        if mail.get("smtpPort") != harness.lease.http_port + len(surfaces):
+        if mail.get("smtpPort") != harness.port_base + len(surfaces):
             raise HarnessFailure(f"the SMTP port is not the first slot after the surfaces: {mail}")
-        if mail.get("apiPort") != harness.lease.http_port + len(surfaces) + 1:
+        if mail.get("apiPort") != harness.port_base + len(surfaces) + 1:
             raise HarnessFailure(f"the read API port is not the second slot after the surfaces: {mail}")
         if mail.get("host") != "mail.localhost":
             raise HarnessFailure(f"the mail host is {mail.get('host')!r}")
@@ -10289,7 +10794,7 @@ MCP_FACADE_SEQUENCES = {
 
 def run_mcp_facade_sequence(harness: Harness, sequence: str) -> str:
     """Start one isolated run of the example and replay one sequence on it."""
-    base = harness.lease.http_port
+    base = harness.port_base
     base_url = f"https://{MCP_FACADE_TLS_HOST}:{base}"
     session = start_local_session(
         harness,
