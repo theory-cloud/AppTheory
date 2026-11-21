@@ -5,19 +5,25 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 0.531,
-      "executed": false,
+      "durationSeconds": 0.572,
+      "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-19T12:47:26Z",
+      "finishedAt": "2026-11-21T15:37:24Z",
       "id": "py-build",
-      "inputsDigest": "sha256:8fb9efa1f32ec1958d7fef752bac67495502283360f7c558d908202f92e2be84",
-      "logDigest": "sha256:18f23116500ddda482f84272962ebad7cdb05e70bc7748aa7eb2679dda92ad7a",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261119T124725Z-95176.log",
-      "reused": true,
-      "startedAt": "2026-11-19T12:47:25Z"
+      "inputsDigest": "sha256:df611426453738341a045868104398944d6e83baa7a366554116541735afa55c",
+      "logDigest": "sha256:1cabdfe6850e7a12f2f1e24fa1bbb9ef653623f7e73aefec8dde15e01b13dd1c",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261121T153723Z-57326.log",
+      "reused": false,
+      "startedAt": "2026-11-21T15:37:23Z"
     }
   ],
-  "consumed": [],
+  "consumed": [
+    {
+      "digest": "sha256:cf6f4bd4b4ea304c79d78e6eaeb90dfcb0062d9f0315fe1694bd690d37056d0e",
+      "gate": "deterministic-builds",
+      "recordedAt": "2026-11-21T15:17:46Z"
+    }
+  ],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
@@ -36,17 +42,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-19T19:02:34Z",
+  "recordedAt": "2026-11-21T15:37:24Z",
   "releaseOnly": {
-    "digest": "sha256:70a8717c4746a0b71a8c711928ade564d2ad985e087ecf860911f28a8325bc01",
-    "fileCount": 526,
-    "normalizedDigest": "sha256:c309d262263711a731e42df901a4a433b07dafb5ea30380a67f9ee38f97acf37",
-    "version": "7.4.0"
+    "digest": "sha256:1068991c200913706014caa742d8b56b2b2fb8b4e0ea3b3863072b2cd102e20d",
+    "fileCount": 529,
+    "normalizedDigest": "sha256:614350538740f5d05d34502400b77f39234e0e3f8d3a9e28bcd01f29d0541ce0",
+    "version": "7.5.0-rc.1"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:cbaaa86c21cd3ef26f0aabad7b17afc34b78624a26c04b6bf01d1b8c821387b0",
+    "digest": "sha256:1979883ddcbf3e48ac4453eddd7130a47be45ba52d16c96e140e769ba2200bdf",
     "fileCount": 133,
     "paths": [
       "py/",
@@ -56,8 +62,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d6348535769be5c464deb487966d443ba2b44b97f8762ef405b8c3c38591374c",
-    "fileCount": 2767
+    "digest": "sha256:d9e8407cc7c57778c026a5b19b0e13bee0a2eb790308c0d5a42088eb4d7f8771",
+    "fileCount": 2769
   },
   "verdict": "PASS"
 }
