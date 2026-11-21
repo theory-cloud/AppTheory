@@ -5,16 +5,16 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 458.994,
+      "durationSeconds": 437.603,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-21T20:08:22Z",
+      "finishedAt": "2026-11-21T20:20:08Z",
       "id": "rubric",
-      "inputsDigest": "sha256:cae6ea427680e2c4516bfa319558f859cab750f9039e47c9cca3c523b2438e79",
-      "logDigest": "sha256:489d979a76aba2bba98a7c49ac6d0ebbf72c7174ae0782870f88c5fe2bcb4af6",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261121T200043Z-60230.log",
+      "inputsDigest": "sha256:0ae16ecd98043bfd1d4dc100e4dd13c01527b20baf086668900b89eaf09aa642",
+      "logDigest": "sha256:91ca4cf8cb7a4fdead08b83837d4a13b02aa45efae248e88677e8b385c8b3210",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261121T201251Z-89588.log",
       "reused": false,
-      "startedAt": "2026-11-21T20:00:43Z"
+      "startedAt": "2026-11-21T20:12:51Z"
     }
   ],
   "consumed": [
@@ -62,7 +62,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-21T20:08:22Z",
+  "recordedAt": "2026-11-21T20:20:08Z",
   "releaseOnly": {
     "digest": "sha256:1068991c200913706014caa742d8b56b2b2fb8b4e0ea3b3863072b2cd102e20d",
     "fileCount": 529,
@@ -72,7 +72,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:154f92d511c2812725688818de463ab7aae0b918de0ddeb05f5c96279d2969b8",
+    "digest": "sha256:39bc810d8f3376b9ec8220aff6052e59dc579baaeca29dfff8ad4a4030cf316e",
     "fileCount": 3303,
     "paths": [
       "**"
@@ -80,7 +80,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:49fc29dac31a1aa3258b648aa33a7796ba639f3c91357e09e4ea39ff68ce4535",
+    "digest": "sha256:fc1c20d5c4b16a9cd5e1261d0e7ff1b9a3d7623e81e1bbc9ee8cec093f5a6bbd",
     "fileCount": 2774
   },
   "verdict": "PASS"
