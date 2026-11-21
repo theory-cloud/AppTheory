@@ -97,6 +97,30 @@ does not re-trigger generation because the push that merges it changes files lis
 `paths-ignore`, and Release Please's next run uses the tag created at that merged release PR head as its baseline.
 The generated release and sync commits are ancestors of that tag.
 
+### Release phase authority
+
+Each release channel has exactly one publication-authoritative commit: the recorded merge of the generated
+`release-please--branches--premain` (into `premain`) or `release-please--branches--main` (into `main`) pull
+request. Every other push to that channel is **generation phase**: it may create or refresh the release PR, but it
+must not publish a release and must not be reported as a failed publish. The single authority for that decision is
+`scripts/classify-release-phase.sh`, which reads GitHub's immutable commit-to-pull-request provenance and requires
+all of: the pull request is merged, its base is this channel, its head is the trusted `release-please--branches-*`
+branch in this repository, and its `merge_commit_sha` is exactly the pushed commit. Commit subjects, bot
+identities, labels, and the future head of a mutable branch are never authority. A missing, malformed, or
+ambiguous provenance response fails the phase job closed before release state is touched.
+
+`prerelease.yml` and `release.yml` run that classifier first. A generation-phase push records the phase and skips
+the publisher. A publication-phase push must create exactly the intended release; its existing prepublish
+postcondition still fails when a recorded release-PR merge yields no release, a tag differs from the merge commit,
+or the immutable assets do not verify. A retry that finds the exact published release and no user-facing commit
+after its tag passes as already complete and performs no duplicate mutation.
+
+`workflow_dispatch` remains a publication/recovery action. A dispatch without an existing-tag input runs only at a
+recorded release-PR merge; at any other head it fails closed with the recovery action. A `release.yml` dispatch
+with `tag_name` keeps the unchanged existing-tag asset-upload path. To recover a failed publisher, rerun that
+publisher run (or dispatch at its release-PR merge commit); do not create a manual tag or republish a different
+head.
+
 ### Release credential boundary
 
 Release Please credentials are environment-only secrets. They must never be placed in shell, npm, Node, or
@@ -159,6 +183,7 @@ evidence, and do not claim CI can sign generated sync commits by holding private
 - Do not retarget the PR from another branch.
 - CI must run the release train promotion gate and branch version sync checks.
 - The prerelease Release Please workflow must create or update the release-candidate PR. A Release Please no-op is a failed RC gate; annotated `VERSION` markers such as `# x-release-please-version` are ignored only after the leading RC semver is validated.
+- The promotion push itself is generation phase: it must not be treated as a due publication. The prerelease publisher skips it and only the generated RC PR merge publishes the `vX.Y.Z-rc.N` release.
 - The generated RC PR title and release-branch commit subject must be `fix(premain): release X.Y.Z-rc`; the postcondition requires the exact lane scope and a release-driving generated message, and rejects a stale `chore`-titled PR.
 - The release-candidate PR remains draft-locked while generated CDK artifacts are synchronized; it is released to the code-owner review once the sync lands, and that review run reports the required checks.
 - When the release includes a change to `release-please-config*.json` `extra-files` entries, watch the first generated
@@ -177,6 +202,7 @@ evidence, and do not claim CI can sign generated sync commits by holding private
 - Open a PR from `premain` into `main`.
 - CI must verify the promotion is `premain` → `main` and that release manifests are synchronized.
 - The stable Release Please workflow must create or update the stable release PR. A Release Please no-op is a failed stable gate.
+- The premain-to-main promotion push itself is generation phase: it must not be treated as a due publication. The stable publisher skips it and only the generated stable PR merge publishes the `vX.Y.Z` release.
 - The generated stable PR title and release-branch commit subject must be `fix(main): release X.Y.Z`; the postcondition requires the exact lane scope and a release-driving generated message.
 - The stable release PR must reset `.release-please-manifest.premain.json` to the stable version and include generated CDK artifact sync before it becomes ready.
 - Generated release-artifact sync commits are created automatically by the shared sync script as GitHub-verified
@@ -284,6 +310,13 @@ When the release lane is blocked, recover by preserving evidence and re-entering
    - Published GitHub Release already exists: rerun the publisher only to verify immutable assets and both Go module
      refs match the source build; do not upload or edit assets.
    - Stale Release Please PR: regenerate or sync Release Please state from the current branch baseline; do not merge the stale PR.
+   - Publisher reported a failed publish on an ordinary promotion or back-merge push: classify the head with
+     `bash scripts/classify-release-phase.sh --channel prerelease|stable --head <sha>`. A generation-phase head is
+     not a due publication; refresh or merge the generated release PR instead of forcing a publish. Do not treat
+     this as a release failure and do not create a manual tag.
+   - Ambiguous publisher provenance (API failure, rewritten merge shape, or multiple matching merged release PRs):
+     the phase job fails closed. Inspect the commit-to-PR association for the exact head and rerun only when one
+     recorded release-PR merge is unambiguous; never choose a publication authority by subject or branch tip.
    - Generated artifact sync pending: keep the release PR draft and rerun the release PR sync workflow so it can
      create the GitHub-verified generated artifact commit and prove the signature range. Use the local signed
      fallback below only when GitHub automation is unavailable and an operator deliberately performs the offline

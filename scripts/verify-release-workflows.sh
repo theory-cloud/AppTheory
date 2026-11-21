@@ -338,6 +338,78 @@ for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.
         "make rubric",
         "release publisher workflows must use release hygiene and publish postconditions instead of the full rubric",
     )
+for workflow, channel in (
+    (".github/workflows/prerelease.yml", "prerelease"),
+    (".github/workflows/release.yml", "stable"),
+):
+    require_contains(
+        workflow,
+        "scripts/classify-release-phase.sh",
+        "release publishers must classify generation versus publication from commit provenance",
+    )
+    require_contains(
+        workflow,
+        f"--channel {channel}",
+        "release publishers must classify their own channel, not a caller-supplied one",
+    )
+    require_job_contains(
+        workflow,
+        "release-phase",
+        "scripts/classify-release-phase.sh",
+        "the release phase job must own the generation/publication decision",
+    )
+    require_job_contains(
+        workflow,
+        "release-please",
+        "needs: release-phase",
+        "the publisher job must consume the phase decision",
+    )
+    require_job_contains(
+        workflow,
+        "release-please",
+        "needs.release-phase.outputs.phase",
+        "the publisher job must run only in the publish phase",
+    )
+    require_order(
+        workflow,
+        "release-phase:",
+        "release-please:",
+        "the phase decision must be declared before the publisher job",
+    )
+    require_order(
+        workflow,
+        "Classify release phase",
+        "verify-release-publish-postcondition.sh",
+        "the publisher must keep the publish postcondition after phase classification",
+    )
+    require_contains(
+        workflow,
+        "the generation lane owns it and nothing is published",
+        "a generation-phase push must record that nothing is published",
+    )
+for needle, description in (
+    ("merged_at", "phase authority must require a merged pull request"),
+    ('merge_commit_sha', "phase authority must bind the recorded merge commit"),
+    ('head_ref.get("repo")', "phase authority must require the trusted head repository"),
+    ("ambiguous provenance", "phase authority must fail closed on ambiguous provenance"),
+    ("publication is not due", "generation phase must be distinguishable from a failed publish"),
+):
+    require_contains("scripts/classify-release-phase.sh", needle, description)
+require_contains(
+    ".github/workflows/prerelease.yml",
+    "needs.release-phase.outputs.phase == 'publish'",
+    "the prerelease publisher must run only in the publish phase",
+)
+require_contains(
+    ".github/workflows/release.yml",
+    "needs.release-phase.outputs.phase != 'generation'",
+    "the stable publisher must run only in the publish or asset-only phase",
+)
+require_contains(
+    "scripts/verify-release-publish-postcondition.sh",
+    "release-publish-postcondition: recovery",
+    "a genuine publish no-op must name a usable recovery action",
+)
 require_contains(
     ".github/workflows/prerelease.yml",
     "scripts/verify-release-publish-postcondition.sh prerelease",
@@ -973,6 +1045,7 @@ for coverage in (
     "stale_release_please_pr",
     "promotion_drift",
     "back_merge_drift",
+    "release_phase_authority",
 ):
     require_contains(
         "scripts/verify-release-cycle.sh",
@@ -1457,6 +1530,7 @@ require_not_contains(
 )
 
 subprocess.run(["bash", "scripts/verify-branch-version-sync.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/classify-release-phase.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-publish-postcondition.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/publish-go-module-tags.sh", "--self-test"], check=True)

@@ -46,11 +46,14 @@ rubric:
 # example entrypoint classified by scripts/local/examples-local.json.
 # EXAMPLES_LOCAL_ARGS exists only for the harness-owned slot/port flags (CI
 # pins the slot to its service container and passes --external so the harness
-# waits for it instead of starting a second container). No example reads it and
-# no operator environment variable is required.
+# waits for it instead of starting a second container). EXAMPLES_WORKERS=N is
+# harness-only: an ordinary run uses four independent rows at once, N selects a
+# smaller station's 1 or 2, rows that share an example or a fixed port stay
+# serialized, and it is never an operator environment variable for deploys. No
+# example reads either variable.
 examples-local:
 	@python3 scripts/local/test_examples_local.py
-	@python3 scripts/local/run_examples_local.py $(EXAMPLES_LOCAL_ARGS)
+	@python3 scripts/local/run_examples_local.py $(EXAMPLES_LOCAL_ARGS) $(if $(EXAMPLES_WORKERS),--workers $(EXAMPLES_WORKERS))
 
 examples-local-selftest:
 	@python3 scripts/local/test_examples_local.py

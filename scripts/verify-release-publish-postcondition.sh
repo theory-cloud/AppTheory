@@ -260,6 +260,7 @@ require_created_tag() {
     fi
 
     echo "release-publish-postcondition: FAIL (release-please no-op is a failed ${expected_shape} publish gate; release_created=${release_created:-<empty>})" >&2
+    echo "release-publish-postcondition: recovery (confirm this publisher ran at the recorded merge of release-please--branches-${channel_base_branch}; if ${expected_tag} has no published release, merge the generated release PR; if it is published, no user-facing commit may follow it. Inspect with 'scripts/diagnose-release-state.sh --tag ${expected_tag}' and rerun the publisher run for that release-PR merge)" >&2
     return 1
   fi
 
