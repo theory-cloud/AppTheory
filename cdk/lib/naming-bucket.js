@@ -58,7 +58,7 @@ const secure_defaults_1 = require("./private/secure-defaults");
  * naming entry (resource-naming contract section 4).
  */
 class AppTheoryBucket extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryBucket", version: "7.5.0-rc.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryBucket", version: "7.5.0-rc.2" };
     /**
      * The bucket.
      */

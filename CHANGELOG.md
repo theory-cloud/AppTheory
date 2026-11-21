@@ -1,5 +1,33 @@
 # Changelog
 
+## [7.5.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc.1...v7.5.0-rc.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cdk:** regenerate the jsii assembly and tarball mirror at 7.5.0-rc.1 ([50e5da1](https://github.com/theory-cloud/AppTheory/commit/50e5da12f45ed72ce7621a6c49cbdaeec8915493))
+* **deps:** move TableTheory to v6.5.2 in all three runtimes ([80e1fb9](https://github.com/theory-cloud/AppTheory/commit/80e1fb915b21c8de5bce01578d718f95d11177f6))
+* **deps:** move TableTheory to v6.5.2 in all three runtimes ([092f295](https://github.com/theory-cloud/AppTheory/commit/092f295cb840ae822341b8bf262708e33d5a76be))
+* **deps:** move the exact aws-cdk-lib pin to 2.278.0 and retire the bundled minimatch exception ([f79e1e1](https://github.com/theory-cloud/AppTheory/commit/f79e1e1a3ff071a320e585c9308c701f08afbce4))
+* **deps:** move the exact aws-cdk-lib pin to 2.278.0 and retire the bundled minimatch exception ([9b66a59](https://github.com/theory-cloud/AppTheory/commit/9b66a590f82d75c9e694df5653f0fc4952ec7d5c))
+* **release:** back-merge premain 7.5.0-rc.1 into staging ([cb33b15](https://github.com/theory-cloud/AppTheory/commit/cb33b15bd4b1db12e7ccee33529608df5605c750))
+* **release:** back-merge premain 7.5.0-rc.1 into staging ([6ae69de](https://github.com/theory-cloud/AppTheory/commit/6ae69de2f3b0631a471ad0729fef7b5a92d4333a))
+* **release:** make the phase self-test independent of the runner event ([6836f0e](https://github.com/theory-cloud/AppTheory/commit/6836f0efa82a27ba9ed266d5f4268ece6a15a7a0))
+* **release:** promote CDK 2.278.0 and TableTheory 6.5.2 to premain ([3987354](https://github.com/theory-cloud/AppTheory/commit/3987354c7cf91de8f6c6b4f8493386684d293192))
+* **release:** promote the combined AppTheory changes for the next RC ([ef51531](https://github.com/theory-cloud/AppTheory/commit/ef51531dac4f300b01efd2f5ba347abbb2f2bf1d))
+* **release:** publish only generated release-PR merges and land the four-worker harness delivery ([da7a6f4](https://github.com/theory-cloud/AppTheory/commit/da7a6f496cbea62a54f7b9e841545c2ce72f4fe4))
+* **release:** publish only the recorded generated release-PR merge ([e94250d](https://github.com/theory-cloud/AppTheory/commit/e94250d79babf0c286476a04f03a0e4b3d87951b))
+* **release:** recollect rubric evidence after the release and harness repair ([01cba69](https://github.com/theory-cloud/AppTheory/commit/01cba69b61225765f737f6772272006db82619df))
+* **release:** reconcile premain ancestry for promotion 1330 ([4eefb36](https://github.com/theory-cloud/AppTheory/commit/4eefb36928ba38f421a4df82f8696a9903f974e8))
+* **release:** reconcile premain ancestry for promotion 1330 ([bec7232](https://github.com/theory-cloud/AppTheory/commit/bec72322a655313ac0991114258d0d008eec2d02))
+* **release:** refresh rubric evidence after the phase self-test fix ([0d5c5de](https://github.com/theory-cloud/AppTheory/commit/0d5c5de45935334ad397c572cae05c7f0112507a))
+* **test:** integrate configurable four-worker validation ([c8d241f](https://github.com/theory-cloud/AppTheory/commit/c8d241fd884f297cabcca6ef3b5e3fb5c8b1ae26))
+* **test:** preflight every worker lane port and preserve pinned fixtures ([ef3c251](https://github.com/theory-cloud/AppTheory/commit/ef3c2512e4c26c18a102d622d500aab67cb54a53))
+* **test:** recollect examples-local evidence on the repaired harness tree ([ee1205c](https://github.com/theory-cloud/AppTheory/commit/ee1205c548b105f7b45466338766da17489f9a19))
+* **test:** retain verified four-worker validation receipts ([865024e](https://github.com/theory-cloud/AppTheory/commit/865024e81fa5fb15eb4d65d4445fe39c604e25a0))
+* **test:** run examples validation with four workers by default ([0e2780e](https://github.com/theory-cloud/AppTheory/commit/0e2780e732a638ea89851bb148c09d443c23aae8))
+* **test:** run independent local examples rows across optional workers ([1d54556](https://github.com/theory-cloud/AppTheory/commit/1d545567587d0653cccd191772ef2b06fce30a2e))
+
 ## [7.5.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc...v7.5.0-rc.1) (2026-11-20)
 
 
