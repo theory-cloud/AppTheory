@@ -1,5 +1,50 @@
 # Changelog
 
+## [7.5.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc...v7.5.0-rc.1) (2026-11-20)
+
+
+### Features
+
+* **cdk:** close the S3 TLS gap and expose opt-in server access logging ([7720e36](https://github.com/theory-cloud/AppTheory/commit/7720e3650ca126bf2dc194c29cf7f34ff3980dec))
+* **cdk:** expose explicit deletion protection on the AppTheoryApp tables ([702b9b0](https://github.com/theory-cloud/AppTheory/commit/702b9b0d42a39e97eae543bfd656ec7e4feb3b84))
+* **cdk:** give a custom event bus an owning-account resource policy ([9ed725c](https://github.com/theory-cloud/AppTheory/commit/9ed725c70ef312874077d8952e01fd520c43cf46))
+* **cdk:** give API custom domains the APIGateway.11 security policy ([57a785c](https://github.com/theory-cloud/AppTheory/commit/57a785c843b6c80e24a5083b95f5e4e881c63870))
+* **cdk:** give AppTheoryRemoteMcpServer a naming context ([2ae70bf](https://github.com/theory-cloud/AppTheory/commit/2ae70bfd3f746317b403b9a7595c74ba22f1dd1f))
+* **cdk:** give every AppTheory distribution the CloudFront.15 viewer policy ([27f3506](https://github.com/theory-cloud/AppTheory/commit/27f3506477e24acf5ed607a8ce6c743d71c35edd))
+* **cdk:** give the media CDN a CloudFront.1 default root object ([9ea4b0d](https://github.com/theory-cloud/AppTheory/commit/9ea4b0d1eb64843c399b481fc3d4e2acd78449a4))
+* **cdk:** let the MCP owned domain and the ingestion endpoint override TLS ([b23cde9](https://github.com/theory-cloud/AppTheory/commit/b23cde97db6edfc767f3e12282acf13eca7b09ea))
+* **cdk:** protect AppTheory tables with the Security Hub DynamoDB defaults ([4dcff2c](https://github.com/theory-cloud/AppTheory/commit/4dcff2c9022981aa9eb3c9e1d420f4e4a01ef792))
+* **cdk:** Security Hub-aligned secure defaults under a naming context ([3fd50df](https://github.com/theory-cloud/AppTheory/commit/3fd50df6946dafd3a265c99a6be74afea47ce67e))
+
+
+### Bug Fixes
+
+* **cdk:** default CloudFront CloudWatch Logs delivery to the contract JSON format ([c37ce94](https://github.com/theory-cloud/AppTheory/commit/c37ce946115f00bcabd5c8ef19dc1874bfcea081))
+* **cdk:** extend the TLS 2025 client-compatibility note to REST domains ([a5d2426](https://github.com/theory-cloud/AppTheory/commit/a5d24269b067da0dda14eb8bdfa3e13f57aff110))
+* **cdk:** give the MicroVM controller a naming context and standard logging ([4644be9](https://github.com/theory-cloud/AppTheory/commit/4644be9f47d1bc9a8e2c6cac7bb2562b81fb2177))
+* **cdk:** keep an external ISR metadata table out of the naming entries ([970eb1e](https://github.com/theory-cloud/AppTheory/commit/970eb1ef7e5717fa8f674a63e747d9968562c628))
+* **cdk:** name the derived profile in the secure-default doc comments ([124e77a](https://github.com/theory-cloud/AppTheory/commit/124e77a4a2396c6c2fa525967506962146e509c9))
+* **cdk:** order the CloudFront delivery after its delivery source ([b2b5d66](https://github.com/theory-cloud/AppTheory/commit/b2b5d66446294022fa8aeb5b67ab14db07a3577e))
+* **cdk:** protect the attached-API session table under a derived context ([a69ed50](https://github.com/theory-cloud/AppTheory/commit/a69ed50dae9596a7f7d2d1617801be27376e995f))
+* **cdk:** refresh the jsii tarball mirror for the session-table fix ([f059e30](https://github.com/theory-cloud/AppTheory/commit/f059e30c060031d1427276c6f5698ce72837acf8))
+* **cdk:** refuse a second owning-account bus policy ([1ed0e24](https://github.com/theory-cloud/AppTheory/commit/1ed0e24f536ad283ad60589e79a24eae25858bc1))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([801415e](https://github.com/theory-cloud/AppTheory/commit/801415e595ae07dd18b642d3ca55c50960d92657))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([1f56174](https://github.com/theory-cloud/AppTheory/commit/1f56174b6bc3769e47ebaf7820c1d250a4680e78))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([5589c0b](https://github.com/theory-cloud/AppTheory/commit/5589c0b61fa9d3f5d12b148368106f18c564f02d))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([d2e8fb8](https://github.com/theory-cloud/AppTheory/commit/d2e8fb8e8fdd5b7c9955f3f49e6d9ba13dcf4b3b))
+* **cdk:** regenerate the jsii assembly and tarball mirror at 7.5.0-rc ([a8d248a](https://github.com/theory-cloud/AppTheory/commit/a8d248a7eac67ae898e5bdc4fb559f4c117ee4dd))
+* **cdk:** state the endpoint access mode requirement as AWS does ([2ed1f65](https://github.com/theory-cloud/AppTheory/commit/2ed1f657ee143b87a0e8131e269e6970b40d3610))
+* **evidence:** refresh the security-refresh record for the 7.5.0-rc.1 candidate ([0a1d7d5](https://github.com/theory-cloud/AppTheory/commit/0a1d7d5614f3e4792745f2b0dcfd86cf09fba6e3))
+* **evidence:** refresh the security-refresh record for the 7.5.0-rc.1 candidate ([9e67491](https://github.com/theory-cloud/AppTheory/commit/9e67491be3f1b6fd5dc71f2c830e9a04161f9b2d))
+* **naming:** refuse wildcard reader ARNs and render the visibility preview ([0568df0](https://github.com/theory-cloud/AppTheory/commit/0568df000e57f2046ef5e906ff6a1fbd03c5a02a))
+* **naming:** settle CloudFront JSON logs and close the M2 residuals ([8a6c5e8](https://github.com/theory-cloud/AppTheory/commit/8a6c5e8a1afda9ff227efe2243ab2cfb65d6b1a6))
+* **release:** back-merge premain 7.5.0-rc into staging ([2df46cd](https://github.com/theory-cloud/AppTheory/commit/2df46cd931e6064d004cc107c2c2c4e1c9f71fdb))
+* **release:** back-merge premain 7.5.0-rc into staging ([90fc14f](https://github.com/theory-cloud/AppTheory/commit/90fc14fbb2d2cc958cc755917a985ab568261af9))
+* **release:** cut the 7.5.0-rc.1 candidate ([57abd94](https://github.com/theory-cloud/AppTheory/commit/57abd94569ec3e0fa04f9a9b8aa922ecf4804375))
+* **release:** cut the 7.5.0-rc.1 candidate ([db0e99f](https://github.com/theory-cloud/AppTheory/commit/db0e99f07a38ec4dd351b4652bed39418c9a5f86))
+* **release:** pin the 7.5.0-rc.1 candidate footer ([05482fe](https://github.com/theory-cloud/AppTheory/commit/05482fe15e8ca4a2c823d6af07565ab134d811d9))
+* **release:** promote staging to premain for 7.5.0-rc.1 ([0428da6](https://github.com/theory-cloud/AppTheory/commit/0428da66365e5241c71ead027868451824b2ebb1))
+
 ## [7.5.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.4.0...v7.5.0-rc) (2026-11-19)
 
 

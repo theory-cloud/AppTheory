@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.278.0",
+    "aws-cdk-lib": "2.277.0",
     "constructs": "^10.8.1"
   },
   "dependencyClosure": {
@@ -2529,22 +2529,6 @@
             },
             "python": {
               "module": "aws_cdk.aws_lambda"
-            }
-          }
-        },
-        "aws-cdk-lib.aws_lambda.mixins": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.Lambda.Mixins"
-            },
-            "go": {
-              "packageName": "awslambdamixins"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.lambda.mixins"
-            },
-            "python": {
-              "module": "aws_cdk.aws_lambda.mixins"
             }
           }
         },
@@ -34844,6 +34828,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "7.5.0-rc",
-  "fingerprint": "Uqdwo4tlxE+JaIa/4Bmez+Or6QRsJ+wYtR000vIfpCo="
+  "version": "7.5.0-rc.1",
+  "fingerprint": "YyAuIh2dCD9VnNXTN49IuGAsJ3xaBzxqCjgq/DlCpr0="
 }
