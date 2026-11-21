@@ -654,6 +654,66 @@ class DockerImageStoreTests(unittest.TestCase):
 class WorkerFlagTests(unittest.TestCase):
     """``--workers``/``EXAMPLES_WORKERS`` is validated before anything is allocated."""
 
+    def test_ordinary_runs_use_four_workers(self) -> None:
+        self.assertEqual(4, harness.DEFAULT_EXAMPLES_WORKERS)
+        self.assertEqual(
+            harness.DEFAULT_EXAMPLES_WORKERS,
+            harness.parse_workers(str(harness.DEFAULT_EXAMPLES_WORKERS)),
+        )
+        self.assertEqual("4", harness.build_parser().parse_args([]).workers)
+        self.assertEqual("2", harness.build_parser().parse_args(["--workers", "2"]).workers)
+
+    def test_auto_lease_reserves_a_span_that_leaves_existing_fixtures_alone(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        occupied = {0, 2}
+
+        def project_owns(project: str) -> bool:
+            return any(project.endswith(f"-s{slot}") for slot in occupied)
+
+        def port_open(_host: str, port: int, timeout: float = 0.5) -> bool:
+            return any(port in harness.slot_ports(profile, slot) for slot in occupied)
+
+        with mock.patch.object(harness, "port_open", side_effect=port_open):
+            with mock.patch.object(harness, "_project_owns", side_effect=project_owns):
+                lease = harness.acquire_lease(profile, "00000000", slot=None, port=None, span=4)
+
+        # The only free four-slot span is s3..s6; the occupied fixtures stay put.
+        self.assertEqual(3, lease.slot)
+        self.assertEqual(harness.slot_ports(profile, 3)[1], lease.http_port)
+        self.assertTrue(lease.project.endswith("-s3"))
+
+    def test_auto_lease_refuses_a_missing_span_without_falling_back(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        with mock.patch.object(harness, "port_open", return_value=True):
+            with mock.patch.object(harness, "_project_owns", return_value=False):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.acquire_lease(profile, "00000000", slot=None, port=None, span=4)
+        self.assertIn("no free span of 4", str(raised.exception))
+        self.assertIn("EXAMPLES_WORKERS", str(raised.exception))
+
+    def test_default_main_reserves_four_lanes_before_any_state_change(self) -> None:
+        seen: dict[str, int] = {}
+
+        def must_not_run(*_args, **_kwargs):
+            raise AssertionError("a missing four-lane span must not write a lease or preflight")
+
+        def fail_lease(_profile, _checkout, *, slot, port, span=1):
+            seen["span"] = span
+            raise harness.HarnessFailure("no free span of 4 adjacent local-profile slots")
+
+        with tempfile.TemporaryDirectory(prefix="apptheory-workers-") as scratch:
+            with mock.patch.object(harness, "STATE_DIR", Path(scratch)):
+                with mock.patch.object(harness, "discover", return_value={}):
+                    with mock.patch.object(harness, "validate_manifest", return_value=[]):
+                        with mock.patch.object(harness, "acquire_lease", side_effect=fail_lease):
+                            with mock.patch.object(harness, "write_lease", side_effect=must_not_run):
+                                with mock.patch.object(harness, "preflight", side_effect=must_not_run):
+                                    stderr = io.StringIO()
+                                    with contextlib.redirect_stderr(stderr):
+                                        self.assertEqual(2, harness.main([]))
+        self.assertEqual(4, seen["span"])
+        self.assertIn("no free span of 4", stderr.getvalue())
+
     def test_parse_workers_accepts_the_supported_range(self) -> None:
         for value in ("1", "2", str(harness.MAX_EXAMPLES_WORKERS), " 3 "):
             self.assertEqual(int(value), harness.parse_workers(value))

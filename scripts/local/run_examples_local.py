@@ -98,10 +98,12 @@ GO_MAIN_RE = re.compile(r"^func main\(\)", re.MULTILINE)
 GO_IGNORE_RE = re.compile(r"^//go:build\s+ignore\b", re.MULTILINE)
 DEFAULT_TIMEOUT = 900
 FAILURE_OUTPUT_LINES = 60
-# Optional harness-local worker concurrency. Four is the largest number of
-# lanes the leased port range (one slot of `stride` ports per lane) can hold on
-# this profile without reaching into another checkout's slot; each lane is one
-# extra row at a time, and rows that share mutable state stay serialized.
+# Harness-local worker concurrency. An ordinary run uses four workers; a
+# smaller station selects 1 or 2 explicitly. Four is the largest number of lanes
+# the leased port range (one slot of `stride` ports per lane) can hold on this
+# profile without reaching into another checkout's slot; each lane is one extra
+# row at a time, and rows that share mutable state stay serialized.
+DEFAULT_EXAMPLES_WORKERS = 4
 MAX_EXAMPLES_WORKERS = 4
 RATE_LIMIT_TABLE = "rate-limits"
 LOCAL_RUNNER_APP = "examples/cdk/hello-world"
@@ -808,9 +810,25 @@ def write_lease(lease: Lease, compose_file: Path) -> None:
     _lease_path(lease.checkout).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _slot_available(profile: dict, checkout: str, slot: int, *, reclaim_owned: bool) -> bool:
+    """Whether one slot's ports can be used by this lease.
+
+    A serial run may reclaim the checkout's own profile container (preflight
+    recreates it with an empty database). A multi-worker run must not touch a
+    container another run left behind, so every lane in its span has to be
+    genuinely free.
+    """
+    base, http, aux = slot_ports(profile, slot)
+    busy = any(port_open("127.0.0.1", value) for value in (base, http, aux))
+    if reclaim_owned:
+        return (not busy) or _project_owns(f"apptheory-examples-local-{checkout}-s{slot}")
+    return (not busy) and not _project_owns(f"apptheory-examples-local-{checkout}-s{slot}")
+
+
 def acquire_lease(
-    profile: dict, checkout: str, *, slot: int | None, port: int | None
+    profile: dict, checkout: str, *, slot: int | None, port: int | None, span: int = 1
 ) -> Lease:
+    span = max(1, int(span))
     if slot is not None and port is not None:
         raise HarnessFailure("--slot and --port are mutually exclusive")
     if slot is not None:
@@ -825,20 +843,36 @@ def acquire_lease(
         base, http, aux = port, port + 1, port + 2
     else:
         preferred = int(checkout, 16) % slot_count(profile)
+        total = slot_count(profile)
         chosen = -1
-        for offset in range(slot_count(profile)):
-            candidate = (preferred + offset) % slot_count(profile)
-            base, http, aux = slot_ports(profile, candidate)
-            project = f"apptheory-examples-local-{checkout}-s{candidate}"
-            if not any(port_open("127.0.0.1", value) for value in (base, http, aux)) or _project_owns(
-                project
+        for offset in range(total):
+            candidate = (preferred + offset) % total
+            if candidate + span > total:
+                continue
+            if all(
+                _slot_available(
+                    profile,
+                    checkout,
+                    candidate + index,
+                    # Lane 0 of a serial run keeps the historical reuse path.
+                    reclaim_owned=span == 1 and index == 0,
+                )
+                for index in range(span)
             ):
                 chosen = candidate
                 break
         if chosen < 0:
+            if span == 1:
+                raise HarnessFailure(
+                    "no free local-profile slot; stop the containers or examples holding the range"
+                )
             raise HarnessFailure(
-                "no free local-profile slot; stop the containers or examples holding the range"
+                f"no free span of {span} adjacent local-profile slots for {span} workers; "
+                "stop the containers or examples holding the range, lower "
+                "EXAMPLES_WORKERS/--workers, or reclaim this checkout's slot with "
+                "'make examples-local-down'"
             )
+        base, http, aux = slot_ports(profile, chosen)
 
     project = (
         f"apptheory-examples-local-{checkout}-s{chosen}"
@@ -9342,7 +9376,7 @@ def run_down(profile: dict, compose_file: Path, args: argparse.Namespace) -> int
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AppTheory local examples harness")
     parser.add_argument("--slot", type=int, default=None, help="use a fixed profile slot (harness-owned)")
     parser.add_argument("--port", type=int, default=None, help="use a fixed DynamoDB Local port (harness-owned)")
@@ -9359,14 +9393,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--workers",
-        default="1",
+        default=str(DEFAULT_EXAMPLES_WORKERS),
         metavar="N",
         help=(
-            "run up to N independent rows at once (default 1, serial; max "
-            f"{MAX_EXAMPLES_WORKERS}); rows that share an example or a fixed port stay serialized"
+            f"run up to N independent rows at once (default {DEFAULT_EXAMPLES_WORKERS}; "
+            f"--workers 1 is serial; max {MAX_EXAMPLES_WORKERS}); rows that share an "
+            "example or a fixed port stay serialized"
         ),
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     try:
         profile, entries = load_manifest(MANIFEST_PATH)
@@ -9403,8 +9442,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     checkout = checkout_identifier(ROOT)
+    wanted = min(requested, max(1, len(executed)))
     try:
-        lease = acquire_lease(profile, checkout, slot=args.slot, port=args.port)
+        lease = acquire_lease(profile, checkout, slot=args.slot, port=args.port, span=wanted)
         lease.external = args.external
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         lock_fd = os.open(STATE_DIR / f"lock-{checkout}", os.O_RDWR | os.O_CREAT, 0o600)
@@ -9422,7 +9462,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        lanes = plan_worker_lanes(profile, lease, min(requested, max(1, len(executed))))
+        lanes = plan_worker_lanes(profile, lease, wanted)
     except HarnessFailure as failure:
         lease.release()
         print(f"examples-local: {failure.message}", file=sys.stderr)
