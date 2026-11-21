@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-builds.sh"
       ],
-      "durationSeconds": 70.651,
+      "durationSeconds": 59.399,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-20T16:57:14Z",
+      "finishedAt": "2026-11-21T15:17:46Z",
       "id": "deterministic-builds",
-      "inputsDigest": "sha256:fbc89bcc45bf803153a9573e186303b1e8e8f894be46d41e7dfa04cf2a0f81f9",
-      "logDigest": "sha256:6f667362bd164cc35c3403877146dcbdaa5ded1ddcbcec729898e173f8da1537",
-      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261120T165603Z-45042.log",
+      "inputsDigest": "sha256:57d89624ad8fa3af1e0dcc8484834d87c83515fcb9a815fcb9200d05a6203be6",
+      "logDigest": "sha256:915b0b4529cf0e9b59999d9ef9dbbb8373cc975afa5aff2abe030870a627b0e0",
+      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261121T151646Z-57326.log",
       "reused": false,
-      "startedAt": "2026-11-20T16:56:03Z"
+      "startedAt": "2026-11-21T15:16:46Z"
     }
   ],
   "consumed": [],
   "description": "Deterministic release artifact builds (built twice and compared) on the approved producing host",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,17 +36,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-20T16:57:14Z",
+  "recordedAt": "2026-11-21T15:17:46Z",
   "releaseOnly": {
-    "digest": "sha256:7f116f6fd600fe60a3d7e59c7efb99bd81ef37808827f6cf13061c4c3e1d3c2d",
+    "digest": "sha256:1068991c200913706014caa742d8b56b2b2fb8b4e0ea3b3863072b2cd102e20d",
     "fileCount": 529,
-    "normalizedDigest": "sha256:f0a12f19bb25f0fd511094bf376c4eea95614c1f4db827183265290faa7fbae7",
-    "version": "7.4.0"
+    "normalizedDigest": "sha256:614350538740f5d05d34502400b77f39234e0e3f8d3a9e28bcd01f29d0541ce0",
+    "version": "7.5.0-rc.1"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:a5adc4c5f6f13a439ed05bb72a54fc4af607f59bb12efbec8205a5fd280dcdf2",
+    "digest": "sha256:cf6f4bd4b4ea304c79d78e6eaeb90dfcb0062d9f0315fe1694bd690d37056d0e",
     "fileCount": 946,
     "paths": [
       "VERSION",
@@ -69,7 +69,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:458bb1e558c37f9b45fbc82415d60f5b478fc1b18bb6e8004ae4bb06097cb28d",
+    "digest": "sha256:d9e8407cc7c57778c026a5b19b0e13bee0a2eb790308c0d5a42088eb4d7f8771",
     "fileCount": 2769
   },
   "verdict": "PASS"

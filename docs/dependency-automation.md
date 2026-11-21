@@ -136,19 +136,21 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.1`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
-The repository pins AWS CDK `2.277.0`, whose published tarball bundles the patched `brace-expansion@5.0.13`. That meets
-the documented removal condition of the former `brace-expansion 5.0.9` bundled-dependency exception (operator-ruled
-2026-10-03), so that exception is retired - standard maintenance, not a new exception grant. The CDK npm-audit and
-GovTheory OSV gates still verify the exact bundled graph, now as a positive assertion (`brace-expansion >= 5.0.12`),
-and accept exactly two reviewed, self-expiring exceptions - `braces 3.0.3` reached only through the
-`jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04), and
-`minimatch 10.2.6` bundled inside `aws-cdk-lib` (`GHSA-g3hv-75wg-m249`; operator-ruled 2026-10-03, the original
-bundled-dependency ruling) - carrying hard `recheck_by` deadlines (2026-12-01 for both; the `braces` deadline was
-renewed 2026-11-01 from 2026-11-02 because the registry still published no patched `braces`, latest `3.0.3`) and
-removal conditions (see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). The 2026-11-01 refresh moved the pin
-from `2.273.0` to `2.275.0`; the 2026-11-17 refresh moved it to `2.277.0`, the latest published release. Both
-tarballs still bundle `minimatch 10.2.6` (below the advisory's `11.0.1` fix), so the bundled-minimatch exception is
-unchanged in scope and its anchor now records `2.277.0` / `10.2.6` with the bundled `brace-expansion 5.0.13`.
+The repository pins AWS CDK `2.278.0`, whose public npm tarball (registry integrity checked) bundles the patched
+`minimatch@11.0.9` and `brace-expansion@5.0.13`. That meets the documented removal conditions of two former
+bundled-dependency exceptions, so both are retired - standard maintenance, not a new exception grant:
+`brace-expansion 5.0.9` (operator-ruled 2026-10-03) and `minimatch < 11.0.1` (`GHSA-g3hv-75wg-m249`, retired
+2026-11-21). The CDK npm-audit and GovTheory OSV gates still verify the exact bundled graph, now as a positive
+assertion (`minimatch 11.0.9`, never below the `11.0.1` floor, and `brace-expansion >= 5.0.12`), and accept exactly
+one reviewed, self-expiring CDK-lockfile exception - `braces 3.0.3` reached only through the
+`jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04) - plus the
+2026-11-17 dev-only picomatch chain (E5). The `braces` exception carries a hard `recheck_by` deadline (2026-12-01;
+renewed 2026-11-01 from 2026-11-02 because the registry still published no patched `braces`, latest `3.0.3`) and a
+removal condition (see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). The 2026-11-01 refresh moved the pin
+from `2.273.0` to `2.275.0`; the 2026-11-17 refresh moved it to `2.277.0`; the 2026-11-21 AT-CDK2278 change moved it
+to `2.278.0`, whose tarball no longer carries an affected `minimatch`. The stale `aws-cdk-lib.minimatch: 10.2.4`
+overrides were removed from `cdk/` and the affected examples at the same time: a probe proved npm never rewrites
+bundled dependency contents, so the pin was inert and only named an affected release in the manifests.
 Any vulnerable bundle, AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
 
 The TypeScript lint graph carries one active `overrides` block and no dependency-audit exception. `ts/package.json`
@@ -196,7 +198,7 @@ held.
 
 | Held item | Kept at | Reason | Re-check condition |
 | --- | --- | --- | --- |
-| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker - `ts/` now carries the E5 picomatch exception, so a status-1 scan needs its `exception-applied: ts-dev-picomatch` marker); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
+| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker - `ts/` now carries the E5 picomatch exception, so a status-1 scan needs its `exception-applied: ts-dev-picomatch` marker); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it would not independently confirm the bundled graph; the lockfile-local fixed-graph anchor still fails closed on a vulnerable bundle. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
 
 ### Applied moves (ranges raised only where alignment required it)
 
@@ -228,3 +230,28 @@ Only the three stacks whose bundled Go assets include the refreshed module graph
 (`f02a7602…` -> `8916027b…`), and `AppTheoryS3VectorsSemanticSearch` (`0f5e1203…` -> `0791b952…`). The other
 eight stacks kept their hashes. `scripts/verify-cdk-synth.sh` passed from the primary checkout and from a `cp -R`
 copy at a different absolute path; the copy was removed after the run.
+
+## Refresh register (2026-11-21, AT-CDK2278)
+
+The exact AWS CDK peer/dev pin moved from `2.277.0` to `2.278.0` in `cdk/package.json`, in all 22
+`examples/cdk/*/package.json` manifests, and in the three `templates/apptheory-init/*/package.json.tmpl` files; the cdk
+and example lockfiles, `cdk/.jsii`, `cdk/lib`, and the generated `cdk-go` bindings were regenerated through the
+repository's own scripts. No runtime package, version literal, or compatibility range changed.
+
+- **Physical package verification.** The public `aws-cdk-lib@2.278.0` tarball was downloaded from the npm registry and
+  its SHA-512/SHA-1 matched the registry metadata exactly. Its own `package.json` declares `minimatch ^11.0.9`, and the
+  extracted tarball carries exactly one `node_modules/minimatch` at **11.0.9** (with `brace-expansion 5.0.13`) and no
+  10.x copy. The `2.277.0` tarball, by contrast, carries `10.2.6`.
+- **E3 retired.** The retired `minimatch 10.2.6` bundled exception's removal condition was met, so the exception, its
+  `recheck_by`, and its lockfile-local removal probe were removed. The bundled-graph anchor now asserts the fixed graph
+  positively: `aws-cdk-lib` 2.278.0, bundled `minimatch 11.0.9` never below `11.0.1`, and `brace-expansion 5.0.13`.
+  The checker's self-test proves the former E3 finding shapes no longer match any exception.
+- **Stale overrides removed.** The inert `overrides.aws-cdk-lib.minimatch: 10.2.4` entries were removed from `cdk/` and
+  thirteen example manifests. An isolated install probe showed npm never rewrites bundled dependency contents, so the
+  pin never changed resolution; it only named an affected release in the manifests (including the published package).
+- **Synth drift.** Three snapshots moved, and every changed line is an asset identity only: the `aws-cdk-lib`
+  `AwsCliLayer` zip used by `BucketDeployment` (`ssr-site`, `ssr-only-provided-assets-site`) and the
+  `AwsCustomResource` provider asset (`local-resources`). No CloudFormation resource, property, IAM statement, route, or
+  output changed. Old/new hashes: `ssr-site` `a4d1b4d9…` -> `1c432fe2…`, `ssr-only-provided-assets-site`
+  `55186ad7…` -> `fb43a448…`, `local-resources` `d918d5cc…` -> `7ea4a461…`. The other 21 example snapshots are
+  unchanged. This is offline synth evidence, not deployment proof.
