@@ -734,7 +734,7 @@ osv_scan_lockfile() {
   rm -f "${tmp_report}" "${tmp_marker}"
 
   # The aws-cdk checker (scripts/check-visible-aws-cdk-finding.mjs) grants the
-  # reviewed, self-expiring AWS-published exceptions (E2, E3) plus the
+  # reviewed, self-expiring E2 exception plus the
   # 2026-11-17 dev-chain picomatch exception (E5); each names the exact
   # lockfile, package, version, node path / dependency chain, and advisory ids.
   # The TypeScript checker (scripts/check-visible-ts-brace-finding.mjs) grants
@@ -802,9 +802,10 @@ gov_cmd_vuln() {
   done
 
   # Every npm lockfile in the repository. Each aws-cdk-lib-carrying lockfile is
-  # routed through the reviewed, self-expiring bundled-dependency exceptions in
-  # scripts/check-visible-aws-cdk-finding.mjs, whose AWS_CDK_LOCKFILES list must
-  # stay identical to the entries below (that checker's self-test compares them).
+  # routed through the fixed bundled-graph anchor and the remaining reviewed
+  # exceptions in scripts/check-visible-aws-cdk-finding.mjs, whose
+  # AWS_CDK_LOCKFILES list must stay identical to the entries below (that
+  # checker's self-test compares them).
   # Scanning the full set keeps "vulnerable" and "explicitly excepted" the two
   # only possible outcomes; an unscanned lockfile would be neither.
   local -a node_lockfiles=(

@@ -115,8 +115,8 @@ scan_go() {
 scan_npm() {
   require_cmd npm
 
-  # The CDK graph carries a reviewed, self-expiring aws-cdk-lib bundled-dependency
-  # exception. Reuse the repository gate so only that reviewed finding is allowed.
+  # The CDK graph is scanned through the repository gate: the fixed bundled-graph
+  # anchor plus the remaining reviewed, self-expiring exceptions.
   if [[ -f "cdk/package-lock.json" ]]; then
     echo "==> npm audit (cdk, reviewed-exception gate)" >&2
     bash scripts/verify-cdk-audit.sh || fail "CDK dependency audit failed"
