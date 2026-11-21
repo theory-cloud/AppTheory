@@ -13,6 +13,8 @@ store of a local daemon, skips when none answers, and removes what it builds.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -20,6 +22,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -645,6 +649,408 @@ class DockerImageStoreTests(unittest.TestCase):
                         ["docker", "image", "rm", "-f", reference], capture_output=True, text=True, check=False
                     )
             shutil.rmtree(scratch, ignore_errors=True)
+
+
+class WorkerFlagTests(unittest.TestCase):
+    """``--workers``/``EXAMPLES_WORKERS`` is validated before anything is allocated."""
+
+    def test_ordinary_runs_use_four_workers(self) -> None:
+        self.assertEqual(4, harness.DEFAULT_EXAMPLES_WORKERS)
+        self.assertEqual(
+            harness.DEFAULT_EXAMPLES_WORKERS,
+            harness.parse_workers(str(harness.DEFAULT_EXAMPLES_WORKERS)),
+        )
+        self.assertEqual("4", harness.build_parser().parse_args([]).workers)
+        self.assertEqual("2", harness.build_parser().parse_args(["--workers", "2"]).workers)
+
+    def test_auto_lease_reserves_a_span_that_leaves_existing_fixtures_alone(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        occupied = {0, 2}
+
+        def project_owns(project: str) -> bool:
+            return any(project.endswith(f"-s{slot}") for slot in occupied)
+
+        def port_open(_host: str, port: int, timeout: float = 0.5) -> bool:
+            return any(port in harness.slot_ports(profile, slot) for slot in occupied)
+
+        with mock.patch.object(harness, "port_open", side_effect=port_open):
+            with mock.patch.object(harness, "_project_owns", side_effect=project_owns):
+                lease = harness.acquire_lease(profile, "00000000", slot=None, port=None, span=4)
+
+        # The only free four-slot span is s3..s6; the occupied fixtures stay put.
+        self.assertEqual(3, lease.slot)
+        self.assertEqual(harness.slot_ports(profile, 3)[1], lease.http_port)
+        self.assertTrue(lease.project.endswith("-s3"))
+
+    def test_auto_lease_refuses_a_missing_span_without_falling_back(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        with mock.patch.object(harness, "port_open", return_value=True):
+            with mock.patch.object(harness, "_project_owns", return_value=False):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.acquire_lease(profile, "00000000", slot=None, port=None, span=4)
+        self.assertIn("no free span of 4", str(raised.exception))
+        self.assertIn("EXAMPLES_WORKERS", str(raised.exception))
+
+    def test_default_main_reserves_four_lanes_before_any_state_change(self) -> None:
+        seen: dict[str, int] = {}
+
+        def must_not_run(*_args, **_kwargs):
+            raise AssertionError("a missing four-lane span must not write a lease or preflight")
+
+        def fail_lease(_profile, _checkout, *, slot, port, span=1):
+            seen["span"] = span
+            raise harness.HarnessFailure("no free span of 4 adjacent local-profile slots")
+
+        with tempfile.TemporaryDirectory(prefix="apptheory-workers-") as scratch:
+            with mock.patch.object(harness, "STATE_DIR", Path(scratch)):
+                with mock.patch.object(harness, "discover", return_value={}):
+                    with mock.patch.object(harness, "validate_manifest", return_value=[]):
+                        with mock.patch.object(harness, "acquire_lease", side_effect=fail_lease):
+                            with mock.patch.object(harness, "write_lease", side_effect=must_not_run):
+                                with mock.patch.object(harness, "preflight", side_effect=must_not_run):
+                                    stderr = io.StringIO()
+                                    with contextlib.redirect_stderr(stderr):
+                                        self.assertEqual(2, harness.main([]))
+        self.assertEqual(4, seen["span"])
+        self.assertIn("no free span of 4", stderr.getvalue())
+
+    def test_parse_workers_accepts_the_supported_range(self) -> None:
+        for value in ("1", "2", str(harness.MAX_EXAMPLES_WORKERS), " 3 "):
+            self.assertEqual(int(value), harness.parse_workers(value))
+
+    def test_parse_workers_rejects_non_numbers_and_out_of_range(self) -> None:
+        for value, needle in (
+            ("0", "at least 1"),
+            ("-1", "at least 1"),
+            ("two", "whole number"),
+            (str(harness.MAX_EXAMPLES_WORKERS + 1), "above the harness maximum"),
+        ):
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness.parse_workers(value)
+            self.assertIn(needle, str(raised.exception))
+
+    def test_worker_lanes_need_distinct_free_blocks(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        base, http, aux = harness.slot_ports(profile, 0)
+        lease = harness.Lease(
+            checkout="t", slot=0, port=base, project="p", http_port=http, aux_port=aux
+        )
+        with mock.patch.object(harness, "port_open", return_value=False):
+            with mock.patch.object(harness, "_project_owns", return_value=False):
+                lanes = harness.plan_worker_lanes(profile, lease, harness.MAX_EXAMPLES_WORKERS)
+        bases = [lane.port_base for lane in lanes]
+        self.assertEqual(harness.MAX_EXAMPLES_WORKERS, len(set(bases)))
+        self.assertEqual(http, lanes[0].port_base)
+        # The co-resident rows put their second run at port_base + 40; that block
+        # must stay outside every lane this run reserved.
+        for lane in lanes:
+            for other in lanes:
+                self.assertFalse(other.port_base <= lane.port_base + 40 < other.port_base + 10)
+
+    def test_worker_lanes_refuse_over_capacity_before_preflight(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        last = harness.slot_count(profile) - 1
+        base, http, aux = harness.slot_ports(profile, last)
+        lease = harness.Lease(
+            checkout="t", slot=last, port=base, project="p", http_port=http, aux_port=aux
+        )
+        with mock.patch.object(harness, "_project_owns", return_value=False):
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness.plan_worker_lanes(profile, lease, 2)
+        self.assertIn("last usable one", str(raised.exception))
+
+    def test_worker_lanes_refuse_a_busy_or_owned_slot(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        base, http, aux = harness.slot_ports(profile, 0)
+        lease = harness.Lease(
+            checkout="t", slot=0, port=base, project="p", http_port=http, aux_port=aux
+        )
+        with mock.patch.object(harness, "port_open", return_value=True):
+            with mock.patch.object(harness, "_project_owns", return_value=False):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.plan_worker_lanes(profile, lease, 2)
+        self.assertIn("already answered", str(raised.exception))
+        with mock.patch.object(harness, "port_open", return_value=False):
+            with mock.patch.object(harness, "_project_owns", return_value=True):
+                with self.assertRaises(harness.HarnessFailure) as owned:
+                    harness.plan_worker_lanes(profile, lease, 2)
+        self.assertIn("already owns", str(owned.exception))
+
+    def test_bad_workers_is_rejected_before_any_lease_or_container(self) -> None:
+        def must_not_run(*_args, **_kwargs):
+            raise AssertionError("a rejected worker request must not reach the lease or preflight")
+
+        with tempfile.TemporaryDirectory(prefix="apptheory-workers-") as scratch:
+            with mock.patch.object(harness, "STATE_DIR", Path(scratch)):
+                with mock.patch.object(harness, "discover", return_value={}):
+                    with mock.patch.object(harness, "validate_manifest", return_value=[]):
+                        with mock.patch.object(harness, "acquire_lease", side_effect=must_not_run):
+                            with mock.patch.object(harness, "preflight", side_effect=must_not_run):
+                                for value in ("0", "nope", str(harness.MAX_EXAMPLES_WORKERS + 1)):
+                                    stderr = io.StringIO()
+                                    with contextlib.redirect_stderr(stderr):
+                                        self.assertEqual(2, harness.main(["--workers", value]))
+                                    self.assertIn("EXAMPLES_WORKERS/--workers", stderr.getvalue())
+
+    def test_capacity_refusal_writes_no_lease_and_runs_no_preflight(self) -> None:
+        profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
+        base, http, aux = harness.slot_ports(profile, 0)
+        lease = harness.Lease(
+            checkout="t", slot=0, port=base, project="p", http_port=http, aux_port=aux
+        )
+
+        def must_not_run(*_args, **_kwargs):
+            raise AssertionError("a capacity refusal must not write a lease or start a container")
+
+        with tempfile.TemporaryDirectory(prefix="apptheory-workers-") as scratch:
+            with mock.patch.object(harness, "STATE_DIR", Path(scratch)):
+                with mock.patch.object(harness, "discover", return_value={}):
+                    with mock.patch.object(harness, "validate_manifest", return_value=[]):
+                        with mock.patch.object(harness, "acquire_lease", return_value=lease):
+                            with mock.patch.object(
+                                harness,
+                                "plan_worker_lanes",
+                                side_effect=harness.HarnessFailure("no free worker lane"),
+                            ):
+                                with mock.patch.object(harness, "write_lease", side_effect=must_not_run):
+                                    with mock.patch.object(harness, "preflight", side_effect=must_not_run):
+                                        stderr = io.StringIO()
+                                        with contextlib.redirect_stderr(stderr):
+                                            self.assertEqual(2, harness.main(["--workers", "2"]))
+        self.assertIn("no free worker lane", stderr.getvalue())
+
+
+def worker_harnesses(count: int) -> tuple[list[harness.WorkerLane], list[harness.Harness]]:
+    """Synthetic lanes and harnesses; the scheduler never touches the network."""
+    lanes = [
+        harness.WorkerLane(index=index, slot=-1, port_base=9000 + index * 10, aux_port=9001 + index * 10)
+        for index in range(count)
+    ]
+    lease = harness.Lease(
+        checkout="t", slot=-1, port=9000, project="p", http_port=9000, aux_port=9001
+    )
+    harnesses = [
+        harness.Harness(env={}, lease=lease, port_base=lane.port_base, aux_port=lane.aux_port)
+        for lane in lanes
+    ]
+    return lanes, harnesses
+
+
+def worker_tasks(specs: list[tuple[str, set[str]]]) -> list[harness.RowTask]:
+    tasks = []
+    for index, (key, resources) in enumerate(specs, start=1):
+        entry = harness.Entry(key=key, kind="entrypoint", data={"class": "L1", "run": key})
+        tasks.append(
+            harness.RowTask(
+                index=index, total=len(specs), entry=entry, resources=frozenset(resources)
+            )
+        )
+    return tasks
+
+
+class WorkerSchedulerTests(unittest.TestCase):
+    """Rows run once, never overlap inside a resource, and failures propagate."""
+
+    def test_rows_of_one_resource_never_overlap_and_each_runs_once(self) -> None:
+        spans: list[tuple[str, float, float]] = []
+        lock = threading.Lock()
+
+        def record(name: str):
+            def run(_harness: harness.Harness) -> str:
+                started = time.monotonic()
+                time.sleep(0.05)
+                finished = time.monotonic()
+                with lock:
+                    spans.append((name, started, finished))
+                return name
+
+            return run
+
+        specs = [
+            ("a1", {"app:a"}),
+            ("b1", {"app:b"}),
+            ("a2", {"app:a"}),
+            ("b2", {"app:b"}),
+            ("a3", {"app:a"}),
+            ("b3", {"app:b"}),
+        ]
+        runners = {key: record(key) for key, _ in specs}
+        lanes, harnesses = worker_harnesses(2)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=2), runners
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            results, failures = scheduler.run()
+
+        self.assertEqual([], failures)
+        self.assertEqual({key for key, _ in specs}, set(results))
+        self.assertEqual(len(specs), len(spans), "a row ran twice or not at all")
+        for family in ({"a1", "a2", "a3"}, {"b1", "b2", "b3"}):
+            rows = [span for span in spans if span[0] in family]
+            for index, first in enumerate(rows):
+                for second in rows[index + 1 :]:
+                    self.assertFalse(
+                        first[1] < second[2] and second[1] < first[2],
+                        f"{first[0]} and {second[0]} overlapped inside one resource",
+                    )
+        overlaps = [
+            (first[0], second[0])
+            for index, first in enumerate(spans)
+            for second in spans[index + 1 :]
+            if first[1] < second[2] and second[1] < first[2]
+        ]
+        self.assertTrue(overlaps, "two lanes never ran independent rows at once")
+
+    def test_one_lane_runs_rows_in_manifest_order(self) -> None:
+        order: list[str] = []
+
+        def record(name: str):
+            return lambda _harness: (order.append(name) or name)
+
+        specs = [(f"r{index}", {f"app:{index}"}) for index in range(6)]
+        runners = {key: record(key) for key, _ in specs}
+        lanes, harnesses = worker_harnesses(1)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=1), runners
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            _, failures = scheduler.run()
+        self.assertEqual([], failures)
+        self.assertEqual([key for key, _ in specs], order)
+
+    def test_a_failed_row_is_recorded_and_the_others_still_run(self) -> None:
+        def explode(_harness: harness.Harness) -> str:
+            raise harness.HarnessFailure("row exploded", "the child wrote this")
+
+        specs = [("ok1", {"app:a"}), ("bad", {"app:b"}), ("ok2", {"app:c"})]
+        runners = {"ok1": lambda _h: "fine", "bad": explode, "ok2": lambda _h: "fine"}
+        lanes, harnesses = worker_harnesses(2)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=2), runners
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            results, failures = scheduler.run()
+
+        self.assertEqual(("FAIL", "row exploded"), results["bad"])
+        self.assertEqual(("PASS", "fine"), results["ok1"])
+        self.assertEqual(("PASS", "fine"), results["ok2"])
+        self.assertEqual(["bad"], [entry.key for entry, _ in failures])
+        self.assertIn("FAIL", out.getvalue())
+        self.assertIn("| the child wrote this", out.getvalue())
+
+    def test_an_unexpected_exception_fails_only_its_row(self) -> None:
+        def bug(_harness: harness.Harness) -> str:
+            raise RuntimeError("harness bug")
+
+        specs = [("bug", {"app:a"}), ("ok", {"app:b"})]
+        runners = {"bug": bug, "ok": lambda _h: "fine"}
+        lanes, harnesses = worker_harnesses(1)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=1), runners
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            results, failures = scheduler.run()
+        self.assertEqual(("FAIL", "RuntimeError: harness bug"), results["bug"])
+        self.assertEqual(("PASS", "fine"), results["ok"])
+        self.assertEqual(["bug"], [entry.key for entry, _ in failures])
+
+    def test_stop_finishes_the_in_flight_row_and_skips_the_queue(self) -> None:
+        started: list[str] = []
+
+        def slow(_harness: harness.Harness) -> str:
+            started.append("slow")
+            time.sleep(0.3)
+            return "slow"
+
+        def queued(_harness: harness.Harness) -> str:
+            started.append("queued")
+            return "queued"
+
+        specs = [("slow", {"app:a"}), ("queued", {"app:b"})]
+        runners = {"slow": slow, "queued": queued}
+        lanes, harnesses = worker_harnesses(1)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=1), runners
+        )
+        timer = threading.Timer(0.05, scheduler.stop)
+        timer.start()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                results, failures = scheduler.run()
+        finally:
+            timer.cancel()
+        self.assertEqual(["slow"], started)
+        self.assertEqual({"slow": ("PASS", "slow")}, results)
+        self.assertEqual([], failures)
+
+    def test_a_wide_row_is_not_starved_by_a_stream_of_app_rows(self) -> None:
+        specs = [
+            ("app1", {"app:a"}),
+            ("wide", {"app:a", "app:b", "synth:all"}),
+            ("app2", {"app:b"}),
+            ("standalone", {"mcp:x"}),
+        ]
+        lanes, harnesses = worker_harnesses(2)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=2), runners={}
+        )
+        with scheduler.cond:
+            wide = scheduler._pick(0)
+            standalone = scheduler._pick(1)
+            self.assertEqual(("wide", "standalone"), (wide.entry.key, standalone.entry.key))
+            # App rows conflict with the wide row, so they wait for it instead
+            # of building a stream that would push it to the end of the run.
+            self.assertIsNone(scheduler._pick(1))
+            for key in wide.resources:
+                scheduler.held.pop(key, None)
+            scheduler.active -= 1
+            first = scheduler._pick(0)
+            second = scheduler._pick(1)
+        self.assertEqual(("app1", "app2"), (first.entry.key, second.entry.key))
+
+    def test_second_block_rows_stay_on_the_primary_lane(self) -> None:
+        for name in (
+            "local-iam-shared-plane",
+            "local-co-residence-ca",
+            "local-co-residence-iam",
+            "local-co-residence-backends",
+        ):
+            self.assertIn("ports:second-block", harness.ROW_RESOURCES[name])
+        specs = [("second", {"ports:second-block"}), ("other", {"app:z"})]
+        lanes, harnesses = worker_harnesses(2)
+        scheduler = harness.RowScheduler(
+            harnesses, lanes, worker_tasks(specs), harness.RowReport(workers=2), runners={}
+        )
+        with scheduler.cond:
+            lane1 = scheduler._pick(1)
+            self.assertIsNotNone(lane1)
+            self.assertEqual(
+                "other", lane1.entry.key, "lane 1 must skip the second-block row"
+            )
+            self.assertIsNone(scheduler._pick(1))
+            picked = scheduler._pick(0)
+        self.assertIsNotNone(picked)
+        self.assertEqual("second", picked.entry.key)
+
+    def test_the_synth_row_holds_every_app_family(self) -> None:
+        app_keys = {f"app:{app}" for app in harness.APP_RUNNERS}
+        self.assertTrue(app_keys <= harness.ROW_RESOURCES["cdk-synth-all"])
+        for app, names in harness.APP_RUNNERS.items():
+            for name in names:
+                self.assertIn(f"app:{app}", harness.ROW_RESOURCES[name])
+
+    def test_every_runner_declares_a_resource_set(self) -> None:
+        self.assertEqual(set(harness.RUNNERS), set(harness.ROW_RESOURCES))
+        with self.assertRaises(harness.HarnessFailure):
+            harness.worker_resources("no-such-row")
+
+    def test_a_harness_defaults_to_the_primary_lane(self) -> None:
+        lease = harness.Lease(
+            checkout="t", slot=2, port=8150, project="p", http_port=8151, aux_port=8152
+        )
+        plain = harness.Harness(env={}, lease=lease)
+        self.assertEqual(lease.http_port, plain.port_base)
+        self.assertEqual(lease.aux_port, plain.aux_port)
 
 
 if __name__ == "__main__":

@@ -133,6 +133,70 @@ variables. `--external` tells the harness that CI supplies DynamoDB Local as a
 service container: it waits for the leased port instead of starting a compose
 container that would fight for it.
 
+## Worker concurrency
+
+An ordinary run uses four workers. `make examples-local` and
+`python3 scripts/local/run_examples_local.py` are both that four-worker run; the
+Makefile only forwards `EXAMPLES_WORKERS=N` when a developer selects another
+count. A smaller station can use one or two without weakening any assertion:
+
+```bash
+make examples-local                       # four workers
+make examples-local EXAMPLES_WORKERS=2    # two workers
+make examples-local EXAMPLES_WORKERS=1    # serial reference
+python3 scripts/local/run_examples_local.py --workers 2
+```
+
+`EXAMPLES_WORKERS` is harness-only. It is not an operator environment variable
+for deploys, no example reads it, and the Makefile only forwards it to this
+harness as `--workers`. The harness refuses anything that is not a whole number
+from 1 to 4 before it takes a lease, creates a container or claims a port.
+
+The run never silently lowers the count: the header prints `N requested, M
+effective`. If fewer than N free lanes are available — the profile has fewer
+adjacent slots left, a slot belongs to a container another run left behind, or a
+port already answers — the run exits 2 before it writes a lease, starts a
+container or claims a port, and names the slot or port. Run
+`make examples-local-down` (or lower `EXAMPLES_WORKERS`) and retry; a partial or
+serial run is never reported as N-way execution.
+
+Each worker is one **lane**, and a lane is one port slot: a multi-worker run
+reserves a contiguous span of free slots from the profile range (`8130–8199` by
+default), lane 1 takes the first slot of that span, and each extra lane takes
+the next one. It never reclaims a slot whose container is already running, so a
+fixture another run left behind is left alone. A run binds its listeners from
+its lane's port base upward, so two rows never bind the same listener, and the
+outer Docker-validation and checkout locks stay where they were — outside this
+harness, held once per run, never per worker. The extra lanes are ports only:
+they start no container and leave nothing behind when they exit.
+`--workers 1` keeps the historical serial behavior, including reclaiming this
+checkout's own profile container.
+
+Rows are allowed to overlap only when they hold no common resource:
+
+| Resource key | Held by |
+| --- | --- |
+| `app:<example>` | every row that drives that CDK example: its DynamoDB tables, queues, buckets, `node_modules` and CDK staging tree |
+| `synth:all` plus every `app:` key | `cdk-synth-all`, which runs `npm ci` in each example and removes its `node_modules` |
+| `host:sns-18120` | `sqs-sns-targets`, which binds the fixed SNS capture port |
+| `ports:second-block` | the four co-residence rows that start a second run at `port_base + 40`; they run only on lane 1, so the extra block stays outside every other lane |
+| `mcp:*`, `testkit:*`, `microvm:workloads`, `table:rate-limits`, `runtime:conformance` | the standalone rows that use that surface |
+
+Dispatch order is the manifest order: a lane takes the lowest-index pending row
+whose resources are free, so rows that share an example run one at a time and
+the row set is exactly the manifest's rows, each once. One row is special:
+`cdk-synth-all` holds every example, so it cannot start while any app row is in
+flight. It would otherwise be starved behind a continuous stream of app rows and
+run last, leaving lanes idle once the stream drained, so while it is pending
+lanes still start standalone rows but no longer start a conflicting app row; it
+begins as soon as the in-flight rows finish. A row without a declared resource
+set fails closed before the run starts, so a new example cannot become
+concurrent by accident. The header reports the requested and effective worker
+count, and every row line ends with its own elapsed seconds (plus the lane when
+more than one is active), so a developer can see which rows overlap and where
+the time goes. The summary, `counts:` line and exit code are the same as a serial
+run.
+
 ## Discovery and the manifest
 
 Entrypoints are discovered from the tree, not from a hand-maintained list:
