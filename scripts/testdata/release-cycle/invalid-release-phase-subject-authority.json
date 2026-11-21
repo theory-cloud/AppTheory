@@ -1,0 +1,20 @@
+{
+  "case": "invalid-release-phase-subject-authority",
+  "coverage": ["release_phase_authority"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": ["phase:untrusted-authority"]
+  },
+  "events": [
+    {
+      "kind": "release_phase",
+      "channel": "premain",
+      "authority": "commit-subject-and-bot-label",
+      "headIsRecordedReleaseMerge": false,
+      "publisherAction": "skip",
+      "releaseCreated": false,
+      "published": false,
+      "generationLaneOwns": true
+    }
+  ]
+}

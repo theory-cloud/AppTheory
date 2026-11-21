@@ -1,5 +1,14 @@
 name: Release (main)
 
+# This workflow publishes only for the commit that is the recorded merge of the
+# generated `release-please--branches--main` PR. Every other push to main is
+# generation phase and belongs to release-pr.yml; the publisher classifies that
+# commit and skips publication instead of treating an expected Release Please
+# no-op as a failed publish. A `workflow_dispatch` with `tag_name` keeps the
+# existing asset-upload path unchanged; a publisher dispatch without it runs
+# only at a recorded release-PR merge and otherwise fails closed with a recovery
+# instruction.
+
 on:
   push:
     branches: ["main"]
@@ -19,7 +28,60 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Single authority for the release phase. A main push is publication-
+  # authoritative only when GitHub records it as the merge commit of the trusted
+  # generated release PR (base `main`, head `release-please--branches--main`,
+  # merge_commit_sha == this commit). Every other push is generation phase:
+  # release-pr.yml owns it and this publisher must neither publish nor report a
+  # failed publish. An `inputs.tag_name` dispatch keeps the asset-only path and
+  # does not consult the phase. An unreadable or ambiguous provenance response
+  # fails closed before any release state is touched.
+  release-phase:
+    runs-on: ubuntu-latest
+    outputs:
+      phase: ${{ steps.assets_only.outputs.phase || steps.classify.outputs.phase }}
+    steps:
+      - name: Existing-tag upload (no publication phase)
+        if: github.event_name == 'workflow_dispatch' && inputs.tag_name != ''
+        id: assets_only
+        run: |
+          echo "phase=assets-only" >> "${GITHUB_OUTPUT}"
+          echo "release-phase: assets-only (existing tag ${INPUT_TAG_NAME})" >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+
+      - name: Checkout (release phase)
+        if: github.event_name != 'workflow_dispatch' || inputs.tag_name == ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Classify release phase
+        if: github.event_name != 'workflow_dispatch' || inputs.tag_name == ''
+        id: classify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          phase="$(scripts/classify-release-phase.sh \
+            --channel stable \
+            --head "${GITHUB_SHA}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --event-name "${GITHUB_EVENT_NAME}")"
+          echo "phase=${phase}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Release phase: ${phase}"
+            echo ""
+            if [[ "${phase}" == "publish" ]]; then
+              echo "\`${GITHUB_SHA}\` is the recorded merge of \`release-please--branches--main\`; the publisher owns the stable release."
+            else
+              echo "\`${GITHUB_SHA}\` is not the recorded merge of \`release-please--branches--main\`."
+              echo "This push generated or updated the stable pull request; the generation lane owns it and nothing is published."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   release-please:
+    needs: release-phase
+    if: needs.release-phase.outputs.phase != 'generation'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}

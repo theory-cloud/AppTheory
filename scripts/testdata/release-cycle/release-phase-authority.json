@@ -1,0 +1,45 @@
+{
+  "case": "release-phase-authority",
+  "coverage": ["release_phase_authority"],
+  "expected": { "valid": true },
+  "events": [
+    {
+      "kind": "release_phase",
+      "channel": "premain",
+      "authority": "pull-request-merge-provenance",
+      "headIsRecordedReleaseMerge": false,
+      "publisherAction": "skip",
+      "releaseCreated": false,
+      "published": false,
+      "generationLaneOwns": true,
+      "assetsVerified": false,
+      "tagMatchesHead": false
+    },
+    {
+      "kind": "release_phase",
+      "channel": "main",
+      "authority": "pull-request-merge-provenance",
+      "headIsRecordedReleaseMerge": true,
+      "publisherAction": "publish",
+      "releaseCreated": true,
+      "published": true,
+      "generationLaneOwns": false,
+      "assetsVerified": true,
+      "tagMatchesHead": true
+    },
+    {
+      "kind": "release_phase",
+      "channel": "premain",
+      "authority": "pull-request-merge-provenance",
+      "headIsRecordedReleaseMerge": true,
+      "publisherAction": "publish",
+      "releaseCreated": false,
+      "alreadyPublishedVerified": true,
+      "duplicateMutation": false,
+      "published": true,
+      "generationLaneOwns": false,
+      "assetsVerified": true,
+      "tagMatchesHead": true
+    }
+  ]
+}
