@@ -173,7 +173,11 @@ JSON
   }
 
   classify() {
-    bash scripts/classify-release-phase.sh --channel prerelease --head "${head}" --repo "${repo}" "$@"
+    # Explicit event name: the self-test must not inherit the runner's own
+    # GITHUB_EVENT_NAME (CI runs it under pull_request, where a publisher phase
+    # is not applicable). Callers that test another event append it last.
+    bash scripts/classify-release-phase.sh \
+      --channel prerelease --head "${head}" --repo "${repo}" --event-name push "$@"
   }
 
   expect "recorded-release-merge" 0 "publish" "recorded merge commit" \
@@ -204,7 +208,7 @@ JSON
   chmod +x "${tmp}/bin/gh"
   expect "provenance-unavailable" 1 "" "could not read" \
     env PATH="${tmp}/bin:${PATH}" bash scripts/classify-release-phase.sh \
-      --channel prerelease --head "${head}" --repo "${repo}"
+      --channel prerelease --head "${head}" --repo "${repo}" --event-name push
 
   if (( failures > 0 )); then
     echo "classify-release-phase: self-test FAIL (${failures} case(s))" >&2
