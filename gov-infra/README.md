@@ -20,14 +20,15 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- `SEC-2` carries exactly three reviewed exceptions, all self-expiring with a hard `recheck_by 2026-12-01` and an
+- `SEC-2` carries exactly two reviewed exceptions, both self-expiring with a hard `recheck_by 2026-12-01` and an
   automatic removal probe: `braces@3.0.3` reached only through the `jsii-pacmak` dev-toolchain chain in `cdk/`
-  (registry-backed probe; renewed 2026-11-01 from 2026-11-02 because no patched `braces` was published),
-  `minimatch@10.2.6` bundled inside `aws-cdk-lib` across `cdk/` plus all `examples/cdk/*/` (lockfile-local probe), and
+  (registry-backed probe; renewed 2026-11-01 from 2026-11-02 because no patched `braces` was published), and
   E5 `picomatch` for `GHSA-fc5q-39xc-vjpf` - `4.0.7` in the `ts/` lint chain (registry-backed probe) and `2.3.2` in the
   `cdk/` jsii build chain (lockfile-local probe), both dev-only, operator-ruled 2026-11-17 because npm publishes no
-  patched picomatch. Everything else still fails closed, and the exceptions, their operator rulings, and their exact
-  scope are recorded in `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
+  patched picomatch. The bundled `minimatch` exception (E3) was retired 2026-11-21: `aws-cdk-lib` 2.278.0 bundles
+  `minimatch 11.0.9`, meeting its removal condition, and the bundled-graph anchor now asserts that fixed graph
+  positively. Everything else still fails closed, and the exceptions, their operator rulings, and their exact scope are
+  recorded in `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
 - The former `ts/` brace-expansion and dev-only minimatch exceptions stay retired. The 2026-11-06 adoption of
   `eslint-plugin-import-x` 4.18.0 (whose minimatch range accepts `>= 11.0.1`) removed E4
   (`ts-dev-import-x-minimatch`): `ts/package.json` now overrides `minimatch` to `11.0.9` for every consumer,

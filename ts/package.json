@@ -28,7 +28,7 @@
     "@aws-sdk/client-s3vectors": "^3.1169.0",
     "@aws-sdk/client-ssm": "^3.1164.0",
     "@aws-sdk/s3-request-presigner": "^3.1169.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v6.5.0/theory-cloud-tabletheory-ts-6.5.0.tgz#sha512-PJSRT42RXj/woaH6M9Tf3lQj86Q1ky96cBonWaNNRlsuVb7wBYjGePncxbe966LQPVlZSIzc9mCP0lmxsNWMsg=="
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v6.5.2/theory-cloud-tabletheory-ts-6.5.2.tgz#sha512-r/pJMUDmtxbketX/bnTJWNC0eWigPaNgud9Y/DWolzrCPrSk/CrewQSJg3O74Grq2EJo5L6wefJANs+gqnOoLA=="
   },
   "files": [
     "dist",
