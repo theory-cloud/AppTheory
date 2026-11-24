@@ -49,6 +49,7 @@ gov-infra/evidence/py-coverage.data
 .codex/
 .theorymcp/
 .claude/
+.vibe/
 .agents/
 .mcp.json
 GEMINI.md
