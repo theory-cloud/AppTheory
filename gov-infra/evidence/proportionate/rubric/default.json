@@ -5,16 +5,16 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 437.603,
+      "durationSeconds": 548.878,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-21T20:20:08Z",
+      "finishedAt": "2026-11-24T14:48:16Z",
       "id": "rubric",
-      "inputsDigest": "sha256:0ae16ecd98043bfd1d4dc100e4dd13c01527b20baf086668900b89eaf09aa642",
-      "logDigest": "sha256:91ca4cf8cb7a4fdead08b83837d4a13b02aa45efae248e88677e8b385c8b3210",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261121T201251Z-89588.log",
+      "inputsDigest": "sha256:2ed0579a7723d50e94cc958c46d48185271a9d0ba42f53b39e9de0da77c8dc74",
+      "logDigest": "sha256:6be2e9ef90a7c0be2438d476952cc8505f785a65f0746a50b17e474960276ae9",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261124T143907Z-6925.log",
       "reused": false,
-      "startedAt": "2026-11-21T20:12:51Z"
+      "startedAt": "2026-11-24T14:39:07Z"
     }
   ],
   "consumed": [
@@ -47,7 +47,7 @@
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -62,17 +62,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-21T20:20:08Z",
+  "recordedAt": "2026-11-24T14:48:16Z",
   "releaseOnly": {
-    "digest": "sha256:1068991c200913706014caa742d8b56b2b2fb8b4e0ea3b3863072b2cd102e20d",
+    "digest": "sha256:08515debfc9f64eec922023a80aea8bad34b70955c7277449d9d1858e9574df7",
     "fileCount": 529,
     "normalizedDigest": "sha256:614350538740f5d05d34502400b77f39234e0e3f8d3a9e28bcd01f29d0541ce0",
-    "version": "7.5.0-rc.1"
+    "version": "7.5.0-rc.2"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:39bc810d8f3376b9ec8220aff6052e59dc579baaeca29dfff8ad4a4030cf316e",
+    "digest": "sha256:8290b04b788a68e5a16e67a66f53117ab64cf20618dc59a132e3a4a6ca3ada2b",
     "fileCount": 3303,
     "paths": [
       "**"
@@ -80,7 +80,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:fc1c20d5c4b16a9cd5e1261d0e7ff1b9a3d7623e81e1bbc9ee8cec093f5a6bbd",
+    "digest": "sha256:5ca898d6b3d4bba1d94d2fd1d2c0462152bd60e370c79b430bd189d5d12805d1",
     "fileCount": 2774
   },
   "verdict": "PASS"
