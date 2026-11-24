@@ -5,45 +5,19 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 458.983,
+      "durationSeconds": 730.161,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-24T22:04:30Z",
+      "finishedAt": "2026-11-24T22:46:31Z",
       "id": "rubric",
       "inputsDigest": "sha256:5a792c9783ca3eb14d2e1c0e3e534bd8f0a4940800a5b3b8158d22a4905940f7",
-      "logDigest": "sha256:94ebbf7d1267074a91d2fd0758f0677b2869f35a362e15c7886bd1e3bc65acb8",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261124T215651Z-57238.log",
+      "logDigest": "sha256:e8e3e41c0c3a267290bf38ef58c3cb9e432b9d9d807b91f94fae7eacdbde264f",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261124T223421Z-4503.log",
       "reused": false,
-      "startedAt": "2026-11-24T21:56:51Z"
+      "startedAt": "2026-11-24T22:34:21Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:cdc96956c4e417420f968031f74e57362d5bd926192fda849c7db5c7c5bdc4ab",
-      "gate": "cdk-go-drift",
-      "recordedAt": "2026-11-24T20:56:00Z"
-    },
-    {
-      "digest": "sha256:b1fa60b9c468302bb57ca3baccd2edbff153603fc7034bf3342ebc0244958018",
-      "gate": "contract-tests",
-      "recordedAt": "2026-11-19T12:26:37Z"
-    },
-    {
-      "digest": "sha256:bc8a0fa2279755242d5da62beb63528c4ccc23ca9f994fa718c1c86c8a056d07",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-24T20:57:12Z"
-    },
-    {
-      "digest": "sha256:883a42126a31ed944ec16f81cd3ae08c49d93830f31ad522a07c468f296df05c",
-      "gate": "go",
-      "recordedAt": "2026-11-24T21:20:09Z"
-    },
-    {
-      "digest": "sha256:42f749af772b18b9bb063c45b3e12d95ebe3b1d2aac3771ddb23ec9e4900455a",
-      "gate": "unit",
-      "recordedAt": "2026-11-24T21:32:59Z"
-    }
-  ],
+  "consumed": [],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
   "environment": {
     "go": "go1.27.4",
@@ -62,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-24T22:04:30Z",
+  "recordedAt": "2026-11-24T22:46:31Z",
   "releaseOnly": {
     "digest": "sha256:d02fc034e77e252e280198a904c6cbd94fd9221e15ff65bfe401a4bc96264a80",
     "fileCount": 529,
