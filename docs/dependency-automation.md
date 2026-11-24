@@ -270,14 +270,25 @@ is a parity defect rather than a staged rollout. The release is stable (`v6.5.3`
 
 - **Checksum discipline.** Both digests were computed from the downloaded release assets and cross-checked against the
   release's published `tabletheory-SHA256SUMS.txt`; npm additionally verified the tarball's `sha512` on install.
-- **Synth hash.** One pinned template moved: `local-mcp-auth-facade` (`AppTheoryLocalMcpAuthFacade`)
-  `4daa4beb82ddf0c955537ded4bcf753bd49e963252161b46902b1ebde40f4999` ->
-  `168a1297081a27e5d47e0c6891e9fe71e1b2e2fca383b80bf7e79285619e7eef`. That stack sets an explicit
-  `assetHashType: CUSTOM` hash over the handler directory, `runtime/`, `go.mod`, and `go.sum` precisely so a dependency
-  move surfaces in the pinned template, so the move is the designed behaviour rather than drift. Synthesizing the same
-  stack at the pre-bump tree reproduced the old pin and at the bumped tree reproduced the new one; the whole template
-  diff is two lines of asset identity (`Code.S3Key` and the `aws:asset:path` metadata) with no CloudFormation resource,
-  property, IAM statement, route, or output changed. The other 23 example snapshots kept their hashes.
+- **Synth hashes.** Six pinned templates moved — exactly the stacks whose bundled Go binary or vendored TypeScript
+  runtime closure contains the TableTheory code, and therefore the ones the pins exist to move:
+
+  | Stack | Old | New |
+  | --- | --- | --- |
+  | `AppTheoryHelloWorldGo` | `ad356e1a…` | `d7ce9fcc…` |
+  | `AppTheoryHelloWorldTs` | `6c9f705f…` | `6d8a47c5…` |
+  | `AppTheoryMultilangDemo` | `7819f6d5…` | `e1227e18…` |
+  | `AppTheoryMicrovmControllerDemo` | `6d391599…` | `96c76883…` |
+  | `AppTheoryS3VectorsSemanticSearch` | `8ada7b95…` | `d90998bd…` |
+  | `AppTheoryLocalMcpAuthFacade` | `4daa4beb…` | `168a1297…` |
+
+  `local-mcp-auth-facade` moves because it sets an explicit `assetHashType: CUSTOM` hash over the handler directory,
+  `runtime/`, `go.mod`, and `go.sum` precisely so a dependency move surfaces in the pinned template; the other five
+  move because their staged assets contain the built runtime. In every case the move is the designed behaviour rather
+  than drift: synthesizing each stack at the pre-bump tree reproduced the old pin and at the bumped tree reproduced the
+  new one, and each template diff is asset identity only (`Code.S3Key` and the `aws:asset:path` metadata) with no
+  CloudFormation resource, property, IAM statement, route, or output changed. The other 18 example snapshots kept their
+  hashes.
 - **No other version literal, fixture, API snapshot, or manifest range changed.** `VERSION` stays `7.5.0-rc.2`; the move
   ships with the next AppTheory release instead of forcing one now.
 
