@@ -121,7 +121,7 @@ const RESERVED_ENV_KEYS = [
  * runtime contract; this construct only wires the deployment path.
  */
 class AppTheoryMicrovmController extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController", version: "7.5.0-rc.2" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController", version: "7.5.0" };
     /**
      * The underlying HTTP API Gateway v2 API.
      */

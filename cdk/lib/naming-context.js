@@ -17,7 +17,7 @@ const ACCEPTED_RETENTION_DAYS = [
  * The bound naming and logging context shared by AppTheory constructs.
  */
 class AppTheoryNamingContext extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryNamingContext", version: "7.5.0-rc.2" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryNamingContext", version: "7.5.0" };
     /**
      * Namespace segment.
      */
