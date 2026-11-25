@@ -23,6 +23,7 @@ REQUIRED_COVERAGE = {
     "stale_release_please_pr": "stale Release Please PR state",
     "promotion_drift": "promotion drift",
     "back_merge_drift": "back-merge drift",
+    "release_phase_authority": "generation/publication phase authority",
 }
 
 VALID_RELEASE_EDGES = {
@@ -245,6 +246,79 @@ def validate_back_merge(event: dict[str, Any], diags: list[Diagnostic]) -> None:
         add(diags, "back-merge:late", "main must be back-merged to staging before further staging work")
 
 
+def validate_release_phase(event: dict[str, Any], diags: list[Diagnostic]) -> None:
+    channel = event.get("channel")
+    if channel not in {"premain", "main"}:
+        add(diags, "phase:invalid-channel", f"release phase channel must be premain or main, got {channel!r}")
+        return
+
+    if event.get("authority") != "pull-request-merge-provenance":
+        add(
+            diags,
+            "phase:untrusted-authority",
+            "generation versus publication must come from merged pull request provenance, "
+            "never a subject, label, bot identity or mutable branch head",
+        )
+        return
+
+    if event.get("authorityAmbiguous") is True:
+        if event.get("publisherAction") != "fail" or event.get("failsClosed") is not True:
+            add(diags, "phase:ambiguity-not-closed", "ambiguous release provenance must fail closed")
+        if not event.get("recoveryInstruction"):
+            add(diags, "phase:ambiguity-without-recovery", "a fail-closed ambiguity must name a recovery action")
+        return
+
+    recorded = event.get("headIsRecordedReleaseMerge")
+    if not isinstance(recorded, bool):
+        add(diags, "phase:missing-authority", "the phase must state whether the head is the recorded release merge")
+        return
+
+    action = event.get("publisherAction")
+    published = event.get("published")
+    release_created = event.get("releaseCreated")
+    generation_owns = event.get("generationLaneOwns")
+    assets_verified = event.get("assetsVerified")
+    tag_matches_head = event.get("tagMatchesHead")
+
+    if not recorded:
+        if published is not False or release_created is not False:
+            add(
+                diags,
+                "phase:generation-published",
+                "a generation-phase push must not create or publish a release",
+            )
+        if action != "skip":
+            add(diags, "phase:generation-not-skipped", "the publisher must skip a generation-phase push")
+        if generation_owns is not True:
+            add(diags, "phase:generation-lane-missing", "the release-PR generation lane must own a generation push")
+        return
+
+    if action != "publish":
+        add(diags, "phase:publish-action-mismatch", "a recorded release-PR merge must enter the publisher")
+        return
+    if generation_owns is not False:
+        add(diags, "phase:generation-owns-publication", "the generation lane must not own a publication push")
+    if published is not True:
+        add(diags, "phase:publication-skipped", "a required publication must not be skipped or reported as a no-op")
+    if assets_verified is not True:
+        add(diags, "phase:assets-missing", "a publication must verify the exact immutable assets")
+    if tag_matches_head is not True:
+        add(diags, "phase:wrong-head", "a publication must tag the exact release-PR merge commit")
+    if release_created is not True:
+        if event.get("alreadyPublishedVerified") is not True:
+            add(
+                diags,
+                "phase:required-publish-missing",
+                "a recorded release-PR merge with no created release is a failed publish, not a no-op",
+            )
+        elif event.get("duplicateMutation") is True:
+            add(
+                diags,
+                "phase:duplicate-mutation",
+                "a verified already-published retry must not mutate the release again",
+            )
+
+
 def validate_happy_path(events: list[dict[str, Any]], diags: list[Diagnostic]) -> None:
     edges: list[tuple[Any, Any]] = []
     release_pr_targets: list[Any] = []
@@ -289,6 +363,8 @@ def validate_events(fixture: dict[str, Any], diags: list[Diagnostic]) -> None:
             validate_publisher_race(event, diags)
         elif kind == "back_merge":
             validate_back_merge(event, diags)
+        elif kind == "release_phase":
+            validate_release_phase(event, diags)
         else:
             add(diags, "fixture:unknown-event", f"unknown event kind {kind!r}")
 

@@ -7,6 +7,11 @@ import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import { defaultLogicalName } from "./private/logical-name";
+import { defaultMinimumProtocolVersion } from "./private/secure-defaults";
+import { enableCloudFrontStandardLogging } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 import { stripTrailingPort, trimRepeatedCharEnd } from "./private/string-utils";
 
 function assertCloudFrontHostedZoneCertificateRegion(scope: Construct, constructName: string): void {
@@ -203,6 +208,34 @@ export interface AppTheoryPathRoutedFrontendProps {
     readonly apiOriginRequestPolicy?: cloudfront.IOriginRequestPolicy;
 
     /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+
+    /**
+     * The distribution's logical name. Defaults to the kebab-cased construct id
+     * when a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.JSON
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
+
+    /**
      * Enable CloudFront access logging.
      * @default true
      */
@@ -242,6 +275,31 @@ export interface AppTheoryPathRoutedFrontendProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+
+    /**
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * The frontend's default behavior targets the API origin. When SPA prefixes
+     * route to S3 origins the distribution carries S3 origins, so Security Hub
+     * CloudFront.1 evaluates it, but `/` must reach the API origin; a default
+     * root object would rewrite `/` onto the API, so AppTheory deliberately
+     * sets none and the control reports a residual finding.
+     *
+     * @default undefined
+     */
+    readonly defaultRootObject?: string;
 }
 
 /**
@@ -361,9 +419,18 @@ export class AppTheoryPathRoutedFrontend extends Construct {
         const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
         const autoDeleteObjects = props.autoDeleteObjects ?? false;
         const enableLogging = props.enableLogging ?? true;
+        const namingContext = props.namingContext;
+        const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+        if (namingContext?.standardLogging === true && props.logsBucket !== undefined) {
+            throw new Error(
+                "AppTheoryPathRoutedFrontend cannot honor props.logsBucket under the standard logging profile; CloudFront access logs go to the contract log group, so remove props.logsBucket or use the legacy logging profile",
+            );
+        }
+        const standardLogging = namingContext?.standardLogging === true && enableLogging;
 
-        // Create logs bucket if logging is enabled
-        if (enableLogging) {
+        // Create logs bucket if S3 logging is enabled and the standard profile is
+        // not replacing it with CloudWatch Logs delivery.
+        if (enableLogging && !standardLogging) {
             this.logsBucket =
                 props.logsBucket ??
                 new s3.Bucket(this, "CloudFrontLogsBucket", {
@@ -496,6 +563,12 @@ export class AppTheoryPathRoutedFrontend extends Construct {
             props.apiResponseHeadersPolicy ??
             props.responseHeadersPolicy;
 
+        // Security Hub CloudFront.15 under a derived naming context.
+        const minimumProtocolVersion = defaultMinimumProtocolVersion(
+            namingContext,
+            distributionCertificate !== undefined,
+            props.minimumProtocolVersion,
+        );
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             ...(enableLogging && this.logsBucket
                 ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -503,6 +576,8 @@ export class AppTheoryPathRoutedFrontend extends Construct {
             ...(distributionDomainNames && distributionCertificate
                 ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
                 : {}),
+            ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
+            ...(props.defaultRootObject !== undefined ? { defaultRootObject: props.defaultRootObject } : {}),
             defaultBehavior: {
                 origin: apiOrigin,
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -518,6 +593,17 @@ export class AppTheoryPathRoutedFrontend extends Construct {
             ...(props.priceClass ? { priceClass: props.priceClass } : {}),
             ...(props.comment ? { comment: props.comment } : {}),
         });
+
+        if (standardLogging && namingContext && logical) {
+            enableCloudFrontStandardLogging({
+                scope: this,
+                id: "CdnLogging",
+                context: namingContext,
+                distribution: this.distribution,
+                logical: `logs/access/cdn/${logical}`,
+                format: props.cloudFrontLogFormat,
+            });
+        }
 
         // Create Route53 A record if hosted zone is provided
         if (props.domain?.domainName && props.domain?.hostedZone) {

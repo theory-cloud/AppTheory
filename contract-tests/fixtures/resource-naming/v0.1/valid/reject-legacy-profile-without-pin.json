@@ -1,0 +1,27 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-legacy-profile-without-pin",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "live",
+      "account": "784055308075",
+      "region": "us-east-1",
+      "naming_profile": "legacy"
+    },
+    "resource_type": "dynamodb_table",
+    "logical": "events"
+  },
+  "expected": {
+    "error": "legacy naming profile requires a pin or a generated entry for every resource"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

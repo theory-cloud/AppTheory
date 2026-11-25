@@ -8,6 +8,8 @@ import { Construct } from "constructs";
 
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { generateRestV1ChallengeRestorationHandlerCode } from "./private/rest-v1-challenge-restoration-handler";
+import { defaultMinimumProtocolVersion } from "./private/secure-defaults";
+import type { AppTheoryNamingContext } from "./naming-context";
 
 /** Metadata key recorded on the distribution for the challenge-restoration contract. */
 const CHALLENGE_RESTORATION_METADATA_KEY = "apptheory:rest-v1-challenge-restoration";
@@ -243,6 +245,26 @@ export interface AppTheoryRestV1ChallengeRestorationProps {
    * Optional CloudFront price class.
    */
   readonly priceClass?: cloudfront.PriceClass;
+
+  /**
+   * Optional naming context that selects the Security Hub-aligned defaults.
+   *
+   * Under a derived context a distribution that serves `domainNames` through
+   * `certificate` takes the CloudFront.15 `TLS_V1_2_2025` viewer policy. Its
+   * origins are the REST API only, so it carries no S3 origin and CloudFront.1
+   * does not evaluate it; no default root object applies.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * Minimum TLS protocol version for viewers of `domainNames`.
+   *
+   * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+   * otherwise the CloudFront default for the certificate
+   */
+  readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
 }
 
 /**
@@ -454,14 +476,19 @@ export class AppTheoryRestV1ChallengeRestoration extends Construct {
       additionalBehaviors[pathPattern] = behaviorOptions();
     }
 
+    const frontedDomains =
+      props.domainNames !== undefined && props.domainNames.length > 0 && props.certificate !== undefined;
+    const minimumProtocolVersion = defaultMinimumProtocolVersion(
+      props.namingContext,
+      frontedDomains,
+      props.minimumProtocolVersion,
+    );
+
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       defaultBehavior: behaviorOptions(),
       additionalBehaviors,
-      ...(props.domainNames !== undefined &&
-      props.domainNames.length > 0 &&
-      props.certificate !== undefined
-        ? { domainNames: props.domainNames, certificate: props.certificate }
-        : {}),
+      ...(frontedDomains ? { domainNames: props.domainNames, certificate: props.certificate } : {}),
+      ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
       ...(props.priceClass !== undefined ? { priceClass: props.priceClass } : {}),
     });
 

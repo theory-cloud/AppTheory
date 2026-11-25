@@ -2,6 +2,7 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 /**
  * The DD-2 direct-origin reachability decision for a REST v1 origin.
  *
@@ -161,6 +162,24 @@ export interface AppTheoryRestV1ChallengeRestorationProps {
      * Optional CloudFront price class.
      */
     readonly priceClass?: cloudfront.PriceClass;
+    /**
+     * Optional naming context that selects the Security Hub-aligned defaults.
+     *
+     * Under a derived context a distribution that serves `domainNames` through
+     * `certificate` takes the CloudFront.15 `TLS_V1_2_2025` viewer policy. Its
+     * origins are the REST API only, so it carries no S3 origin and CloudFront.1
+     * does not evaluate it; no default root object applies.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * Minimum TLS protocol version for viewers of `domainNames`.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
 }
 /**
  * A framework CloudFront front door that restores the canonical

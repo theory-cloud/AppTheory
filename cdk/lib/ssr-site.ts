@@ -11,6 +11,13 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import { Construct } from "constructs";
 
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
+import { defaultMinimumProtocolVersion, secureDefaults } from "./private/secure-defaults";
+import type { AppTheoryNamingContext } from "./naming-context";
+
 import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils";
 
 const apptheoryOriginalUriHeader = "x-apptheory-original-uri";
@@ -481,6 +488,35 @@ export interface AppTheorySsrSiteProps {
    */
   readonly allowViewerTenantHeaders?: boolean;
 
+  /**
+   * Optional naming and logging context.
+   *
+   * With the standard logging profile the buckets this construct creates take
+   * their names from the contract and CloudFront access logs go to
+   * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+   * Pass `enableLogging: false` to opt out of the delivery.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The site's logical name. Defaults to the kebab-cased construct id when a
+   * naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
+
+  /**
+   * CloudFront standard-logging output format for a CloudWatch Logs
+   * destination. Only used under the standard logging profile.
+   * @default AppTheoryCloudFrontLogFormat.JSON
+   */
+  readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
+
   readonly enableLogging?: boolean;
   readonly logsBucket?: s3.IBucket;
 
@@ -533,7 +569,55 @@ export interface AppTheorySsrSiteProps {
    */
   readonly certificateArn?: string;
 
+  /**
+   * Minimum TLS protocol version for viewers of a custom domain.
+   *
+   * With a derived naming context and a custom certificate the default is
+   * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+   * widest client support. Without a certificate CloudFront serves the fixed
+   * default certificate and this property has no effect.
+   *
+   * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+   * otherwise the CloudFront default for the certificate
+   */
+  readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+
+  /**
+   * Object CloudFront returns for a request to the distribution root.
+   *
+   * With a derived naming context and `mode: ssg-isr` the default is
+   * `index.html`, because that mode's default behavior is the S3 HTML store
+   * (Security Hub CloudFront.1). `ssr-only` also carries an S3 origin (the
+   * asset bucket), so the control evaluates the distribution, but `/` must
+   * reach the function URL; a default root object would rewrite `/` onto the
+   * function URL, so AppTheory deliberately sets none and the control reports
+   * a residual finding.
+   *
+   * @default "index.html" under a derived naming context in `ssg-isr` mode
+   */
+  readonly defaultRootObject?: string;
+
   readonly webAclId?: string;
+
+  /**
+   * Bucket that receives S3 server access logs for the buckets this construct
+   * creates, which is what Security Hub S3.9 evaluates.
+   *
+   * Off by default because the log target and its storage cost money. The target
+   * bucket is yours: it takes no naming entry (resource-naming contract
+   * section 4), and it should not itself be logged.
+   *
+   * @default no server access logging
+   */
+  readonly serverAccessLogsBucket?: s3.IBucket;
+
+  /**
+   * Key prefix for the server access logs. Only used with
+   * `serverAccessLogsBucket`.
+   *
+   * @default no prefix
+   */
+  readonly serverAccessLogsPrefix?: string;
 }
 
 export interface AppTheorySsrSiteBearerFunctionUrlOrigin {
@@ -585,19 +669,57 @@ export class AppTheorySsrSite extends Construct {
     const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
     const autoDeleteObjects = props.autoDeleteObjects ?? false;
     const wireRuntimeEnv = props.wireRuntimeEnv ?? true;
+    const namingContext = props.namingContext;
+    const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    const enableLogging = props.enableLogging ?? true;
+    const isrMetadataLogical = logical ? `${logical}-isr-metadata` : undefined;
+    refuseExplicitName(
+      namingContext,
+      "AppTheorySsrSite",
+      "isrMetadataTableName",
+      "dynamodb_table",
+      isrMetadataLogical,
+      props.isrMetadataTableName !== undefined,
+    );
+    refuseExplicitName(
+      namingContext,
+      "AppTheorySsrSite",
+      "cacheTableName",
+      "dynamodb_table",
+      isrMetadataLogical,
+      props.cacheTableName !== undefined,
+    );
+    if (namingContext?.standardLogging === true && props.logsBucket !== undefined) {
+      throw new Error(
+        "AppTheorySsrSite cannot honor props.logsBucket under the standard logging profile; CloudFront access logs go to the contract log group, so remove props.logsBucket or use the legacy logging profile",
+      );
+    }
+    const standardLogging = namingContext?.standardLogging === true && enableLogging;
+
+    // Security Hub S3.9 stays opt-in: the caller supplies the log target, and it
+    // takes no naming entry (resource-naming contract section 4).
+    const serverAccessLogs = props.serverAccessLogsBucket !== undefined
+      ? {
+        serverAccessLogsBucket: props.serverAccessLogsBucket,
+        ...(props.serverAccessLogsPrefix !== undefined
+          ? { serverAccessLogsPrefix: props.serverAccessLogsPrefix }
+          : {}),
+      }
+      : {};
 
     this.assetsBucket =
       props.assetsBucket ??
       new s3.Bucket(this, "AssetsBucket", {
+        ...(namingContext && logical ? bucketNamingProps(namingContext, `${logical}-assets`) : {}),
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         encryption: s3.BucketEncryption.S3_MANAGED,
         enforceSSL: true,
+        ...serverAccessLogs,
         removalPolicy,
         autoDeleteObjects,
       });
 
-    const enableLogging = props.enableLogging ?? true;
-    if (enableLogging) {
+    if (enableLogging && !standardLogging) {
       this.logsBucket =
         props.logsBucket ??
         new s3.Bucket(this, "CloudFrontLogsBucket", {
@@ -631,9 +753,11 @@ export class AppTheorySsrSite extends Construct {
       this.htmlStoreBucket =
         props.htmlStoreBucket ??
         new s3.Bucket(this, "HtmlStoreBucket", {
+          ...(namingContext && logical ? bucketNamingProps(namingContext, `${logical}-html-store`) : {}),
           blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
           encryption: s3.BucketEncryption.S3_MANAGED,
           enforceSSL: true,
+          ...serverAccessLogs,
           removalPolicy,
           autoDeleteObjects,
         });
@@ -659,7 +783,25 @@ export class AppTheorySsrSite extends Construct {
       );
     }
 
-    const isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
+    let isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
+
+    // Under a naming context the ISR/cache metadata table is named through the
+    // contract only when the construct wires a name the caller did not supply.
+    // `ssg-isr` needs a table, so it consumes the `{logical}-isr-metadata`
+    // entry. An external table passed through `isrMetadataTable` is the
+    // caller's resource: it consumes no entry, so an entry naming it is an
+    // orphan (r3, ADV-1312-2; M2 residual).
+    if (
+      namingContext &&
+      logical &&
+      props.isrMetadataTable === undefined &&
+      siteMode === AppTheorySsrSiteMode.SSG_ISR
+    ) {
+      const composed = namingContext.physicalName("dynamodb_table", `${logical}-isr-metadata`);
+      if (isrMetadataTableName === "" && !composed.generated && composed.name !== undefined) {
+        isrMetadataTableName = composed.name;
+      }
+    }
 
     if (props.assetsPath) {
       new s3deploy.BucketDeployment(this, "AssetsDeployment", {
@@ -1060,6 +1202,15 @@ export class AppTheorySsrSite extends Construct {
         ? cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS
         : cloudfront.AllowedMethods.ALLOW_ALL;
 
+    // Security Hub CloudFront.15 and CloudFront.1 under a derived naming context.
+    const minimumProtocolVersion = defaultMinimumProtocolVersion(
+      namingContext,
+      distributionCertificate !== undefined,
+      props.minimumProtocolVersion,
+    );
+    const defaultRootObject = props.defaultRootObject
+      ?? (secureDefaults(namingContext) && siteMode === AppTheorySsrSiteMode.SSG_ISR ? "index.html" : undefined);
+
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       ...(enableLogging && this.logsBucket
         ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -1067,6 +1218,8 @@ export class AppTheorySsrSite extends Construct {
       ...(distributionDomainNames && distributionCertificate
         ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
         : {}),
+      ...(minimumProtocolVersion !== undefined ? { minimumProtocolVersion } : {}),
+      ...(defaultRootObject !== undefined ? { defaultRootObject } : {}),
       defaultBehavior: {
         origin: defaultOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -1079,6 +1232,17 @@ export class AppTheorySsrSite extends Construct {
       additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
+
+    if (standardLogging && namingContext && logical) {
+      enableCloudFrontStandardLogging({
+        scope: this,
+        id: "CdnLogging",
+        context: namingContext,
+        distribution: this.distribution,
+        logical: `logs/access/cdn/${logical}`,
+        format: props.cloudFrontLogFormat,
+      });
+    }
 
     if (ssrUrlAuthType === lambda.FunctionUrlAuthType.AWS_IAM) {
       props.ssrFunction.addPermission("AllowCloudFrontInvokeFunctionViaUrl", {

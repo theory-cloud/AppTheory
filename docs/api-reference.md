@@ -637,7 +637,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1310 exported top-level symbols</summary>
+<summary>1343 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -829,7 +829,40 @@ WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, 
 WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithRouteGuard, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
 WithSessionCapacityLimit, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit,
 WithStreamEventsPerSessionLimit, WithStreamIDGenerator, WithStreamSessionByteLimit, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier,
-WithToolContextHook, WithVerboseHandlerErrors, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
+WithToolContextHook, WithVerboseHandlerErrors, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern,
+CompilePolicy,
+ComposedName,
+Contract,
+FutureRules,
+KeeperActionsGroup,
+KeeperActionsStream,
+KeeperAllowedNoEvents,
+KeeperDecision,
+KeeperEvents,
+KeeperNotShared,
+LogGroupName,
+LogPrefix,
+LogSourcePrefix,
+Manifest,
+ManifestBuild,
+NamingProfileDerived,
+NamingProfileLegacy,
+PhysicalName,
+Preview,
+PreviewBuild,
+ResourceRule,
+ResourceRules,
+RolePolicyMax,
+Rules,
+RuleVersion,
+S3AccountRegionalSuffix,
+SelectorARNs,
+SelectorMatches,
+ShortenName,
+Statement,
+ValidateContext,
+ValidateSelector,
+Visible
 ```
 </details>
 <!-- apptheory-api-docs:go:end -->

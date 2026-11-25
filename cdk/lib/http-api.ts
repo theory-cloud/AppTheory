@@ -8,6 +8,11 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
+
 import { AppTheoryApiDomain } from "./api-domain";
 import { buildCorsPreflight } from "./cors";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
@@ -107,7 +112,7 @@ export interface AppTheoryHttpApiDomainOptions {
 
   /**
    * TLS security policy.
-   * @default API Gateway default
+   * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
    */
   readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
@@ -204,6 +209,27 @@ export interface AppTheoryHttpApiRouteThrottling {
 export interface AppTheoryHttpApiProps {
   readonly handler: lambda.IFunction;
   readonly apiName?: string;
+
+  /**
+   * Optional naming and logging context.
+   *
+   * With the standard logging profile API access logging is on by default to a
+   * log group named `logs/access/api/{logicalName}` carrying the contract's
+   * JSON field set. Pass `stage.accessLogging: false` to opt out.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The API's logical name. Defaults to the kebab-cased construct id when a
+   * naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
   /**
    * Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
    *
@@ -312,18 +338,23 @@ export class AppTheoryHttpApi extends Construct {
       );
     }
 
-    const stageOpts = props.stage ?? {};
+    const configuredStageOpts = props.stage ?? {};
+    const stageOpts = effectiveStageOptions(configuredStageOpts, props.namingContext);
     const stageName = stageOpts.stageName ?? "$default";
     if (stageOpts.accessLogFormat !== undefined && !stageOpts.accessLogging) {
       throw new Error("AppTheoryHttpApi: stage.accessLogFormat requires stage.accessLogging");
     }
+    const namingContext = props.namingContext;
+    const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    refuseExplicitName(namingContext, "AppTheoryHttpApi", "apiName", "api_http", logical, props.apiName !== undefined);
+    const derivedApiName = namingContext && logical ? namingContext.physicalName("api_http", logical) : undefined;
     const needsExplicitStage = stageName !== "$default"
       || stageOpts.accessLogging
       || stageOpts.throttlingRateLimit !== undefined
       || stageOpts.throttlingBurstLimit !== undefined;
 
     this.api = new apigwv2.HttpApi(this, "Api", {
-      apiName: props.apiName,
+      apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
       corsPreflight: buildCorsPreflight(props.cors),
       createDefaultStage: !needsExplicitStage,
       disableExecuteApiEndpoint: props.domain?.mutualTlsAuthentication !== undefined ? true : undefined,
@@ -346,7 +377,7 @@ export class AppTheoryHttpApi extends Construct {
       throw new Error("AppTheoryHttpApi: failed to create API stage");
     }
     this.stage = stage;
-    this.configureAccessLogging(stageOpts, stage);
+    this.configureAccessLogging(stageOpts, stage, namingContext, logical);
 
     // Every route key this construct emits, in API Gateway `METHOD path` form.
     // `routeSettings` is validated against this set so a typo is a named
@@ -380,7 +411,7 @@ export class AppTheoryHttpApi extends Construct {
     }
 
     if (props.domain) {
-      this.configureDomain(props.domain);
+      this.configureDomain(props.domain, props.namingContext);
     }
   }
 
@@ -428,26 +459,47 @@ export class AppTheoryHttpApi extends Construct {
     }
   }
 
-  private configureAccessLogging(stageOpts: AppTheoryHttpApiStageOptions, stage: apigwv2.IStage): void {
+  private configureAccessLogging(
+    stageOpts: AppTheoryHttpApiStageOptions,
+    stage: apigwv2.IStage,
+    namingContext?: AppTheoryNamingContext,
+    logical?: string,
+  ): void {
     if (!stageOpts.accessLogging) {
       return;
     }
 
-    const logGroup = stageOpts.accessLogging === true
-      ? new logs.LogGroup(this, "AccessLogs", {
-          retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-        })
-      : stageOpts.accessLogging;
+    const standard = namingContext?.standardLogging === true;
+    if (standard && !logical) {
+      throw new Error("AppTheoryHttpApi standard logging requires a logical name");
+    }
+    let logGroup: logs.ILogGroup;
+    if (stageOpts.accessLogging === true) {
+      // The construct-created access-log group is a logging resource: under the
+      // standard profile it takes the contract log-source name, and under the
+      // legacy profile it keeps today's CloudFormation-generated name and
+      // consumes no naming entry (r3, ADV-1312-1).
+      logGroup = standard && logical
+        ? new logs.LogGroup(this, "AccessLogs", {
+            logGroupName: namingContext!.logGroupName(`logs/access/api/${logical}`),
+            retention: retentionFor(namingContext!.retentionDays),
+          })
+        : new logs.LogGroup(this, "AccessLogs", {
+            retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+          });
+    } else {
+      logGroup = stageOpts.accessLogging;
+    }
     (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
 
     const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
     cfnStage.accessLogSettings = {
       destinationArn: logGroup.logGroupArn,
-      format: stageOpts.accessLogFormat ?? defaultAccessLogFormat(),
+      format: stageOpts.accessLogFormat ?? (standard ? httpApiAccessLogFormat() : defaultAccessLogFormat()),
     };
   }
 
-  private configureDomain(options: AppTheoryHttpApiDomainOptions): void {
+  private configureDomain(options: AppTheoryHttpApiDomainOptions, namingContext?: AppTheoryNamingContext): void {
     const certificate = options.certificate ?? (options.certificateArn
       ? acm.Certificate.fromCertificateArn(this, "ImportedCertificate", options.certificateArn)
       : undefined);
@@ -466,6 +518,7 @@ export class AppTheoryHttpApi extends Construct {
       recordTtl: options.recordTtl,
       mutualTlsAuthentication: options.mutualTlsAuthentication,
       securityPolicy: options.securityPolicy,
+      namingContext,
     });
     (this as { domain?: AppTheoryApiDomain }).domain = domain;
   }
@@ -565,4 +618,18 @@ function defaultAccessLogFormat(): string {
     responseLength: "$context.responseLength",
     integrationLatency: "$context.integrationLatency",
   });
+}
+
+/**
+ * Apply the standard logging profile's default-on access logging. An explicit
+ * `accessLogging` value, including `false`, always wins.
+ */
+function effectiveStageOptions(
+  stage: AppTheoryHttpApiStageOptions,
+  namingContext?: AppTheoryNamingContext,
+): AppTheoryHttpApiStageOptions {
+  if (namingContext?.standardLogging === true && stage.accessLogging === undefined) {
+    return { ...stage, accessLogging: true };
+  }
+  return stage;
 }

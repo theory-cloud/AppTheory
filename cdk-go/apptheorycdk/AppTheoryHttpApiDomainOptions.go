@@ -39,7 +39,7 @@ type AppTheoryHttpApiDomainOptions struct {
 	//
 	RecordTtl awscdk.Duration `field:"optional" json:"recordTtl" yaml:"recordTtl"`
 	// TLS security policy.
-	// Default: API Gateway default.
+	// Default: TLS 1.2 under a derived naming context, otherwise the API Gateway default
 	//
 	SecurityPolicy awsapigatewayv2.SecurityPolicy `field:"optional" json:"securityPolicy" yaml:"securityPolicy"`
 	// Stage to map.

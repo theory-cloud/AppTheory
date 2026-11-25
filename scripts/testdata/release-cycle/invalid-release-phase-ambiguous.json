@@ -1,0 +1,21 @@
+{
+  "case": "invalid-release-phase-ambiguous",
+  "coverage": ["release_phase_authority"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": [
+      "phase:ambiguity-not-closed",
+      "phase:ambiguity-without-recovery"
+    ]
+  },
+  "events": [
+    {
+      "kind": "release_phase",
+      "channel": "main",
+      "authority": "pull-request-merge-provenance",
+      "authorityAmbiguous": true,
+      "publisherAction": "skip",
+      "failsClosed": false
+    }
+  ]
+}

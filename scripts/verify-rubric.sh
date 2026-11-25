@@ -38,18 +38,12 @@ bash ./scripts/test-evidence-execution-capture.sh
 bash ./scripts/test-verify-cdk-packaging.sh
 python3 ./scripts/evidence/check-policy.py
 bash ./scripts/verify-ci-evidence-wiring.sh
-# The release-lane guard proves every generated release pull request has a
-# head-bound dispatch path for each required premain/main context, that the
-# producers attach those checks themselves, that the scheduled recovery sweep is
-# wired, and that no workflow reintroduces a release-please token fallback. Its
-# self-test mutates copies of the real workflows and drives the head-binding
-# resolver with hostile answers, so a guard that stops failing closed fails here.
+# The release-lane guard proves the generated release pull request's required
+# contexts come from the code-owner review of that pull request: the trigger,
+# the payload reads, the producers' ready hand-off, and that no workflow runs on
+# a clock or reintroduces a release-please token fallback. Its self-test mutates
+# copies of the real workflows, so a guard that stops failing closed fails here.
 bash ./scripts/verify-release-pr-check-lane.sh --self-test
-# The release check lane is the only thing that attaches the required premain/main
-# contexts to a generated release pull request, so its decisions (reuse green,
-# refuse red, dispatch with the pull request number and head SHA, never treat a
-# skip as proof) are pinned against a stub gh here.
-bash ./scripts/test-sync-release-pr-checks.sh
 # Release artifact completeness (CDK constructs/synth/packs, runtime floors,
 # template pairing) runs once here, not inside both deterministic build passes.
 # The GovTheory verifier's deterministic-build passes own the two CDK package

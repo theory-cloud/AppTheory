@@ -7,6 +7,7 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryHttpApiCorsOptions } from "./http-api";
 /** Route-emission model for AppTheoryMcpServer. */
 export declare enum AppTheoryMcpRouteModel {
@@ -268,6 +269,16 @@ export interface AppTheoryMcpServerDomainOptions {
      * @default undefined
      */
     readonly mutualTlsAuthentication?: apigwv2.MTLSConfig;
+    /**
+     * TLS security policy for the owned custom domain.
+     *
+     * Under a derived naming context the default is TLS 1.2, the strongest policy
+     * API Gateway v2 offers. Security Hub APIGateway.11 always fails a custom
+     * domain attached to an HTTP API, so no policy satisfies it there.
+     *
+     * @default TLS 1.2 under a derived naming context, otherwise the API Gateway default
+     */
+    readonly securityPolicy?: apigwv2.SecurityPolicy;
 }
 /** Stage configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerStageOptions {
@@ -343,6 +354,13 @@ export interface AppTheoryMcpSessionStateOptions {
      * @default RemovalPolicy.RETAIN
      */
     readonly removalPolicy?: RemovalPolicy;
+    /**
+     * Whether deletion protection should be enabled for the session table.
+     * Valid only when session state is enabled.
+     * @default undefined (with no naming context: the AWS default, no deletion
+     * protection; under a derived naming context: on for a RETAIN table, off otherwise)
+     */
+    readonly deletionProtection?: boolean;
 }
 /** One derived MCP OAuth facade route family. */
 export interface AppTheoryMcpServerFacadeRoute {
@@ -570,6 +588,24 @@ export interface AppTheoryMcpServerProps {
     readonly jwksUri?: string;
     /** @deprecated Use `ownedApi.apiName`. */
     readonly apiName?: string;
+    /**
+     * Optional naming and logging context for the owned HTTP API.
+     *
+     * With the standard logging profile the access log group is named
+     * `logs/access/api/{logicalName}` and carries the contract's JSON field set.
+     * Access logging already defaults on; pass `ownedApi.stage.accessLogging:
+     * false` to opt out. Attach mode ignores this prop.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The owned API's logical name. Defaults to the kebab-cased construct id when
+     * a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
     /**
      * @deprecated Use `sessionState.enabled`. Session state now defaults on.
      */

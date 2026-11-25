@@ -55,12 +55,6 @@ const (
 	// branchesKey is the trigger key that narrows a pull-request-shaped trigger.
 	branchesKey = "branches"
 
-	// sweepWorkflowPath is the only workflow allowed to run on a clock: it
-	// re-dispatches the head-bound verifying workflow for a generated release
-	// pull request, so a pull request left checkless by an earlier event needs no
-	// human action. It never executes a gate itself.
-	sweepWorkflowPath = ".github/workflows/release-pr-check-sweep.yml" //nolint:gosec // a workflow path, not a credential
-
 	// defaultWorkflowsDir is the directory scanned for every workflow file, so a
 	// new workflow with a push/pull_request trigger cannot gate silently: it
 	// must be classified, or be one of the justified non-gating publishers.
@@ -95,10 +89,6 @@ var headDomain = []string{
 type publisherExemption struct {
 	path   string
 	reason string
-	// allowSchedule permits the one clock-driven exception: the release-lane
-	// recovery sweep, which dispatches the head-bound verifying workflow so a
-	// generated release pull request left checkless needs no human action.
-	allowSchedule bool
 }
 
 var publisherExemptions = []publisherExemption{
@@ -126,11 +116,6 @@ var publisherExemptions = []publisherExemption{
 		path:   ".github/workflows/release-pr.yml",
 		reason: "generated stable PR producer; cannot gate the hand-authored PR lane it serves",
 	},
-	{
-		path:          ".github/workflows/release-pr-check-sweep.yml",
-		reason:        "release-lane recovery sweep; re-dispatches the head-bound verifying workflow for a generated release PR and never publishes or gates",
-		allowSchedule: true,
-	},
 }
 
 // publisherTriggers are the triggers an exempt non-gating publisher may
@@ -154,7 +139,6 @@ type triggerContext struct {
 	hasPullRequestReview bool
 	reviewBranches       []string
 	hasDispatch          bool
-	hasSchedule          bool
 }
 
 type workflowFile struct {
@@ -394,13 +378,14 @@ func checkPublisherWorkflow(fullPath, rel string, exemption *publisherExemption)
 
 // checkPublisherTrigger validates one trigger of an exempt non-gating
 // publisher: a pull-request trigger makes it a gate, and an unmodeled trigger
-// could hide one. The recovery sweep is the single exemption allowed a schedule.
+// could hide one. No exemption may run on a clock: a schedule re-executes work
+// on a cadence no pull request asked for.
 func checkPublisherTrigger(trigger string, exemption *publisherExemption, rel string) error {
 	if trigger == "pull_request" || trigger == "pull_request_target" {
 		return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
 			rel, exemption.reason, trigger)
 	}
-	if publisherTriggers[trigger] || (exemption.allowSchedule && trigger == "schedule") {
+	if publisherTriggers[trigger] {
 		return nil
 	}
 	return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, trigger)
@@ -434,11 +419,6 @@ func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
 	}
 	if err := workflow.parseTriggers(onNode); err != nil {
 		return nil, fmt.Errorf("%s: %w", rel, err)
-	}
-	if workflow.ctx.hasSchedule {
-		return nil, fmt.Errorf(
-			"%s declares an on: schedule trigger; only the release-lane recovery sweep (%s) may run on a clock",
-			rel, sweepWorkflowPath)
 	}
 	jobsNode, ok := mapLookup(rootNode, "jobs")
 	if !ok {
@@ -474,7 +454,7 @@ func (wf *workflowFile) parseTriggers(node *yaml.Node) error {
 			return err
 		}
 	}
-	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch && !wf.hasWorkflowCall && !wf.ctx.hasSchedule {
+	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch && !wf.hasWorkflowCall {
 		return fmt.Errorf("on: declares no modeled trigger")
 	}
 	return nil
@@ -512,9 +492,6 @@ func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
 	case "workflow_dispatch":
 		wf.ctx.hasDispatch = true
 		return parseDispatchTrigger(value)
-	case "schedule":
-		wf.ctx.hasSchedule = true
-		return parseScheduleTrigger(value)
 	case "workflow_call":
 		wf.hasWorkflowCall = true
 		return parseWorkflowCallTrigger(value)
@@ -674,24 +651,8 @@ func parseWorkflowCallTrigger(node *yaml.Node) error {
 	return nil
 }
 
-// parseScheduleTrigger models the one clock-driven trigger the policy allows,
-// and only for the release-lane recovery sweep (see sweepWorkflowPath): it must
-// enumerate cron entries, so a schedule cannot arrive as an unread shape.
-func parseScheduleTrigger(node *yaml.Node) error {
-	if node.Kind != yaml.SequenceNode || len(node.Content) == 0 {
-		return fmt.Errorf("schedule: trigger must be a non-empty list of cron entries")
-	}
-	for _, entry := range node.Content {
-		if entry.Kind != yaml.MappingNode {
-			return fmt.Errorf("schedule: each entry must be a mapping with a cron key")
-		}
-		cron, ok := mapLookup(entry, "cron")
-		if !ok || cron.Kind != yaml.ScalarNode || strings.TrimSpace(cron.Value) == "" {
-			return fmt.Errorf("schedule: each entry must declare a non-empty cron string")
-		}
-	}
-	return nil
-}
+// parseScheduleTrigger is gone with the recovery sweep: no workflow may run on a
+// clock, so `schedule` is not a modeled trigger and fails closed in parseTrigger.
 
 func parseWorkflowJob(idNode, body *yaml.Node) (workflowJob, error) {
 	if idNode.Kind != yaml.ScalarNode {

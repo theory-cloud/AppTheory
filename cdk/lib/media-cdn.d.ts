@@ -4,6 +4,8 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 /**
  * Domain configuration for the Media CDN distribution.
  */
@@ -90,9 +92,42 @@ export interface AppTheoryMediaCdnProps {
      */
     readonly privateMedia?: PrivateMediaConfig;
     /**
-     * Default root object for the distribution.
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * With a derived naming context the default is `index.html`: the default
+     * behavior already sends `/` to the S3 bucket through OAC, so the root
+     * object rewrite (`/` -> `/index.html`) changes which object that behavior
+     * returns, not which origin serves it (Security Hub CloudFront.1).
+     *
+     * @default "index.html" under a derived naming context, otherwise undefined
      */
     readonly defaultRootObject?: string;
+    /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile the media bucket takes its name from the
+     * contract and CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out of the delivery.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The distribution's logical name. Defaults to the kebab-cased construct id
+     * when a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.JSON
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
     /**
      * Enable CloudFront access logging.
      * @default true
@@ -127,6 +162,35 @@ export interface AppTheoryMediaCdnProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+    /**
+     * Bucket that receives S3 server access logs for the media bucket this
+     * construct creates, which is what Security Hub S3.9 evaluates.
+     *
+     * Off by default because the log target and its storage cost money. The
+     * target bucket is yours: it takes no naming entry (resource-naming
+     * contract section 4).
+     *
+     * @default no server access logging
+     */
+    readonly serverAccessLogsBucket?: s3.IBucket;
+    /**
+     * Key prefix for the server access logs. Only used with
+     * `serverAccessLogsBucket`.
+     *
+     * @default no prefix
+     */
+    readonly serverAccessLogsPrefix?: string;
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
     /**
      * Cache policy for the default behavior.
      * @default CachePolicy.CACHING_OPTIMIZED

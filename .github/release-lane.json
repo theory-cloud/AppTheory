@@ -7,8 +7,7 @@
         "workflow": "ci.yml",
         "job": "release-train-promotion",
         "rulesetRequired": true,
-        "checkoutProof": false,
-        "note": "verifier code checks out refs/heads/staging by design; the dispatched run is bound to the pull request head by the resolver, not by the checkout"
+        "note": "verifier code checks out refs/heads/staging by design; the reviewed pull request and its head come from github.event.pull_request.* on the code-owner review run"
       },
       {
         "context": "Release/security gates",
@@ -26,7 +25,8 @@
         "context": "Release delta validation",
         "workflow": "ci.yml",
         "job": "release-delta",
-        "rulesetRequired": false
+        "rulesetRequired": false,
+        "note": "advisory: the generated-content smoke reports from the code-owner review of the generated release pull request, the one eligible event; a staging pull request never matches it"
       }
     ],
     "main": [
@@ -35,8 +35,7 @@
         "workflow": "ci.yml",
         "job": "release-train-promotion",
         "rulesetRequired": true,
-        "checkoutProof": false,
-        "note": "verifier code checks out refs/heads/staging by design; the dispatched run is bound to the pull request head by the resolver, not by the checkout"
+        "note": "verifier code checks out refs/heads/staging by design; the reviewed pull request and its head come from github.event.pull_request.* on the code-owner review run"
       },
       {
         "context": "Release/security gates",
@@ -54,7 +53,8 @@
         "context": "Release delta validation",
         "workflow": "ci.yml",
         "job": "release-delta",
-        "rulesetRequired": false
+        "rulesetRequired": false,
+        "note": "advisory: the generated-content smoke reports from the code-owner review of the generated release pull request, the one eligible event; a staging pull request never matches it"
       }
     ]
   },
@@ -69,9 +69,5 @@
       "base": "main",
       "head": "release-please--branches--main"
     }
-  ],
-  "recoverySweep": {
-    "workflow": "release-pr-check-sweep.yml",
-    "schedule": "*/20 * * * *"
-  }
+  ]
 }

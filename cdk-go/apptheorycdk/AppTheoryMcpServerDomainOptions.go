@@ -32,4 +32,12 @@ type AppTheoryMcpServerDomainOptions struct {
 	// Default: undefined.
 	//
 	MutualTlsAuthentication *awsapigatewayv2.MTLSConfig `field:"optional" json:"mutualTlsAuthentication" yaml:"mutualTlsAuthentication"`
+	// TLS security policy for the owned custom domain.
+	//
+	// Under a derived naming context the default is TLS 1.2, the strongest policy
+	// API Gateway v2 offers. Security Hub APIGateway.11 always fails a custom
+	// domain attached to an HTTP API, so no policy satisfies it there.
+	// Default: TLS 1.2 under a derived naming context, otherwise the API Gateway default
+	//
+	SecurityPolicy awsapigatewayv2.SecurityPolicy `field:"optional" json:"securityPolicy" yaml:"securityPolicy"`
 }

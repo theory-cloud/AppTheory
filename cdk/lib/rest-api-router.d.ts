@@ -6,6 +6,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 /**
  * CORS configuration for the REST API router.
@@ -121,9 +122,32 @@ export interface AppTheoryRestApiRouterDomainOptions {
     readonly endpointType?: apigw.EndpointType;
     /**
      * Security policy for the domain.
-     * @default TLS_1_2
+     *
+     * With a derived naming context the default is the policy Security Hub
+     * APIGateway.11 accepts for the endpoint type (regional:
+     * `TLS13_1_2_PFS_PQ_2025_09`, edge: `TLS12_PFS_2025_EDGE`). Without a
+     * naming context the default is `TLS_1_2`.
+     *
+     * The 2025 policies are also a cipher-policy change for clients, the same
+     * caveat as the CloudFront.15 `TLSv1.2_2025` policy: a client that only
+     * negotiates an older TLS 1.2 cipher suite is excluded. An enhanced policy
+     * requires an endpoint access mode alongside it: AppTheory derives `STRICT`
+     * (the recommended mode), and `BASIC` remains available through
+     * `domain.endpointAccessMode`.
+     *
+     * @default TLS_1_2, or the APIGateway.11 policy under a derived naming context
      */
     readonly securityPolicy?: apigw.SecurityPolicy;
+    /**
+     * Endpoint access mode for an enhanced (`SecurityPolicy_*`) security policy.
+     *
+     * API Gateway requires this for an enhanced policy and rejects it for a
+     * legacy one. When unset, an enhanced effective policy takes `STRICT` and a
+     * legacy policy takes no mode.
+     *
+     * @default STRICT for an enhanced effective policy, otherwise undefined
+     */
+    readonly endpointAccessMode?: apigw.EndpointAccessMode;
 }
 /**
  * Options for adding a Lambda integration to a route.
@@ -165,6 +189,25 @@ export interface AppTheoryRestApiRouterProps {
      * Name of the REST API.
      */
     readonly apiName?: string;
+    /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile access logging is on by default to a
+     * log group named `logs/access/api/{logicalName}` carrying the contract's
+     * JSON field set. Pass `stage.accessLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The API's logical name. Defaults to the kebab-cased construct id when a
+     * naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
     /**
      * Description of the REST API.
      */
@@ -324,6 +367,8 @@ export declare class AppTheoryRestApiRouter extends Construct {
     private readonly scopePermissionToMethod;
     private readonly authorizer?;
     private readonly authorizationType?;
+    private readonly namingContext?;
+    private readonly logicalName?;
     constructor(scope: Construct, id: string, props?: AppTheoryRestApiRouterProps);
     /**
      * Add a Lambda integration for the specified path and HTTP methods.
@@ -354,6 +399,7 @@ export declare class AppTheoryRestApiRouter extends Construct {
     /**
      * Build deploy options for the stage.
      */
+    private effectiveStageOptions;
     private buildDeployOptions;
     /**
      * Set up custom domain with optional Route53 record.

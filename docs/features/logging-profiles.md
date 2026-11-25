@@ -16,6 +16,10 @@ emitters for those concerns; grow the profile contract and fixtures instead.
 Profiles sit on top of the shipped [P2 observability hook surface](./observability.md). They encode and validate log
 records; they do not replace the P2 hook path, run a full OpenTelemetry SDK, create dashboards, or deliver alerts.
 
+This page is about record encoding. The infrastructure profile that decides which log groups exist and which sources
+cloud-keeper may read is a different switch on the naming context; see
+[Standard logging and Keeper visibility](./logging-and-visibility.md).
+
 ## Built-in profiles
 
 The built-in catalog is fixture-backed and sorted canonically:

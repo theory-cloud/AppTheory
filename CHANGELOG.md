@@ -1,5 +1,130 @@
 # Changelog
 
+## [7.5.0-rc.3](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc.2...v7.5.0-rc.3) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** adopt TableTheory 6.5.3 ([eac04e9](https://github.com/theory-cloud/AppTheory/commit/eac04e95df87e485118fb19555d7282fc3915877))
+* **deps:** adopt TableTheory 6.5.3 ([dd246f8](https://github.com/theory-cloud/AppTheory/commit/dd246f8cf232d397e6b15d1f44315e617574ae50))
+* **deps:** adopt the consolidated Dependabot dependency bumps ([#1310](https://github.com/theory-cloud/AppTheory/issues/1310), [#1333](https://github.com/theory-cloud/AppTheory/issues/1333), [#1335](https://github.com/theory-cloud/AppTheory/issues/1335), [#1336](https://github.com/theory-cloud/AppTheory/issues/1336)) ([0d0ab5f](https://github.com/theory-cloud/AppTheory/commit/0d0ab5fcd30a9fe57bac5930eafbf256bee987a3))
+* **deps:** consolidate open Dependabot bumps ([#1310](https://github.com/theory-cloud/AppTheory/issues/1310), [#1333](https://github.com/theory-cloud/AppTheory/issues/1333), [#1335](https://github.com/theory-cloud/AppTheory/issues/1335), [#1336](https://github.com/theory-cloud/AppTheory/issues/1336)) ([b7e2960](https://github.com/theory-cloud/AppTheory/commit/b7e2960a94ae68243f624fcede98cee6896de7a2))
+* **release:** backmerge published 7.5.0-rc.2 into staging ([b58cee1](https://github.com/theory-cloud/AppTheory/commit/b58cee1bf905f116bff918132b0e5e2bcc3adce5))
+* **release:** backmerge published 7.5.0-rc.2 into staging ([146b65b](https://github.com/theory-cloud/AppTheory/commit/146b65b2224632c5f3b0bb63be46e9e6088f7a6c))
+* **release:** promote Dependabot consolidation and TableTheory 6.5.3 for the next RC ([abab6ee](https://github.com/theory-cloud/AppTheory/commit/abab6eec6e280f15be3516b3c6ff3e10962ba23a))
+
+## [7.5.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc.1...v7.5.0-rc.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cdk:** regenerate the jsii assembly and tarball mirror at 7.5.0-rc.1 ([50e5da1](https://github.com/theory-cloud/AppTheory/commit/50e5da12f45ed72ce7621a6c49cbdaeec8915493))
+* **deps:** move TableTheory to v6.5.2 in all three runtimes ([80e1fb9](https://github.com/theory-cloud/AppTheory/commit/80e1fb915b21c8de5bce01578d718f95d11177f6))
+* **deps:** move TableTheory to v6.5.2 in all three runtimes ([092f295](https://github.com/theory-cloud/AppTheory/commit/092f295cb840ae822341b8bf262708e33d5a76be))
+* **deps:** move the exact aws-cdk-lib pin to 2.278.0 and retire the bundled minimatch exception ([f79e1e1](https://github.com/theory-cloud/AppTheory/commit/f79e1e1a3ff071a320e585c9308c701f08afbce4))
+* **deps:** move the exact aws-cdk-lib pin to 2.278.0 and retire the bundled minimatch exception ([9b66a59](https://github.com/theory-cloud/AppTheory/commit/9b66a590f82d75c9e694df5653f0fc4952ec7d5c))
+* **release:** back-merge premain 7.5.0-rc.1 into staging ([cb33b15](https://github.com/theory-cloud/AppTheory/commit/cb33b15bd4b1db12e7ccee33529608df5605c750))
+* **release:** back-merge premain 7.5.0-rc.1 into staging ([6ae69de](https://github.com/theory-cloud/AppTheory/commit/6ae69de2f3b0631a471ad0729fef7b5a92d4333a))
+* **release:** make the phase self-test independent of the runner event ([6836f0e](https://github.com/theory-cloud/AppTheory/commit/6836f0efa82a27ba9ed266d5f4268ece6a15a7a0))
+* **release:** promote CDK 2.278.0 and TableTheory 6.5.2 to premain ([3987354](https://github.com/theory-cloud/AppTheory/commit/3987354c7cf91de8f6c6b4f8493386684d293192))
+* **release:** promote the combined AppTheory changes for the next RC ([ef51531](https://github.com/theory-cloud/AppTheory/commit/ef51531dac4f300b01efd2f5ba347abbb2f2bf1d))
+* **release:** publish only generated release-PR merges and land the four-worker harness delivery ([da7a6f4](https://github.com/theory-cloud/AppTheory/commit/da7a6f496cbea62a54f7b9e841545c2ce72f4fe4))
+* **release:** publish only the recorded generated release-PR merge ([e94250d](https://github.com/theory-cloud/AppTheory/commit/e94250d79babf0c286476a04f03a0e4b3d87951b))
+* **release:** recollect rubric evidence after the release and harness repair ([01cba69](https://github.com/theory-cloud/AppTheory/commit/01cba69b61225765f737f6772272006db82619df))
+* **release:** reconcile premain ancestry for promotion 1330 ([4eefb36](https://github.com/theory-cloud/AppTheory/commit/4eefb36928ba38f421a4df82f8696a9903f974e8))
+* **release:** reconcile premain ancestry for promotion 1330 ([bec7232](https://github.com/theory-cloud/AppTheory/commit/bec72322a655313ac0991114258d0d008eec2d02))
+* **release:** refresh rubric evidence after the phase self-test fix ([0d5c5de](https://github.com/theory-cloud/AppTheory/commit/0d5c5de45935334ad397c572cae05c7f0112507a))
+* **test:** integrate configurable four-worker validation ([c8d241f](https://github.com/theory-cloud/AppTheory/commit/c8d241fd884f297cabcca6ef3b5e3fb5c8b1ae26))
+* **test:** preflight every worker lane port and preserve pinned fixtures ([ef3c251](https://github.com/theory-cloud/AppTheory/commit/ef3c2512e4c26c18a102d622d500aab67cb54a53))
+* **test:** recollect examples-local evidence on the repaired harness tree ([ee1205c](https://github.com/theory-cloud/AppTheory/commit/ee1205c548b105f7b45466338766da17489f9a19))
+* **test:** retain verified four-worker validation receipts ([865024e](https://github.com/theory-cloud/AppTheory/commit/865024e81fa5fb15eb4d65d4445fe39c604e25a0))
+* **test:** run examples validation with four workers by default ([0e2780e](https://github.com/theory-cloud/AppTheory/commit/0e2780e732a638ea89851bb148c09d443c23aae8))
+* **test:** run independent local examples rows across optional workers ([1d54556](https://github.com/theory-cloud/AppTheory/commit/1d545567587d0653cccd191772ef2b06fce30a2e))
+
+## [7.5.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc...v7.5.0-rc.1) (2026-11-20)
+
+
+### Features
+
+* **cdk:** close the S3 TLS gap and expose opt-in server access logging ([7720e36](https://github.com/theory-cloud/AppTheory/commit/7720e3650ca126bf2dc194c29cf7f34ff3980dec))
+* **cdk:** expose explicit deletion protection on the AppTheoryApp tables ([702b9b0](https://github.com/theory-cloud/AppTheory/commit/702b9b0d42a39e97eae543bfd656ec7e4feb3b84))
+* **cdk:** give a custom event bus an owning-account resource policy ([9ed725c](https://github.com/theory-cloud/AppTheory/commit/9ed725c70ef312874077d8952e01fd520c43cf46))
+* **cdk:** give API custom domains the APIGateway.11 security policy ([57a785c](https://github.com/theory-cloud/AppTheory/commit/57a785c843b6c80e24a5083b95f5e4e881c63870))
+* **cdk:** give AppTheoryRemoteMcpServer a naming context ([2ae70bf](https://github.com/theory-cloud/AppTheory/commit/2ae70bfd3f746317b403b9a7595c74ba22f1dd1f))
+* **cdk:** give every AppTheory distribution the CloudFront.15 viewer policy ([27f3506](https://github.com/theory-cloud/AppTheory/commit/27f3506477e24acf5ed607a8ce6c743d71c35edd))
+* **cdk:** give the media CDN a CloudFront.1 default root object ([9ea4b0d](https://github.com/theory-cloud/AppTheory/commit/9ea4b0d1eb64843c399b481fc3d4e2acd78449a4))
+* **cdk:** let the MCP owned domain and the ingestion endpoint override TLS ([b23cde9](https://github.com/theory-cloud/AppTheory/commit/b23cde97db6edfc767f3e12282acf13eca7b09ea))
+* **cdk:** protect AppTheory tables with the Security Hub DynamoDB defaults ([4dcff2c](https://github.com/theory-cloud/AppTheory/commit/4dcff2c9022981aa9eb3c9e1d420f4e4a01ef792))
+* **cdk:** Security Hub-aligned secure defaults under a naming context ([3fd50df](https://github.com/theory-cloud/AppTheory/commit/3fd50df6946dafd3a265c99a6be74afea47ce67e))
+
+
+### Bug Fixes
+
+* **cdk:** default CloudFront CloudWatch Logs delivery to the contract JSON format ([c37ce94](https://github.com/theory-cloud/AppTheory/commit/c37ce946115f00bcabd5c8ef19dc1874bfcea081))
+* **cdk:** extend the TLS 2025 client-compatibility note to REST domains ([a5d2426](https://github.com/theory-cloud/AppTheory/commit/a5d24269b067da0dda14eb8bdfa3e13f57aff110))
+* **cdk:** give the MicroVM controller a naming context and standard logging ([4644be9](https://github.com/theory-cloud/AppTheory/commit/4644be9f47d1bc9a8e2c6cac7bb2562b81fb2177))
+* **cdk:** keep an external ISR metadata table out of the naming entries ([970eb1e](https://github.com/theory-cloud/AppTheory/commit/970eb1ef7e5717fa8f674a63e747d9968562c628))
+* **cdk:** name the derived profile in the secure-default doc comments ([124e77a](https://github.com/theory-cloud/AppTheory/commit/124e77a4a2396c6c2fa525967506962146e509c9))
+* **cdk:** order the CloudFront delivery after its delivery source ([b2b5d66](https://github.com/theory-cloud/AppTheory/commit/b2b5d66446294022fa8aeb5b67ab14db07a3577e))
+* **cdk:** protect the attached-API session table under a derived context ([a69ed50](https://github.com/theory-cloud/AppTheory/commit/a69ed50dae9596a7f7d2d1617801be27376e995f))
+* **cdk:** refresh the jsii tarball mirror for the session-table fix ([f059e30](https://github.com/theory-cloud/AppTheory/commit/f059e30c060031d1427276c6f5698ce72837acf8))
+* **cdk:** refuse a second owning-account bus policy ([1ed0e24](https://github.com/theory-cloud/AppTheory/commit/1ed0e24f536ad283ad60589e79a24eae25858bc1))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([801415e](https://github.com/theory-cloud/AppTheory/commit/801415e595ae07dd18b642d3ca55c50960d92657))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([1f56174](https://github.com/theory-cloud/AppTheory/commit/1f56174b6bc3769e47ebaf7820c1d250a4680e78))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([5589c0b](https://github.com/theory-cloud/AppTheory/commit/5589c0b61fa9d3f5d12b148368106f18c564f02d))
+* **cdk:** regenerate the jsii assembly and CDK bindings ([d2e8fb8](https://github.com/theory-cloud/AppTheory/commit/d2e8fb8e8fdd5b7c9955f3f49e6d9ba13dcf4b3b))
+* **cdk:** regenerate the jsii assembly and tarball mirror at 7.5.0-rc ([a8d248a](https://github.com/theory-cloud/AppTheory/commit/a8d248a7eac67ae898e5bdc4fb559f4c117ee4dd))
+* **cdk:** state the endpoint access mode requirement as AWS does ([2ed1f65](https://github.com/theory-cloud/AppTheory/commit/2ed1f657ee143b87a0e8131e269e6970b40d3610))
+* **evidence:** refresh the security-refresh record for the 7.5.0-rc.1 candidate ([0a1d7d5](https://github.com/theory-cloud/AppTheory/commit/0a1d7d5614f3e4792745f2b0dcfd86cf09fba6e3))
+* **evidence:** refresh the security-refresh record for the 7.5.0-rc.1 candidate ([9e67491](https://github.com/theory-cloud/AppTheory/commit/9e67491be3f1b6fd5dc71f2c830e9a04161f9b2d))
+* **naming:** refuse wildcard reader ARNs and render the visibility preview ([0568df0](https://github.com/theory-cloud/AppTheory/commit/0568df000e57f2046ef5e906ff6a1fbd03c5a02a))
+* **naming:** settle CloudFront JSON logs and close the M2 residuals ([8a6c5e8](https://github.com/theory-cloud/AppTheory/commit/8a6c5e8a1afda9ff227efe2243ab2cfb65d6b1a6))
+* **release:** back-merge premain 7.5.0-rc into staging ([2df46cd](https://github.com/theory-cloud/AppTheory/commit/2df46cd931e6064d004cc107c2c2c4e1c9f71fdb))
+* **release:** back-merge premain 7.5.0-rc into staging ([90fc14f](https://github.com/theory-cloud/AppTheory/commit/90fc14fbb2d2cc958cc755917a985ab568261af9))
+* **release:** cut the 7.5.0-rc.1 candidate ([57abd94](https://github.com/theory-cloud/AppTheory/commit/57abd94569ec3e0fa04f9a9b8aa922ecf4804375))
+* **release:** cut the 7.5.0-rc.1 candidate ([db0e99f](https://github.com/theory-cloud/AppTheory/commit/db0e99f07a38ec4dd351b4652bed39418c9a5f86))
+* **release:** pin the 7.5.0-rc.1 candidate footer ([05482fe](https://github.com/theory-cloud/AppTheory/commit/05482fe15e8ca4a2c823d6af07565ab134d811d9))
+* **release:** promote staging to premain for 7.5.0-rc.1 ([0428da6](https://github.com/theory-cloud/AppTheory/commit/0428da66365e5241c71ead027868451824b2ebb1))
+
+## [7.5.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.4.0...v7.5.0-rc) (2026-11-19)
+
+
+### Features
+
+* **cdk:** add the naming context, derived names, standard logging and keeper visibility ([9bc925f](https://github.com/theory-cloud/AppTheory/commit/9bc925fdbf61d9b6065dd6bab9520ef379ad46f5))
+* **cdk:** adopt r2 naming, refuse explicit names under a context ([8117d73](https://github.com/theory-cloud/AppTheory/commit/8117d738e7f3bd88d268664a3401a0ee98fed5d2))
+* **naming:** adopt resource-naming contract r3 and close the [#1312](https://github.com/theory-cloud/AppTheory/issues/1312) gate findings ([fcc3441](https://github.com/theory-cloud/AppTheory/commit/fcc3441634dd3ac1cad14643eb12666f5d51cc47))
+* **naming:** adopt the r2 generated-name and api_websocket rules ([f76a7f6](https://github.com/theory-cloud/AppTheory/commit/f76a7f6c4db7e80c60eee83d62e6469f0a92cb2d))
+* **naming:** implement the resource-naming contract primitive ([5f91a9e](https://github.com/theory-cloud/AppTheory/commit/5f91a9ee8ef5ead2978afa72d499cdca38f092e7))
+* **naming:** naming primitive, standard logging and Keeper visibility (docs/145 M2) ([188588c](https://github.com/theory-cloud/AppTheory/commit/188588c6151dead34011c015d7810b22334d899b))
+
+
+### Bug Fixes
+
+* **cdk:** consume an access-log naming entry only when the group is ours ([02428f6](https://github.com/theory-cloud/AppTheory/commit/02428f67866d858a8bffe7811bb5b7692d9653ea))
+* **cdk:** keep access-log groups out of naming and apply r3 trust and hints ([16fb80a](https://github.com/theory-cloud/AppTheory/commit/16fb80a7b0c24e48c1f61e28862e3deeedac0960))
+* **cdk:** refresh the example template hashes for the changed runtime asset ([ac1560f](https://github.com/theory-cloud/AppTheory/commit/ac1560fe82f80313735ae8da07c1602e7cafbc78))
+* **cdk:** refresh the runtime-vendoring example asset hashes ([2923203](https://github.com/theory-cloud/AppTheory/commit/2923203c894613afc7999c675f7cc5cbbf5957a7))
+* **cdk:** refresh the runtime-vendoring example asset hashes ([69f9464](https://github.com/theory-cloud/AppTheory/commit/69f94647eef9c8fbb934f3ab2fa3100e0b09c4d2))
+* **ci:** bind prefix negation above comparison in the release-lane guard ([bb86f28](https://github.com/theory-cloud/AppTheory/commit/bb86f282242a0f5fe54b055b195e66462ef30e90))
+* **ci:** guard the code-owner review lane in place of the deleted dispatch lane ([f25d1e1](https://github.com/theory-cloud/AppTheory/commit/f25d1e10be274daac50323fcee4888a550dc84a8))
+* **ci:** run the release delta smoke on the code-owner review ([6250dfb](https://github.com/theory-cloud/AppTheory/commit/6250dfb271fdd9920ca1b72961bdb8e839058ac3))
+* **ci:** scope the precedence self-test to the event-name term ([79d26c1](https://github.com/theory-cloud/AppTheory/commit/79d26c16ea28c5fa7e50306142dc1f80eae8e085))
+* **evidence:** compare release-only JSON documents after canonical projection ([8b4dce1](https://github.com/theory-cloud/AppTheory/commit/8b4dce15b912103c224a1068486847e7a858bd3f))
+* **evidence:** compare release-only JSON documents after canonical projection ([2eba65d](https://github.com/theory-cloud/AppTheory/commit/2eba65dfbfb98fd5cd86d4edc8f6f9d48d40fe5f))
+* **evidence:** recollect the ten records the JSON projection stales ([489fa49](https://github.com/theory-cloud/AppTheory/commit/489fa49bfe1d1eea099ffab4e201ed68a75c6180))
+* **evidence:** state the back-merge matrix claim the projection now proves ([0358b3a](https://github.com/theory-cloud/AppTheory/commit/0358b3afa00a16413381ed10bd534613cbbffc10))
+* **naming:** keep the primitive and runners inside the lint budgets ([577ee69](https://github.com/theory-cloud/AppTheory/commit/577ee69258e4df8e1a231670c9bf066a7893ec94))
+* **naming:** reject generated API names and adopt contract r3 fixtures ([97f1fc5](https://github.com/theory-cloud/AppTheory/commit/97f1fc51ac5da8978adfdb31a735aef0de1add76))
+* **release:** back-merge main 7.4.0 into staging ([b28b239](https://github.com/theory-cloud/AppTheory/commit/b28b2392a84e6a61b6c7ad47fb2b8940050a973c))
+* **release:** back-merge main 7.4.0 into staging ([33ceac0](https://github.com/theory-cloud/AppTheory/commit/33ceac00bc1ca265e44ed6dc2a660f2f068409a2))
+* **release:** describe the code-owner review gate for generated release PRs ([d9ff19a](https://github.com/theory-cloud/AppTheory/commit/d9ff19af936bd38ffc11440d53121da17c8b63ad))
+* **release:** merge premain 7.4.0-rc history into staging ([e37c780](https://github.com/theory-cloud/AppTheory/commit/e37c7802e54dc3e1d27bf7640fd4c6eff5b35b82))
+* **release:** merge premain 7.4.0-rc history into staging ([cc4e537](https://github.com/theory-cloud/AppTheory/commit/cc4e53798e7dd4f49a29c14cd7ca6e287e0888ef))
+* **release:** promote staging to premain (resource naming, standard logging, Keeper visibility) ([bdd3783](https://github.com/theory-cloud/AppTheory/commit/bdd3783388d5e5a9bec0c7161190dfb760058815))
+* **release:** remove the dead generated-release-PR self-dispatch lane ([61a1fa1](https://github.com/theory-cloud/AppTheory/commit/61a1fa1a1e290e30436a952e2ab165c29b2ba1a4))
+* **release:** remove the dead generated-release-PR self-dispatch lane and its 20-minute sweep ([4d36065](https://github.com/theory-cloud/AppTheory/commit/4d36065eda7bc3e6898362222c8528e496fa553f))
+
 ## [7.4.0](https://github.com/theory-cloud/AppTheory/compare/v7.3.1...v7.4.0) (2026-11-17)
 
 

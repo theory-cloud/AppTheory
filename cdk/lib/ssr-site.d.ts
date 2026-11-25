@@ -6,6 +6,8 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 export declare enum AppTheorySsrSiteMode {
     /**
      * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
@@ -156,6 +158,32 @@ export interface AppTheorySsrSiteProps {
      * @default false
      */
     readonly allowViewerTenantHeaders?: boolean;
+    /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile the buckets this construct creates take
+     * their names from the contract and CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out of the delivery.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The site's logical name. Defaults to the kebab-cased construct id when a
+     * naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.JSON
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
     /**
@@ -202,7 +230,51 @@ export interface AppTheorySsrSiteProps {
      * The certificate must be in `us-east-1` for CloudFront.
      */
     readonly certificateArn?: string;
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support. Without a certificate CloudFront serves the fixed
+     * default certificate and this property has no effect.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+    /**
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * With a derived naming context and `mode: ssg-isr` the default is
+     * `index.html`, because that mode's default behavior is the S3 HTML store
+     * (Security Hub CloudFront.1). `ssr-only` also carries an S3 origin (the
+     * asset bucket), so the control evaluates the distribution, but `/` must
+     * reach the function URL; a default root object would rewrite `/` onto the
+     * function URL, so AppTheory deliberately sets none and the control reports
+     * a residual finding.
+     *
+     * @default "index.html" under a derived naming context in `ssg-isr` mode
+     */
+    readonly defaultRootObject?: string;
     readonly webAclId?: string;
+    /**
+     * Bucket that receives S3 server access logs for the buckets this construct
+     * creates, which is what Security Hub S3.9 evaluates.
+     *
+     * Off by default because the log target and its storage cost money. The target
+     * bucket is yours: it takes no naming entry (resource-naming contract
+     * section 4), and it should not itself be logged.
+     *
+     * @default no server access logging
+     */
+    readonly serverAccessLogsBucket?: s3.IBucket;
+    /**
+     * Key prefix for the server access logs. Only used with
+     * `serverAccessLogsBucket`.
+     *
+     * @default no prefix
+     */
+    readonly serverAccessLogsPrefix?: string;
 }
 export interface AppTheorySsrSiteBearerFunctionUrlOrigin {
     /**

@@ -84,6 +84,7 @@ CloudWatchLogsSubscriptionOptions	interface
 CloudWatchLogsSubscriptionSummary	interface
 CodeExchangeRequest	interface
 CompleteIdempotencyRecordInput	type
+ComposedName	interface
 Config	interface
 Context	class
 CountingTransportHandler	interface
@@ -188,6 +189,9 @@ JobRecord	type
 JobRequest	type
 JobStatus	type
 JobsConfig	type
+KEEPER_ACTIONS_GROUP	const
+KEEPER_ACTIONS_STREAM	const
+KeeperAnswer	type
 KinesisCloudWatchLogsSubscriptionRecordOptions	interface
 KinesisEvent	interface
 KinesisEventRecord	interface
@@ -207,6 +211,7 @@ LOGGING_PROFILE_LEGACY	const
 LOGGING_PROFILE_LOCAL_DEV	const
 LOGGING_PROFILE_PAYTHEORY_ALERT_V1	const
 LOGGING_PROFILE_SCHEMA_VERSION	const
+LOG_SOURCE_PREFIX	const
 LambdaFunctionURLRequest	interface
 LambdaFunctionURLResponse	interface
 LambdaFunctionURLStreamingHandler	type
@@ -215,6 +220,7 @@ LimitDecision	interface
 Limits	interface
 LogFields	type
 LogRecord	interface
+LoggingProfile	type
 LoggingProfileAlertingHints	interface
 LoggingProfileConfig	interface
 LoggingProfileEncoding	interface
@@ -472,6 +478,9 @@ MicroVMTokenIssuanceContract	interface
 Middleware	type
 MultiWindowStrategy	class
 NAMESPACE_MCP_PATTERN	const
+NamingContext	interface
+NamingPins	type
+NamingProfile	type
 OAuthBearerError	class
 OAuthDiscoveryTemplate	interface
 OAuthFacadeTemplate	interface
@@ -540,6 +549,9 @@ REFUSAL_REASON_MISSING_CREDENTIAL	const
 REFUSAL_REASON_UNCLASSIFIED	const
 REQUEST_ID_SOURCE_DEFAULT	const
 REQUEST_ID_SOURCE_SERVER	const
+RESOURCE_NAME_RULES	const
+RESOURCE_NAMING_CONTRACT	const
+ROLE_POLICY_MAX	const
 ROUTE_REFRESH_EVENT_GRACE_SERVED	const
 ROUTE_REFRESH_EVENT_ISSUED	const
 ROUTE_REFRESH_EVENT_LOCK_ACQUIRED	const
@@ -611,6 +623,8 @@ Request	interface
 RequestIdSource	type
 RequireBearerTokenOptions	interface
 ResolvedCapabilities	interface
+ResourceNameKind	type
+ResourceNameRule	interface
 Response	interface
 RootDiscoveryConfig	interface
 RouteGuard	type
@@ -710,6 +724,12 @@ VectorRecord	interface
 VectorStore	interface
 VectorStoreCall	interface
 VectorStoreError	class
+VisibilityFutureRules	interface
+VisibilityManifest	interface
+VisibilityPolicy	interface
+VisibilityPreview	interface
+VisibilityRules	interface
+VisibilityStatement	interface
 WebSocketCall	interface
 WebSocketClientFactory	type
 WebSocketContext	class
@@ -760,6 +780,7 @@ clientIP	function
 cloneMetadata	function
 cloneVector	function
 cloudWatchLogsSubscriptionData	function
+compileVisibilityPolicy	function
 countingTransportHandler	function
 createAWSLambdaMicroVMClient	function
 createAWSLambdaMicroVMProvider	function
@@ -833,7 +854,10 @@ jobRecordSortKey	function
 jobRequestSortKey	function
 jobsTableName	function
 json	function
+keeperDecision	function
 kinesisCloudWatchLogsSubscriptionRecord	function
+logGroupName	function
+logSourcePrefix	function
 loggingProfileCatalog	function
 loggingProfileValidationErrors	function
 mapMicroVMProviderState	function
@@ -887,6 +911,7 @@ parseObjectRef	function
 pattern	const
 paymentXMLPatterns	const
 paymentXMLPatterns	re-export
+physicalResourceName	function
 pkceChallengeS256	function
 pkceVerifyS256	function
 protectedResourceMetadataHandler	function
@@ -914,6 +939,7 @@ resourceName	function
 resourcePathFromProtectedResourcePath	function
 rfc9728ResourceMetadataURL	function
 runStoreConformance	function
+s3AccountRegionalSuffix	function
 safeJSONForHTML	function
 sanitizeErrorEnvelope	function
 sanitizeFieldValue	function
@@ -932,6 +958,8 @@ semaphoreSlotSortKey	function
 sequenceIdGenerator	function
 setKeys	function
 setLogger	function
+shortenResourceName	function
+sourceVisible	function
 sse	function
 sseEventStream	function
 stepFunctionsTaskToken	function
@@ -966,6 +994,7 @@ validateMicroVMSessionRegistryContract	function
 validateMicroVMSessionRegistryRecord	function
 validateMicroVMSessionStatus	function
 validateMicroVMSessionTokenMetadata	function
+validateNamingContext	function
 validateObjectRef	function
 validateOrThrow	function
 validatePKCECodeVerifier	function
@@ -973,8 +1002,14 @@ validatePresignPutInput	function
 validateRequiredMetadata	function
 validateValue	function
 validateVector	function
+validateVisibilitySelector	function
 validationError	function
 vary	function
+visibilityManifest	function
+visibilityPreview	function
+visibilityRuleVersion	function
+visibilitySelectorArns	function
+visibilitySelectorMatches	function
 wellFormedClientRequestId	function
 wrapError	function
 wrapJobLedgerError	function

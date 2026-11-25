@@ -55,6 +55,18 @@ type AppTheoryFunctionProps struct {
 	// Default: 2.
 	//
 	RetryAttempts *float64 `field:"optional" json:"retryAttempts" yaml:"retryAttempts"`
+	// Accelerator configuration for the function.
+	//
+	// Configures the accelerator resource settings for the execution environment, including
+	// the amount of accelerator memory to allocate. The function must be attached to a
+	// capacity provider (`capacityProvider.addFunction(fn)`), use a container image
+	// (`Runtime.FROM_IMAGE`) on x86_64, and set `memorySize` to at least 2048 MiB.
+	// When set, `ephemeralStorageSize` may be up to 32 GiB.
+	// See: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-function-acceleratorconfig.html
+	//
+	// Default: - No accelerator configuration.
+	//
+	AcceleratorConfig *awslambda.AcceleratorConfig `field:"optional" json:"acceleratorConfig" yaml:"acceleratorConfig"`
 	// Specify the configuration of AWS Distro for OpenTelemetry (ADOT) instrumentation.
 	// See: https://aws-otel.github.io/docs/getting-started/lambda
 	//
@@ -414,6 +426,23 @@ type AppTheoryFunctionProps struct {
 	// Default: undefined.
 	//
 	Alias *AppTheoryFunctionAliasOptions `field:"optional" json:"alias" yaml:"alias"`
+	// The component's logical name, used for the function and runtime log source.
+	//
+	// Defaults to the kebab-cased construct id when a naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
+	// Optional naming and logging context.
+	//
+	// With a derived naming profile the construct names the function from the
+	// contract when `functionName` is omitted. With the standard logging profile
+	// AppTheory creates a log group named `logs/runtime/{logicalName}` with the
+	// context's retention and points Lambda's `LoggingConfig` at it.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Stable physical name for the AppTheory-managed Lambda execution role.
 	//
 	// AppTheory preserves the Lambda L2's policies. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit.

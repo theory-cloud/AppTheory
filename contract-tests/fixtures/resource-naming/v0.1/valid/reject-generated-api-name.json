@@ -1,0 +1,30 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-generated-api-name",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "live",
+      "account": "784055308075",
+      "region": "us-east-1",
+      "naming_profile": "legacy"
+    },
+    "resource_type": "api_http",
+    "logical": "main",
+    "generated": [
+      "api_http:main"
+    ]
+  },
+  "expected": {
+    "error": "an API name takes a pin, never a generated entry"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

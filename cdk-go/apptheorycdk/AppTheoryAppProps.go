@@ -23,14 +23,23 @@ type AppTheoryAppProps struct {
 	DatabasePartitionKey *string                        `field:"optional" json:"databasePartitionKey" yaml:"databasePartitionKey"`
 	DatabaseSortKey      *string                        `field:"optional" json:"databaseSortKey" yaml:"databaseSortKey"`
 	DatabaseTable        awsdynamodb.ITable             `field:"optional" json:"databaseTable" yaml:"databaseTable"`
-	DatabaseTableName    *string                        `field:"optional" json:"databaseTableName" yaml:"databaseTableName"`
-	Domain               *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
-	DomainName           *string                        `field:"optional" json:"domainName" yaml:"domainName"`
-	EnableDatabase       *bool                          `field:"optional" json:"enableDatabase" yaml:"enableDatabase"`
-	EnableRateLimiting   *bool                          `field:"optional" json:"enableRateLimiting" yaml:"enableRateLimiting"`
-	Environment          *map[string]*string            `field:"optional" json:"environment" yaml:"environment"`
-	Handler              *string                        `field:"optional" json:"handler" yaml:"handler"`
-	HostedZone           awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
+	// Whether the database table enables deletion protection (Security Hub DynamoDB.6).
+	//
+	// Applies only when AppTheory creates the table; a `databaseTable` you supply
+	// keeps its own setting.
+	// Default: undefined (with no naming context: today's template, no deletion
+	// protection; under a derived naming context: on for the RETAIN table
+	// AppTheoryApp creates).
+	//
+	DatabaseTableDeletionProtection *bool                          `field:"optional" json:"databaseTableDeletionProtection" yaml:"databaseTableDeletionProtection"`
+	DatabaseTableName               *string                        `field:"optional" json:"databaseTableName" yaml:"databaseTableName"`
+	Domain                          *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
+	DomainName                      *string                        `field:"optional" json:"domainName" yaml:"domainName"`
+	EnableDatabase                  *bool                          `field:"optional" json:"enableDatabase" yaml:"enableDatabase"`
+	EnableRateLimiting              *bool                          `field:"optional" json:"enableRateLimiting" yaml:"enableRateLimiting"`
+	Environment                     *map[string]*string            `field:"optional" json:"environment" yaml:"environment"`
+	Handler                         *string                        `field:"optional" json:"handler" yaml:"handler"`
+	HostedZone                      awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 	// Log group the app function writes to.
 	//
 	// When set, AppTheory uses this group unchanged: the caller owns its
@@ -59,9 +68,30 @@ type AppTheoryAppProps struct {
 	// Deprecated: Configure `retention` on an explicit `logs.LogGroup` and pass
 	// it as `logGroup` instead. AppTheory keeps honoring this property for
 	// existing stacks and has no planned removal date.
-	LogRetention       awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
-	MemorySize         *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
-	RateLimitTableName *string               `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
+	LogRetention awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
+	MemorySize   *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
+	// Optional naming context.
+	//
+	// Under a derived naming context the tables this construct creates
+	// (the database table and the rate-limit table) take the contract's Security
+	// Hub-aligned defaults: point-in-time recovery on, and deletion protection on
+	// for a RETAIN table.
+	//
+	// The context selects table defaults only. AppTheoryApp does not derive
+	// physical names for its HTTP API in the v0.1 resource-naming contract, so it
+	// consumes no naming entry.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
+	// Whether the rate-limit table enables deletion protection (Security Hub DynamoDB.6).
+	// Default: undefined (with no naming context: today's template, no deletion
+	// protection; under a derived naming context: on for the RETAIN table
+	// AppTheoryApp creates).
+	//
+	RateLimitTableDeletionProtection *bool   `field:"optional" json:"rateLimitTableDeletionProtection" yaml:"rateLimitTableDeletionProtection"`
+	RateLimitTableName               *string `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
 	// Stable physical name for the app function's AppTheory-managed IAM role.
 	//
 	// AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.

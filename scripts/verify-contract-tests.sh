@@ -33,4 +33,10 @@ ensure_ts_runtime_deps_installed
 node contract-tests/runners/ts/run.cjs
 python3 contract-tests/runners/py/run.py
 
+# theorycloud_resource_naming.v0.1 conformance: every fixture in
+# contract-tests/fixtures/resource-naming/v0.1 must agree with its `expected`.
+go run ./contract-tests/runners/naming
+node contract-tests/runners/naming/run.cjs
+python3 contract-tests/runners/naming/run.py
+
 echo "contract-tests: PASS"

@@ -4,6 +4,8 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+import { AppTheoryCloudFrontLogFormat } from "./logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 export declare enum AppTheorySpaRewriteMode {
     /**
      * Rewrite extensionless routes to `index.html` within the SPA prefix.
@@ -160,6 +162,31 @@ export interface AppTheoryPathRoutedFrontendProps {
      */
     readonly apiOriginRequestPolicy?: cloudfront.IOriginRequestPolicy;
     /**
+     * Optional naming and logging context.
+     *
+     * With the standard logging profile CloudFront access logs go to
+     * `logs/access/cdn/{logicalName}` through CloudWatch Logs vended delivery.
+     * Pass `enableLogging: false` to opt out.
+     *
+     * With no context the construct synthesizes exactly as before.
+     *
+     * @default undefined
+     */
+    readonly namingContext?: AppTheoryNamingContext;
+    /**
+     * The distribution's logical name. Defaults to the kebab-cased construct id
+     * when a naming context is present.
+     *
+     * @default undefined
+     */
+    readonly logicalName?: string;
+    /**
+     * CloudFront standard-logging output format for a CloudWatch Logs
+     * destination. Only used under the standard logging profile.
+     * @default AppTheoryCloudFrontLogFormat.JSON
+     */
+    readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
+    /**
      * Enable CloudFront access logging.
      * @default true
      */
@@ -193,6 +220,29 @@ export interface AppTheoryPathRoutedFrontendProps {
      * An optional name/comment for the distribution.
      */
     readonly comment?: string;
+    /**
+     * Minimum TLS protocol version for viewers of a custom domain.
+     *
+     * With a derived naming context and a custom certificate the default is
+     * `TLS_V1_2_2025`, the policy Security Hub CloudFront.15 accepts with the
+     * widest client support.
+     *
+     * @default TLS_V1_2_2025 under a derived naming context with a certificate,
+     * otherwise the CloudFront default for the certificate
+     */
+    readonly minimumProtocolVersion?: cloudfront.SecurityPolicyProtocol;
+    /**
+     * Object CloudFront returns for a request to the distribution root.
+     *
+     * The frontend's default behavior targets the API origin. When SPA prefixes
+     * route to S3 origins the distribution carries S3 origins, so Security Hub
+     * CloudFront.1 evaluates it, but `/` must reach the API origin; a default
+     * root object would rewrite `/` onto the API, so AppTheory deliberately
+     * sets none and the control reports a residual finding.
+     *
+     * @default undefined
+     */
+    readonly defaultRootObject?: string;
 }
 /**
  * A CloudFront distribution for path-routed multi-SPA + API deployments.

@@ -10,8 +10,9 @@
 # staging and do not need to repeat the full rubric", and by the operator
 # decision of 2026-10-12 that scopes the release-eligibility gate to the
 # promotion lane):
-#   A. the rubric job runs only for pull requests targeting staging, plus the
-#      opt-in manual dispatch, and nowhere else;
+#   A. the rubric job runs only for pull requests targeting staging, and nowhere
+#      else; CI carries no dispatch trigger, because a dispatched run never
+#      satisfies a required status check;
 #   B. the deterministic-build job has the same staging-pull-request-only shape;
 #   C. the release-eligibility gate runs on the staging -> premain promotion pull
 #      request and on the push to staging, and is deliberately skipped for pull
