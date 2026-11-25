@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { pathToFileURL } = require("node:url");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
@@ -30,6 +32,121 @@ function writeSources(projectRoot) {
     path.join(projectRoot, "src", "app.mjs"),
     'import { x } from "hoisted";\nexport const app = x;\n',
   );
+}
+
+// An installed package with a CommonJS entry point, written directly into the
+// tree the way `npm install` leaves it.
+function installPackage(dir, name, version, { dependencies, code, manifest } = {}) {
+  const target = path.join(dir, "node_modules", name);
+  writePackage(target, {
+    name,
+    version,
+    dependencies,
+    main: "index.cjs",
+    ...manifest,
+  });
+  if (code) {
+    fs.writeFileSync(path.join(target, "index.cjs"), `${code}\n`);
+  }
+  return target;
+}
+
+// Ask Node itself what a directory inside the staged asset resolves a name to,
+// and the version it finds there. This is the resolution the Lambda runtime
+// performs, not an approximation of it.
+function resolveInAsset(outputDir, from, name) {
+  const script = `
+    const { createRequire } = require("node:module");
+    const path = require("node:path");
+    const from = createRequire(path.join(${JSON.stringify(outputDir)}, ${JSON.stringify(from)}, "noop.js"));
+    const manifest = from.resolve(${JSON.stringify(`${name}/package.json`)});
+    process.stdout.write(JSON.stringify({
+      resolved: path.relative(${JSON.stringify(outputDir)}, path.dirname(manifest)).split(path.sep).join("/"),
+      version: from(manifest).version,
+    }));
+  `;
+  const probe = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+  assert.equal(
+    probe.status,
+    0,
+    `resolving ${name} from ${from || "the asset root"} failed:\n${probe.stderr}`,
+  );
+  return JSON.parse(probe.stdout);
+}
+
+// Interpreters the asset is additionally loaded from. The running Node line is
+// always the first one; `APPTHEORY_BUNDLE_INTERPRETERS` lets an evidence run add
+// the other supported line, and CI proves the default line on every commit.
+function assetInterpreters() {
+  const extra = (process.env.APPTHEORY_BUNDLE_INTERPRETERS ?? "")
+    .split(/\s+/)
+    .filter((entry) => entry.length > 0);
+  return [process.execPath, ...extra];
+}
+
+// Load the staged asset's handler from inside the asset directory and return
+// what it resolved, under every interpreter the run proves.
+function loadFromAsset(outputDir, handlerFile = "handler.mjs") {
+  const script = `
+    import assert from "node:assert/strict";
+    const { handler } = await import(${JSON.stringify(pathToFileURL(path.join(outputDir, handlerFile)).href)});
+    const result = handler();
+    assert.deepEqual(result, { a: 1, b: 2, c: 2 }, "the asset resolved " + JSON.stringify(result));
+    process.stdout.write(JSON.stringify(result));
+  `;
+  const results = [];
+  for (const interpreter of assetInterpreters()) {
+    const loaded = spawnSync(interpreter, ["--input-type=module", "-e", script], {
+      cwd: outputDir,
+      encoding: "utf8",
+    });
+    assert.equal(
+      loaded.status,
+      0,
+      `the staged asset did not load under ${interpreter}:\n${loaded.stderr}`,
+    );
+    results.push({ interpreter, resolved: JSON.parse(loaded.stdout) });
+  }
+  return results;
+}
+
+// Sanity's resolution layout, as a generated app leaves it: one dependency keeps
+// a nested copy of the shared package it needs, and two dependents share the
+// copy installed at the project root. `npm ls` reports both shared edges — the
+// second one deduped — and the unbundled handler resolves 1, 2 and 2.
+function writeMixedResolutionLayout(root) {
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "src", "handler.mjs"),
+    [
+      'import a from "review-addon-a";',
+      'import b from "review-addon-b";',
+      'import c from "review-addon-c";',
+      "",
+      "export const handler = () => ({ a, b, c });",
+      "",
+    ].join("\n"),
+  );
+  writePackage(root, {
+    name: "project",
+    version: "0.0.0",
+    type: "module",
+    dependencies: { "review-addon-a": "1.0.0", "review-addon-b": "1.0.0", "review-addon-c": "1.0.0" },
+  });
+  const addonA = installPackage(root, "review-addon-a", "1.0.0", {
+    dependencies: { "review-shared": "1.0.0" },
+    code: 'module.exports = require("review-shared").v1()',
+  });
+  installPackage(root, "review-addon-b", "1.0.0", {
+    dependencies: { "review-shared": "2.0.0" },
+    code: 'module.exports = require("review-shared").v2()',
+  });
+  installPackage(root, "review-addon-c", "1.0.0", {
+    dependencies: { "review-shared": "2.0.0" },
+    code: 'module.exports = require("review-shared").v2()',
+  });
+  installPackage(root, "review-shared", "2.0.0", { code: "module.exports.v2 = () => 2" });
+  installPackage(addonA, "review-shared", "1.0.0", { code: "module.exports.v1 = () => 1" });
 }
 
 test("the TypeScript bundler stages the whole production closure and no development tree", () => {
@@ -104,13 +221,14 @@ test("the TypeScript bundler stages the whole production closure and no developm
     for (const destination of [
       "node_modules/hoisted/package.json",
       "node_modules/parent/package.json",
-      // `nested` claims the free hoisted slot, which is the first place Node
-      // looks from `parent` after its own `node_modules`.
-      "node_modules/nested/package.json",
+      // `nested` keeps the path it was installed at. Hoisting it to the free
+      // `node_modules/nested` slot would take a slot another dependent may
+      // resolve through.
+      "node_modules/parent/node_modules/nested/package.json",
       "node_modules/@scope/linked/package.json",
       // The linked checkout's own dependency: the handler can only import it if
-      // the asset carries it.
-      "node_modules/@scope/linked-dep/package.json",
+      // the asset carries it, and it keeps the linked checkout's own layout.
+      "node_modules/@scope/linked/node_modules/@scope/linked-dep/package.json",
       "handler.mjs",
       "app.mjs",
       "package.json",
@@ -184,6 +302,231 @@ test("the TypeScript bundler nests a second copy of a name instead of overwritin
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+// The regression this pins: a nested copy staged into a free hoisted slot used
+// to shadow the project's own copy, and the second dependent that shared that
+// copy was skipped because its source directory had "already been copied". The
+// asset loaded and then threw `TypeError: require(...).v2 is not a function`.
+test("the TypeScript bundler keeps the copy every dependent resolves, nested and shared", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-resolution-"));
+  const root = path.join(workspace, "project");
+  const outputDir = path.join(workspace, "asset");
+  try {
+    writeMixedResolutionLayout(root);
+
+    const closure = tsBundle().productionClosure(root);
+    assert.deepEqual(
+      [...closure.keys()].sort(),
+      [
+        "node_modules/review-addon-a",
+        "node_modules/review-addon-a/node_modules/review-shared",
+        "node_modules/review-addon-b",
+        "node_modules/review-addon-c",
+        "node_modules/review-shared",
+      ],
+      `staged ${JSON.stringify([...closure.keys()])}`,
+    );
+    // The nested copy stays nested, so the project's copy keeps the root slot
+    // both remaining dependents resolve through.
+    assert.equal(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(closure.get("node_modules/review-addon-a/node_modules/review-shared"), "package.json"),
+          "utf8",
+        ),
+      ).version,
+      "1.0.0",
+    );
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(closure.get("node_modules/review-shared"), "package.json"), "utf8"))
+        .version,
+      "2.0.0",
+    );
+
+    const result = tsBundle().stage(root, outputDir);
+    assert.equal(result.packages, 5, `expected five packages, staged ${result.packages}`);
+
+    // Both dependents that share the root copy see it, from their own directory
+    // inside the asset, and the nested dependency still sees its own copy.
+    const expectations = [
+      ["node_modules/review-addon-a", "review-shared", "node_modules/review-addon-a/node_modules/review-shared", "1.0.0"],
+      ["node_modules/review-addon-b", "review-shared", "node_modules/review-shared", "2.0.0"],
+      ["node_modules/review-addon-c", "review-shared", "node_modules/review-shared", "2.0.0"],
+    ];
+    for (const [from, name, resolved, version] of expectations) {
+      const found = resolveInAsset(outputDir, from, name);
+      assert.deepEqual(found, { resolved, version }, `${from} resolved ${JSON.stringify(found)}`);
+    }
+
+    // And the whole handler loads and runs from the asset, not from the project.
+    const loaded = loadFromAsset(outputDir);
+    assert.deepEqual(
+      loaded.map((entry) => entry.resolved),
+      loaded.map(() => ({ a: 1, b: 2, c: 2 })),
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("the TypeScript bundler keeps a three-way conflict apart, one copy per dependent", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-three-way-"));
+  const root = path.join(workspace, "project");
+  const outputDir = path.join(workspace, "asset");
+  try {
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "handler.mjs"),
+      [
+        'import a from "addon-a";',
+        'import b from "addon-b";',
+        'import c from "addon-c";',
+        "",
+        "export const handler = () => ({ a: a(), b: b(), c: c() });",
+        "",
+      ].join("\n"),
+    );
+    writePackage(root, {
+      name: "project",
+      version: "0.0.0",
+      type: "module",
+      dependencies: { "addon-a": "1.0.0", "addon-b": "1.0.0", "addon-c": "1.0.0", shared: "3.0.0" },
+    });
+    const a = installPackage(root, "addon-a", "1.0.0", {
+      dependencies: { shared: "1.0.0" },
+      code: 'module.exports = () => require("shared").version()',
+    });
+    const b = installPackage(root, "addon-b", "1.0.0", {
+      dependencies: { shared: "2.0.0" },
+      code: 'module.exports = () => require("shared").version()',
+    });
+    installPackage(root, "addon-c", "1.0.0", {
+      dependencies: { shared: "3.0.0" },
+      code: 'module.exports = () => require("shared").version()',
+    });
+    installPackage(a, "shared", "1.0.0", { code: "module.exports.version = () => 1" });
+    installPackage(b, "shared", "2.0.0", { code: "module.exports.version = () => 2" });
+    installPackage(root, "shared", "3.0.0", { code: "module.exports.version = () => 3" });
+
+    const closure = tsBundle().productionClosure(root);
+    assert.deepEqual(
+      [...closure.keys()].sort(),
+      [
+        "node_modules/addon-a",
+        "node_modules/addon-a/node_modules/shared",
+        "node_modules/addon-b",
+        "node_modules/addon-b/node_modules/shared",
+        "node_modules/addon-c",
+        "node_modules/shared",
+      ],
+      `staged ${JSON.stringify([...closure.keys()])}`,
+    );
+
+    tsBundle().stage(root, outputDir);
+    for (const [from, version] of [
+      ["node_modules/addon-a", "1.0.0"],
+      ["node_modules/addon-b", "2.0.0"],
+      ["node_modules/addon-c", "3.0.0"],
+    ]) {
+      assert.equal(resolveInAsset(outputDir, from, "shared").version, version, `${from} resolved ${version}`);
+    }
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("the TypeScript bundler stages a hoist above the project root at the asset root", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-hoist-"));
+  // A workspace whose packages are hoisted above the project: Node resolves
+  // `gateway` and `requests` from `<workspace>/node_modules`, not from inside
+  // the project at all.
+  const root = path.join(workspace, "packages", "project");
+  const outputDir = path.join(workspace, "asset");
+  try {
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "handler.mjs"),
+      'import gateway from "gateway";\nexport const handler = () => gateway;\n',
+    );
+    writePackage(root, {
+      name: "project",
+      version: "0.0.0",
+      type: "module",
+      dependencies: { gateway: "1.0.0" },
+    });
+    installPackage(workspace, "gateway", "1.0.0", {
+      dependencies: { requests: "4.0.0" },
+      code: 'module.exports = require("requests").version()',
+    });
+    installPackage(workspace, "requests", "4.0.0", { code: "module.exports.version = () => 4" });
+
+    const closure = tsBundle().productionClosure(root);
+    assert.deepEqual(
+      [...closure.keys()].sort(),
+      ["node_modules/gateway", "node_modules/requests"],
+      `staged ${JSON.stringify([...closure.keys()])}`,
+    );
+
+    tsBundle().stage(root, outputDir);
+    assert.equal(resolveInAsset(outputDir, "node_modules/gateway", "requests").version, "4.0.0");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("the TypeScript bundler stages an npm alias under the name it is imported by", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-alias-"));
+  const root = path.join(workspace, "project");
+  const outputDir = path.join(workspace, "asset");
+  try {
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "handler.mjs"),
+      'import alias from "shared-alias";\nexport const handler = () => alias;\n',
+    );
+    // `npm install shared-alias@npm:shared@1.0.0` installs the package under the
+    // alias directory while its manifest keeps the real name.
+    writePackage(root, {
+      name: "project",
+      version: "0.0.0",
+      type: "module",
+      dependencies: { "shared-alias": "npm:shared@1.0.0" },
+    });
+    const aliased = path.join(root, "node_modules", "shared-alias");
+    writePackage(aliased, { name: "shared", version: "1.0.0", main: "index.cjs" });
+    fs.writeFileSync(path.join(aliased, "index.cjs"), "module.exports = 1;\n");
+
+    const closure = tsBundle().productionClosure(root);
+    assert.deepEqual([...closure.keys()].sort(), ["node_modules/shared-alias"]);
+    tsBundle().stage(root, outputDir);
+    assert.equal(resolveInAsset(outputDir, "", "shared-alias").version, "1.0.0");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("the staged-resolution walk follows Node's own walk from a directory", () => {
+  // The bundler only reuses a staged copy when this walk finds exactly that
+  // copy, so the walk itself is pinned: the directory's own `node_modules`, then
+  // each parent's — including the `node_modules/node_modules` step Node really
+  // checks — up to the asset root.
+  const { resolveStaged } = tsBundle();
+  const closure = new Map([
+    ["node_modules/shared", "/project/node_modules/shared"],
+    ["node_modules/a/node_modules/shared", "/project/node_modules/a/node_modules/shared"],
+  ]);
+  assert.equal(resolveStaged("node_modules/a", "shared", closure), "node_modules/a/node_modules/shared");
+  assert.equal(resolveStaged("node_modules/b", "shared", closure), "node_modules/shared");
+  assert.equal(resolveStaged("", "shared", closure), "node_modules/shared");
+  // A package that requires its own name resolves to itself, exactly as Node
+  // does from a directory that sits under its own `node_modules`.
+  assert.equal(
+    resolveStaged("node_modules/a/node_modules/shared", "shared", closure),
+    "node_modules/a/node_modules/shared",
+  );
+  assert.equal(resolveStaged("node_modules/a", "absent", closure), null);
+  assert.equal(resolveStaged("vendor/tool", "shared", closure), "node_modules/shared");
 });
 
 test("the TypeScript bundler carries peers the handler imports and skips optional ones", () => {

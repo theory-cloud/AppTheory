@@ -17,6 +17,16 @@
 // the asset. Development dependencies and a linked package's development tree
 // are never part of it, because they are not part of what the handler imports.
 //
+// Staging preserves the *installed layout*, and never dedupes by package name.
+// Two dependents can resolve two different copies of one name — one on a nested
+// install, one on the hoisted copy every other dependent shares — and a copy is
+// only reusable for a dependent that can still reach it. Keeping each installed
+// package at its installed path inside the asset means every dependent's walk
+// lands on the same copy it landed on in the project, for all dependents at
+// once. The closure is then verified by re-running that walk inside the staged
+// layout and refusing to emit an asset whose resolution differs from the
+// project's.
+//
 // The file is plain CommonJS with no dependencies, because it runs twice: from
 // the CDK app during local bundling, and inside the Node bundling image where
 // the CDK mounts the project at /asset-input and collects the asset from
@@ -77,20 +87,100 @@ function resolvePackageDir(fromDir, name) {
   }
 }
 
-// Every package in the project's production dependency closure, as a map from
-// the path it must occupy inside the asset to the directory it is read from.
-//
-// The first package to claim `node_modules/<name>` keeps it, in breadth-first
-// order from the project itself, which is the hoist npm performs. A later
-// package that resolved a *different* copy of the same name is staged under its
-// parent instead, which is also where Node will look first. A name two sources
-// claim at the same destination is refused: the asset cannot carry both.
 // Whether a peer dependency is declared optional through `peerDependenciesMeta`.
 function peerIsOptional(manifest, name) {
   const meta = manifest.peerDependenciesMeta;
   return Boolean(meta && typeof meta === "object" && meta[name] && meta[name].optional === true);
 }
 
+// The names one manifest imports at run time: required first, then optional, so
+// a required peer is never demoted by also appearing in `optionalDependencies`.
+function declaredDependencies(manifest) {
+  const required = [];
+  const optional = [];
+  for (const field of REQUIRED_DEPENDENCIES) {
+    const value = manifest[field];
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    for (const name of Object.keys(value)) {
+      if (field === "peerDependencies" && peerIsOptional(manifest, name)) {
+        if (!optional.includes(name)) optional.push(name);
+      } else if (!required.includes(name) && !optional.includes(name)) {
+        required.push(name);
+      }
+    }
+  }
+  for (const field of OPTIONAL_DEPENDENCIES) {
+    const value = manifest[field];
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    for (const name of Object.keys(value)) {
+      if (!required.includes(name) && !optional.includes(name)) {
+        optional.push(name);
+      }
+    }
+  }
+  return { required, optional };
+}
+
+// Where one package must sit inside the asset so that Node's own walk finds it
+// there from every dependent that resolved it.
+//
+// A package installed inside the project keeps its installed path, which makes
+// the asset mirror the tree the project resolved in: each dependent walks its
+// own `node_modules`, then each ancestor's, then the project's, and lands on the
+// same copy it landed on before. Nothing is hoisted to a free `node_modules`
+// slot, because a slot that is free today is exactly the slot another dependent
+// resolves through.
+//
+// A package installed outside the project — inside a linked checkout, or hoisted
+// above the project root — is anchored under the placed package that contains
+// it when there is one, so a linked tree keeps its own layout; otherwise it is
+// a hoist shared above the project, which the asset represents at its root.
+function installedDestination(root, source, name, placedAt) {
+  const relative = path.relative(root, source);
+  if (source !== root && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+    return relative;
+  }
+  for (let dir = path.dirname(source); ; dir = path.dirname(dir)) {
+    const anchor = placedAt.get(dir);
+    if (anchor !== undefined) {
+      return path.join(anchor, path.relative(dir, source));
+    }
+    if (path.dirname(dir) === dir) {
+      return path.join("node_modules", name);
+    }
+  }
+}
+
+// Resolve `name` from a staged path the way Node resolves it from a directory:
+// this directory's `node_modules` first, then each parent's, up to the asset
+// root (`""`). Reuse of a staged copy is only correct when this finds it.
+function resolveStaged(from, name, closure) {
+  for (let dir = from; ; dir = path.dirname(dir) === "." ? "" : path.dirname(dir)) {
+    const candidate = path.join(dir, "node_modules", name);
+    if (closure.has(candidate)) {
+      return candidate;
+    }
+    if (dir === "") {
+      return null;
+    }
+  }
+}
+
+// Every package in the project's production dependency closure, as a map from
+// the path it must occupy inside the asset to the directory it is read from.
+//
+// Two dependents that resolved two different copies of one name keep both, at
+// their installed paths, and a dependent that resolved a copy already staged for
+// it reuses that copy — reuse is decided by destination, never by package name
+// or by "this source was already copied somewhere". A dependent whose copy's
+// installed path is claimed by a different copy gets that copy nested where its
+// own walk looks first. Finally the whole closure is re-resolved inside the
+// staged layout, and a layout that would resolve anything differently from the
+// project is refused rather than emitted.
 function productionClosure(projectRoot) {
   const root = fs.realpathSync(path.resolve(projectRoot));
   const manifest = readManifest(root);
@@ -99,75 +189,63 @@ function productionClosure(projectRoot) {
   }
 
   const closure = new Map();
-  const staged = new Set();
-  const queue = [{ dir: root, destination: null }];
+  const placedAt = new Map();
+  const edges = [];
+  const expanded = new Set();
+  const queue = [{ dir: root, destination: "" }];
 
   while (queue.length > 0) {
-    const parent = queue.shift();
-    const parentManifest = readManifest(parent.dir);
+    const { dir, destination } = queue.shift();
+    if (expanded.has(destination)) {
+      continue;
+    }
+    expanded.add(destination);
+    const parentManifest = readManifest(dir);
     if (parentManifest === null) {
       continue;
     }
-    const required = [];
-    const optional = [];
-    for (const field of REQUIRED_DEPENDENCIES) {
-      const value = parentManifest[field];
-      if (value && typeof value === "object") {
-        for (const name of Object.keys(value)) {
-          if (field === "peerDependencies" && peerIsOptional(parentManifest, name)) {
-            if (!optional.includes(name)) optional.push(name);
-          } else if (!required.includes(name) && !optional.includes(name)) {
-            required.push(name);
-          }
-        }
-      }
-    }
-    for (const field of OPTIONAL_DEPENDENCIES) {
-      const value = parentManifest[field];
-      if (value && typeof value === "object") {
-        for (const name of Object.keys(value)) {
-          if (!required.includes(name) && !optional.includes(name)) {
-            optional.push(name);
-          }
-        }
-      }
-    }
+    const { required, optional } = declaredDependencies(parentManifest);
 
     for (const name of [...required, ...optional]) {
-      const source = resolvePackageDir(parent.dir, name);
+      const source = resolvePackageDir(dir, name);
       if (source === null) {
         if (optional.includes(name)) {
           continue;
         }
-        throw new Error(
-          `bundling: ${parent.dir} declares ${name} but it is not installed; run npm install`,
-        );
-      }
-      if (staged.has(source)) {
-        continue;
+        throw new Error(`bundling: ${dir} declares ${name} but it is not installed; run npm install`);
       }
 
-      const hoisted = path.join("node_modules", name);
-      let destination = hoisted;
-      const hoistedSource = closure.get(hoisted);
-      if (hoistedSource !== undefined && hoistedSource !== source) {
-        if (parent.destination === null) {
+      let target = installedDestination(root, source, name, placedAt);
+      if (closure.has(target) && closure.get(target) !== source) {
+        target = path.join(destination, "node_modules", name);
+        const nested = closure.get(target);
+        if (nested !== undefined && nested !== source) {
           throw new Error(
-            `bundling: ${hoisted} is claimed by both ${hoistedSource} and ${source}; the asset cannot carry both`,
+            `bundling: ${target} is claimed by both ${nested} and ${source}; the asset cannot carry both`,
           );
         }
-        destination = path.join(parent.destination, "node_modules", name);
-      }
-      const existing = closure.get(destination);
-      if (existing !== undefined && existing !== source) {
-        throw new Error(
-          `bundling: ${destination} is claimed by both ${existing} and ${source}; the asset cannot carry both`,
-        );
       }
 
-      closure.set(destination, source);
-      staged.add(source);
-      queue.push({ dir: source, destination });
+      if (!closure.has(target)) {
+        closure.set(target, source);
+        queue.push({ dir: source, destination: target });
+      }
+      if (!placedAt.has(source)) {
+        placedAt.set(source, target);
+      }
+      edges.push({ dependent: destination, name, dependency: target });
+    }
+  }
+
+  for (const { dependent, name, dependency } of edges) {
+    const found = resolveStaged(dependent, name, closure);
+    if (found !== dependency) {
+      throw new Error(
+        `bundling: the asset cannot reproduce the project's resolution: ` +
+          `${name} resolves to ${dependency} in the project but ` +
+          `${found === null ? "nothing" : found} would be found from ` +
+          `${dependent === "" ? "the asset root" : dependent}`,
+      );
     }
   }
 
@@ -241,7 +319,7 @@ function assetBundling(runtime, projectRoot) {
   };
 }
 
-module.exports = { assetBundling, productionClosure, stage };
+module.exports = { assetBundling, productionClosure, resolveStaged, stage };
 
 if (require.main === module) {
   const [projectRoot, outputDir] = process.argv.slice(2);
