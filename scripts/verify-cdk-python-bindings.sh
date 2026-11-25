@@ -9,6 +9,13 @@
 # builds the wheel from `cdk/`, installs it with the runtime versions the wheel
 # itself requires in a throwaway virtual environment, and runs
 # `cdk/test-python/naming_bindings_test.py`.
+#
+# Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED. BLOCKED means this host or job cannot
+# run the check at all (a missing tool, or a wheel whose runtime requirements
+# cannot be installed). A failure inside `jsii-pacmak` is a FAIL: it builds the
+# distribution the gate proves, and it fetches its own Python build toolchain
+# while doing so, so an offline host fails there as FAIL rather than BLOCKED
+# (ADV-N3-R1).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -37,7 +44,18 @@ trap cleanup EXIT
 
 # jsii writes the assembly the Python target consumes.
 (cd cdk && npm run build >/dev/null)
-(cd cdk && npx jsii-pacmak -t python -o "${tmp_dir}/dist" --force >/dev/null)
+
+# This step is a FAIL whatever its cause: `jsii-pacmak` builds the Python
+# distribution inside this gate, and it fetches its own Python build toolchain
+# while doing so, so an offline host fails here too. The gate marks only the
+# wheel install below BLOCKED, because that step's failure is always a missing
+# or unreachable runtime rather than a defect in what this repository builds.
+pacmak_log="${tmp_dir}/jsii-pacmak.log"
+if ! (cd cdk && npx jsii-pacmak -t python -o "${tmp_dir}/dist" --force >"${pacmak_log}" 2>&1); then
+  cat "${pacmak_log}" >&2
+  echo "cdk-python-bindings: FAIL (jsii-pacmak could not build the CDK Python distribution; this window is a FAIL for every cause, including an offline host that cannot fetch pacmak's own Python build toolchain)" >&2
+  exit 1
+fi
 
 wheel="$(find "${tmp_dir}/dist/python" -maxdepth 1 -name '*.whl' -print -quit)"
 if [[ -z "${wheel}" ]]; then
