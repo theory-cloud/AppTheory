@@ -1788,3 +1788,18 @@ test("R4: the jsii scope and synth-check primitives refuse an unknown type", () 
     /LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account/,
   );
 });
+
+test("F3: the jsii scope primitive refuses inherited property names", () => {
+  const naming = apptheory.AppTheoryResourceNaming;
+  for (const inherited of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    assert.throws(() => naming.namingScope(inherited), /no stated naming scope/, inherited);
+    assert.throws(
+      () =>
+        naming.synthCheck([
+          { type: inherited, name: "shop-lab-worker", logicalId: "Worker" },
+        ]),
+      /no stated naming scope/,
+      inherited,
+    );
+  }
+});

@@ -163,6 +163,17 @@ export const RESOURCE_NAME_RULES: { [type: string]: ResourceNameRule } = {
 };
 
 /**
+ * The rules of one contract type, or `undefined` when the contract states none
+ * (contract section 2). The lookup is an own-property check, so an inherited
+ * name such as `constructor`, `toString`, `__proto__` or `hasOwnProperty` is an
+ * unknown type, never a type with rules.
+ */
+function namingRule(resourceType: string): ResourceNameRule | undefined {
+  if (!Object.hasOwn(RESOURCE_NAME_RULES, resourceType)) return undefined;
+  return RESOURCE_NAME_RULES[resourceType];
+}
+
+/**
  * API name types. The CDK defaults an API Name today, so a name for one is
  * explicit and takes a pin, never a generated entry (r3, ADV-1312-3).
  */
@@ -300,7 +311,7 @@ export function physicalResourceName(
 ): ComposedName {
   validateNamingContext(context);
   if (!LOGICAL_RE.test(logical)) fail("logical");
-  const rule = RESOURCE_NAME_RULES[resourceType];
+  const rule = namingRule(resourceType);
   if (!rule) fail(`resource type ${resourceType}`);
   const legacy = (context.naming_profile ?? "derived") === "legacy";
   if (generated.length > 0 && !legacy) {
@@ -562,7 +573,7 @@ const NOT_UNIQUE_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
  * revision states its scope.
  */
 export function namingScope(resourceType: string): NamingScope {
-  if (!(resourceType in RESOURCE_NAME_RULES)) {
+  if (namingRule(resourceType) === undefined) {
     throw new Error("a type with no stated naming scope cannot be reserved");
   }
   if (NOT_UNIQUE_TYPES.has(resourceType)) return "not_unique";

@@ -241,5 +241,17 @@ class VisibilityTests(unittest.TestCase):
         )
 
 
+    def test_inherited_property_names_are_unknown_types(self) -> None:
+        # Python has no prototype chain, so the equivalent surface is parity: the
+        # same names JavaScript inherits must be refused here too (r4,
+        # SANITY-AT-N3-03).
+        for inherited in ("constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"):
+            with self.subTest(resource_type=inherited):
+                with self.assertRaisesRegex(ValueError, "no stated naming scope"):
+                    naming_scope(inherited)
+                with self.assertRaisesRegex(ValueError, "no stated naming scope"):
+                    synth_check([{"name": "shop-lab-worker", "type": inherited, "logical_id": "Worker"}])
+
+
 if __name__ == "__main__":
     unittest.main()

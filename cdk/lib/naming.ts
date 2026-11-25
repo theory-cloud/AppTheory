@@ -380,6 +380,17 @@ const RULES: { [type: string]: Rule } = {
 };
 
 /**
+ * The rules of one contract type, or `undefined` when the contract states none
+ * (contract section 2). The lookup is an own-property check, so an inherited
+ * name such as `constructor`, `toString`, `__proto__` or `hasOwnProperty` is an
+ * unknown type, never a type with rules.
+ */
+function namingRule(resourceType: string): Rule | undefined {
+  if (!Object.hasOwn(RULES, resourceType)) return undefined;
+  return RULES[resourceType];
+}
+
+/**
  * API name types. The CDK defaults an API Name today, so a name for one is
  * explicit and takes a pin, never a generated entry (r3, ADV-1312-3).
  */
@@ -501,7 +512,7 @@ export class AppTheoryResourceNaming {
   ): AppTheoryPhysicalName {
     AppTheoryResourceNaming.validateContext(values);
     if (!LOGICAL_RE.test(logical)) fail("logical");
-    const rule = RULES[resourceType];
+    const rule = namingRule(resourceType);
     if (!rule) fail(`resource type ${resourceType}`);
     const generated = values.generated ?? [];
     const legacy = (values.namingProfile ?? AppTheoryNamingProfile.DERIVED) === AppTheoryNamingProfile.LEGACY;
@@ -565,7 +576,7 @@ export class AppTheoryResourceNaming {
    * states its scope.
    */
   public static namingScope(resourceType: string): AppTheoryNamingScope {
-    if (!(resourceType in RULES)) fail(UNKNOWN_NAMING_SCOPE);
+    if (namingRule(resourceType) === undefined) fail(UNKNOWN_NAMING_SCOPE);
     if (NOT_UNIQUE_TYPES.has(resourceType)) return AppTheoryNamingScope.NOT_UNIQUE;
     if (ACCOUNT_GLOBAL_TYPES.has(resourceType)) return AppTheoryNamingScope.ACCOUNT;
     return AppTheoryNamingScope.ACCOUNT_REGION;

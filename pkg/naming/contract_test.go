@@ -422,3 +422,16 @@ func TestSynthCheckRefusesOneNameInOneScope(t *testing.T) {
 		t.Fatalf("a generated entry keeps no name and stays marked: %+v", generated)
 	}
 }
+
+func TestNamingScopeRefusesInheritedStyleNames(t *testing.T) {
+	// Go maps have no prototype chain, so the equivalent surface is parity: the
+	// names JavaScript inherits must be refused here too (r4, SANITY-AT-N3-03).
+	for _, name := range []string{"constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"} {
+		if _, err := NamingScope(name); !errors.Is(err, ErrUnknownNamingScope) {
+			t.Fatalf("%s: want the unknown-scope refusal, got %v", name, err)
+		}
+		if _, err := SynthCheck([]NameEntry{{Name: "shop-lab-worker", Type: name, LogicalID: "Worker"}}); !errors.Is(err, ErrUnknownNamingScope) {
+			t.Fatalf("%s: the synth check must refuse, got %v", name, err)
+		}
+	}
+}

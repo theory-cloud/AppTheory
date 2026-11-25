@@ -193,6 +193,25 @@ test("naming scopes follow contract section 11", () => {
   assert.throws(() => namingScope("opensearch_domain"), /no stated naming scope/);
 });
 
+test("an inherited property name is an unknown type, never a scope", () => {
+  // The contract states a scope per declared type. A name JavaScript inherits
+  // from Object.prototype is not one of them, so the refusal has to fire
+  // instead of accepting the key as an account-region type (r4, SANITY-AT-N3-03).
+  for (const inherited of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    assert.throws(() => namingScope(inherited), /no stated naming scope/, inherited);
+    assert.throws(
+      () => physicalResourceName(labContext(), inherited, "audit-events"),
+      /resource type/,
+      inherited,
+    );
+    assert.throws(
+      () => synthCheck([{ name: "autheory-lab-audit-events", type: inherited, logical_id: "Audit" }]),
+      /no stated naming scope/,
+      inherited,
+    );
+  }
+});
+
 test("the synth check refuses one name in one scope and keeps types apart", () => {
   const shared = synthCheck([
     { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
