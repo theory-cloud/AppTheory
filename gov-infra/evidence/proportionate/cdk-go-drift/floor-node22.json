@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 16.692,
+      "durationSeconds": 16.207,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T20:58:02Z",
+      "finishedAt": "2026-11-25T22:11:25Z",
       "id": "cdk-go-drift",
-      "inputsDigest": "sha256:63fd4584e016f011618387784c8095645bc29fc7c198c4baccdc94f7b0e0c530",
+      "inputsDigest": "sha256:8b8b9c46a60917f59329e82266aba177200f36c1bfb292f13384b86b6a6203d2",
       "logDigest": "sha256:2da4112b9fe7d2aa3b97d4d893dc9ed5a3c3ffbc7db7d99a50cfdc924d37a57c",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261125T205745Z-97082.log",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261125T221109Z-37867.log",
       "reused": false,
-      "startedAt": "2026-11-25T20:57:45Z"
+      "startedAt": "2026-11-25T22:11:09Z"
     }
   ],
   "consumed": [],
@@ -26,7 +26,7 @@
       "arch": "arm64",
       "os": "darwin"
     },
-    "python": "3.15.2"
+    "python": "3.12.14"
   },
   "gate": "cdk-go-drift",
   "kind": "source",
@@ -36,7 +36,7 @@
   },
   "profile": "floor-node22",
   "reason": "",
-  "recordedAt": "2026-11-25T20:58:02Z",
+  "recordedAt": "2026-11-25T22:11:25Z",
   "releaseOnly": {
     "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
     "fileCount": 537,
@@ -46,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:70f5324af7671dab8796309c7ce373c00aecce49acc2ed7406ff0ec52a7c9fb8",
+    "digest": "sha256:f77133e1dbc082717e6c3985ecffe635a8d2658828c5e8882ef000d1bbe8e775",
     "fileCount": 654,
     "paths": [
       "cdk/",
@@ -59,7 +59,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:14be0e69504638247f727ae227d51d6c6c5c6d92493a36b30a4ea0e2e7b21bb3",
+    "digest": "sha256:513bc73fe1fcbf6047dfdcfe1153f13c0d6feb1037f6600326fb124da04c683f",
     "fileCount": 2792
   },
   "verdict": "PASS"
