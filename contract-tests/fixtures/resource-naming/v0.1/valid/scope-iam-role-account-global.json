@@ -1,0 +1,18 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "scope-iam-role-account-global",
+  "scenario": {
+    "type": "naming_scope",
+    "resource_type": "iam_role"
+  },
+  "expected": {
+    "scope": "account"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

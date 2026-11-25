@@ -356,6 +356,10 @@ export class AppTheoryMediaCdn extends Construct {
                 objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
                 versioned: false,
             });
+            if (namingContext && logical) {
+                // Contract section 11.4: declare the resource carrying the composed name.
+                namingContext.declareName("s3_bucket", `${logical}-media`, this.bucket);
+            }
         }
 
         // Create logs bucket if S3 logging is enabled and the standard profile is

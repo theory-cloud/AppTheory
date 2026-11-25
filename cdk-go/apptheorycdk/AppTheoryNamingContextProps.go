@@ -6,14 +6,20 @@ package apptheorycdk
 // Constructs take it as an optional prop; with no context every construct
 // synthesizes exactly as it did before this contract existed.
 type AppTheoryNamingContextProps struct {
-	// Twelve-digit account id from stage config.
+	// Twelve-digit account id from stage config. An unresolved token fails synthesis.
 	//
-	// An unresolved token fails
-	// synthesis.
+	// This is the account the derived-name artifact claims. AppTheory does not
+	// compare it with the account of the stack that declares a resource;
+	// TheoryCloud.ai's installer validates the artifact's account against the
+	// stack it deploys.
 	Account *string `field:"required" json:"account" yaml:"account"`
 	// App instance id from stage config.
 	App *string `field:"required" json:"app" yaml:"app"`
 	// Full Region code, for example `us-east-1`.
+	//
+	// This is the Region the derived-name artifact claims. AppTheory does not
+	// compare it with the Region of the stack that declares a resource;
+	// TheoryCloud.ai's installer validates it against the stack it deploys.
 	Region *string `field:"required" json:"region" yaml:"region"`
 	// Stage id from stage config.
 	Stage *string `field:"required" json:"stage" yaml:"stage"`

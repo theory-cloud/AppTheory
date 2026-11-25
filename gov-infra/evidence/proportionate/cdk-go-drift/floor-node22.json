@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 17.158,
+      "durationSeconds": 20.015,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-24T22:08:22Z",
+      "finishedAt": "2026-11-25T14:47:16Z",
       "id": "cdk-go-drift",
-      "inputsDigest": "sha256:c09f6e6916d49d3569461c777f231646708af1ab65bb32c26da6aa8e7963366f",
-      "logDigest": "sha256:354c877c8f1cafd4f99f1726042e29d6a2df195b28edc346a3e6d859389ca495",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261124T220805Z-89946.log",
+      "inputsDigest": "sha256:ded2b0ac595f660aa0e137b4aba1ea68418a628a08da05321a8ce781cd1a7030",
+      "logDigest": "sha256:2da4112b9fe7d2aa3b97d4d893dc9ed5a3c3ffbc7db7d99a50cfdc924d37a57c",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261125T144656Z-46866.log",
       "reused": false,
-      "startedAt": "2026-11-24T22:08:05Z"
+      "startedAt": "2026-11-25T14:46:56Z"
     }
   ],
   "consumed": [],
@@ -36,18 +36,23 @@
   },
   "profile": "floor-node22",
   "reason": "",
-  "recordedAt": "2026-11-24T22:08:22Z",
+  "recordedAt": "2026-11-25T14:47:16Z",
   "releaseOnly": {
-    "digest": "sha256:d02fc034e77e252e280198a904c6cbd94fd9221e15ff65bfe401a4bc96264a80",
-    "fileCount": 529,
-    "normalizedDigest": "sha256:5437076b62127e357b480533f5984b0e716b77212177f9dece067fb6a44218f9",
-    "version": "7.5.0-rc.2"
+    "digest": "sha256:ebfd685cd23e007ebc68951a25a0f146a2341acb1274664fd6e2fbdbe9416175",
+    "fileCount": 537,
+    "normalizedDigest": "sha256:d48a59a8402b6eebd2e235c8715e1324b1e837197075a4bc6e953d61cd382203",
+    "version": "7.5.0"
   },
-  "reviews": [],
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "origin/staging"
+    }
+  ],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:cdc96956c4e417420f968031f74e57362d5bd926192fda849c7db5c7c5bdc4ab",
-    "fileCount": 644,
+    "digest": "sha256:adc8925c5156ace3648905906fd67db34d873881dea1aa3a833813372348af81",
+    "fileCount": 653,
     "paths": [
       "cdk/",
       "cdk-go/",
@@ -59,8 +64,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d981972373826f4180292002eddf338ecd37151ec198cc7411e6bd14b482657e",
-    "fileCount": 2774
+    "digest": "sha256:7b51dd768168ea315435cedafb63daa3539892a8913eef051f05cb9b599c5910",
+    "fileCount": 2783
   },
   "verdict": "PASS"
 }

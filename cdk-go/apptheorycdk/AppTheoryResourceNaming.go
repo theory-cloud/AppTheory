@@ -36,6 +36,25 @@ func AppTheoryResourceNaming_CompileVisibilityPolicyJson(values *AppTheoryNaming
 	return returns
 }
 
+// The derived-name artifact as the cloud-assembly metadata document, with the contract's snake_case wire keys and a deterministic entry order.
+func AppTheoryResourceNaming_DerivedNamesJson(artifact *AppTheoryDerivedNames) *string {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_DerivedNamesJsonParameters(artifact); err != nil {
+		panic(err)
+	}
+	var returns *string
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"derivedNamesJson",
+		[]interface{}{artifact},
+		&returns,
+	)
+
+	return returns
+}
+
 // Keeper's read decision, in the runtimes' parameter order.
 //
 // Fails closed on a
@@ -109,6 +128,25 @@ func AppTheoryResourceNaming_ManifestJson(manifest *AppTheoryVisibilityManifest)
 		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
 		"manifestJson",
 		[]interface{}{manifest},
+		&returns,
+	)
+
+	return returns
+}
+
+// The scope in which AWS requires a type's names to be unique (contract section 11.1). A type the contract states no scope for is refused: it cannot be reserved, so it cannot be deployed through the index until a revision states its scope.
+func AppTheoryResourceNaming_NamingScope(resourceType *string) AppTheoryNamingScope {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_NamingScopeParameters(resourceType); err != nil {
+		panic(err)
+	}
+	var returns AppTheoryNamingScope
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"namingScope",
+		[]interface{}{resourceType},
 		&returns,
 	)
 
@@ -218,6 +256,33 @@ func AppTheoryResourceNaming_SourceVisible(rules *AppTheoryVisibilityRules, logi
 	return returns
 }
 
+// Refuse two different logical resources in one naming context that derive the same name in the same naming scope, and return the derived-name artifact (contract section 11.4). A Lambda function and its IAM role may share a name because their scopes differ, and two APIs may share one because AWS does not keep API names unique. Rows keep the order of the entries.
+//
+// `logicalId` is the resource's identity inside the naming context: its
+// CloudFormation logical id, or the owning stack's construct path plus that
+// logical id when the context spans several stacks. A CloudFormation logical id
+// is unique only inside one template, so a caller that owns more than one
+// template must pass the qualified form; otherwise two resources in different
+// stacks with the same local logical id look like one re-declared resource
+// (SANITY-AT-N3-05). The returned row echoes the identity it was given.
+func AppTheoryResourceNaming_SynthCheck(entries *[]*AppTheoryDerivedNameInput) *[]*AppTheoryDerivedName {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_SynthCheckParameters(entries); err != nil {
+		panic(err)
+	}
+	var returns *[]*AppTheoryDerivedName
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"synthCheck",
+		[]interface{}{entries},
+		&returns,
+	)
+
+	return returns
+}
+
 // Validate the bound context grammar.
 //
 // Throws on an invalid context.
@@ -231,6 +296,36 @@ func AppTheoryResourceNaming_ValidateContext(values *AppTheoryNamingContextValue
 		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
 		"validateContext",
 		[]interface{}{values},
+	)
+}
+
+// Validate a physical name the contract fixes rather than derives against the character and shape rules of the type's section 2 row: charset, the length range (**both** bounds when the row states a lower one, not only the upper), the S3 start/end rule, the path rules (lead, non-empty segments, depth, reserved prefixes, the `alias/aws/` namespace) and the secret ARN-suffix rule.
+//
+// Throws on a name outside them.
+//
+// This is the section 2 table, not a second one: it reads the same rule rows
+// the derivation uses. A `log_group` accepts `/` in addition to the section 2
+// charset, but only for the two fixed shapes contract section 3 states: a
+// log-source name (which carries no `/` at all, because section 3 joins its
+// segments with `_`) or the Lambda service path `/aws/lambda/{function name}`,
+// whose function name satisfies the `lambda_function` row. Any other
+// `/`-bearing log group is refused (SANITY-AT-N3-08).
+//
+// The check is **structural**: it holds no context values, so it cannot tell
+// whether a log-source-shaped name is this naming context's own source. The
+// context completes that rule in `AppTheoryNamingContext.declareFixedName`,
+// which owns the bound `theorycloud_{namespace}_{app}_{stage}_` prefix
+// (SANITY-AT-N3-08, round 4).
+func AppTheoryResourceNaming_ValidatePhysicalName(resourceType *string, name *string) {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_ValidatePhysicalNameParameters(resourceType, name); err != nil {
+		panic(err)
+	}
+	_jsii_.StaticInvokeVoid(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"validatePhysicalName",
+		[]interface{}{resourceType, name},
 	)
 }
 

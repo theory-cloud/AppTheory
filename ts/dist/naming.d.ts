@@ -123,4 +123,40 @@ export declare function visibilityPreview(rules: VisibilityRules, sources: strin
 export declare function visibilityManifest(rules: VisibilityRules, sources: string[]): VisibilityManifest;
 /** Keeper's answer to a read request. Fails closed on denial or unreachable. */
 export declare function keeperDecision(rules: VisibilityRules | undefined, logical: string, awsResult: string): KeeperAnswer;
+/** The scope in which AWS requires a type's names to be unique (§11.1). */
+export type NamingScope = "account" | "account_region" | "not_unique";
+/**
+ * The scope in which AWS requires a type's names to be unique (contract section
+ * 11.1). A type the contract states no scope for is refused: it cannot be
+ * reserved, so it cannot be deployed through the reservation index until a
+ * revision states its scope.
+ */
+export declare function namingScope(resourceType: string): NamingScope;
+/**
+ * One physically named resource a stack declares, as the synth check consumes
+ * it. A generated entry carries no name: CloudFormation owns the name, so there
+ * is nothing to reserve.
+ */
+export interface NameEntry {
+    readonly name?: string;
+    readonly type: string;
+    readonly logical_id: string;
+    readonly generated?: boolean;
+}
+/** One row of the derived-name artifact (§11.4): the set §11.2 reserves. */
+export interface DerivedName {
+    readonly name?: string;
+    readonly type: string;
+    readonly scope: NamingScope;
+    readonly logical_id: string;
+    readonly generated?: boolean;
+}
+/**
+ * Refuse two different logical resources in one naming context that derive the
+ * same name in the same naming scope, and return the derived-name artifact
+ * (contract section 11.4). A Lambda function and its IAM role may share a name
+ * because their scopes differ, and two APIs may share one because AWS does not
+ * keep API names unique. Rows keep the order of the entries.
+ */
+export declare function synthCheck(entries: NameEntry[]): DerivedName[];
 //# sourceMappingURL=naming.d.ts.map

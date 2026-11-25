@@ -26,6 +26,17 @@ func validateAppTheoryResourceNaming_CompileVisibilityPolicyJsonParameters(value
 	return nil
 }
 
+func validateAppTheoryResourceNaming_DerivedNamesJsonParameters(artifact *AppTheoryDerivedNames) error {
+	if artifact == nil {
+		return fmt.Errorf("parameter artifact is required, but nil was provided")
+	}
+	if err := _jsii_.ValidateStruct(artifact, func() string { return "parameter artifact" }); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func validateAppTheoryResourceNaming_KeeperDecisionParameters(rules *AppTheoryVisibilityRules, logical *string, awsResult *string) error {
 	if rules == nil {
 		return fmt.Errorf("parameter rules is required, but nil was provided")
@@ -77,6 +88,14 @@ func validateAppTheoryResourceNaming_ManifestJsonParameters(manifest *AppTheoryV
 	}
 	if err := _jsii_.ValidateStruct(manifest, func() string { return "parameter manifest" }); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateAppTheoryResourceNaming_NamingScopeParameters(resourceType *string) error {
+	if resourceType == nil {
+		return fmt.Errorf("parameter resourceType is required, but nil was provided")
 	}
 
 	return nil
@@ -150,12 +169,37 @@ func validateAppTheoryResourceNaming_SourceVisibleParameters(rules *AppTheoryVis
 	return nil
 }
 
+func validateAppTheoryResourceNaming_SynthCheckParameters(entries *[]*AppTheoryDerivedNameInput) error {
+	if entries == nil {
+		return fmt.Errorf("parameter entries is required, but nil was provided")
+	}
+	for idx_87d05c, v := range *entries {
+		if err := _jsii_.ValidateStruct(v, func() string { return fmt.Sprintf("parameter entries[%#v]", idx_87d05c) }); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func validateAppTheoryResourceNaming_ValidateContextParameters(values *AppTheoryNamingContextValues) error {
 	if values == nil {
 		return fmt.Errorf("parameter values is required, but nil was provided")
 	}
 	if err := _jsii_.ValidateStruct(values, func() string { return "parameter values" }); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateAppTheoryResourceNaming_ValidatePhysicalNameParameters(resourceType *string, name *string) error {
+	if resourceType == nil {
+		return fmt.Errorf("parameter resourceType is required, but nil was provided")
+	}
+
+	if name == nil {
+		return fmt.Errorf("parameter name is required, but nil was provided")
 	}
 
 	return nil

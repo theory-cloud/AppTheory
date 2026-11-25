@@ -8,6 +8,10 @@ func validateAppTheoryResourceNaming_CompileVisibilityPolicyJsonParameters(value
 	return nil
 }
 
+func validateAppTheoryResourceNaming_DerivedNamesJsonParameters(artifact *AppTheoryDerivedNames) error {
+	return nil
+}
+
 func validateAppTheoryResourceNaming_KeeperDecisionParameters(rules *AppTheoryVisibilityRules, logical *string, awsResult *string) error {
 	return nil
 }
@@ -21,6 +25,10 @@ func validateAppTheoryResourceNaming_LogSourcePrefixParameters(values *AppTheory
 }
 
 func validateAppTheoryResourceNaming_ManifestJsonParameters(manifest *AppTheoryVisibilityManifest) error {
+	return nil
+}
+
+func validateAppTheoryResourceNaming_NamingScopeParameters(resourceType *string) error {
 	return nil
 }
 
@@ -44,7 +52,15 @@ func validateAppTheoryResourceNaming_SourceVisibleParameters(rules *AppTheoryVis
 	return nil
 }
 
+func validateAppTheoryResourceNaming_SynthCheckParameters(entries *[]*AppTheoryDerivedNameInput) error {
+	return nil
+}
+
 func validateAppTheoryResourceNaming_ValidateContextParameters(values *AppTheoryNamingContextValues) error {
+	return nil
+}
+
+func validateAppTheoryResourceNaming_ValidatePhysicalNameParameters(resourceType *string, name *string) error {
 	return nil
 }
 

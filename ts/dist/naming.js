@@ -105,6 +105,17 @@ export const RESOURCE_NAME_RULES = {
     log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
 };
 /**
+ * The rules of one contract type, or `undefined` when the contract states none
+ * (contract section 2). The lookup is an own-property check, so an inherited
+ * name such as `constructor`, `toString`, `__proto__` or `hasOwnProperty` is an
+ * unknown type, never a type with rules.
+ */
+function namingRule(resourceType) {
+    if (!Object.hasOwn(RESOURCE_NAME_RULES, resourceType))
+        return undefined;
+    return RESOURCE_NAME_RULES[resourceType];
+}
+/**
  * API name types. The CDK defaults an API Name today, so a name for one is
  * explicit and takes a pin, never a generated entry (r3, ADV-1312-3).
  */
@@ -179,7 +190,7 @@ export function physicalResourceName(context, resourceType, logical, pins = {}, 
     validateNamingContext(context);
     if (!LOGICAL_RE.test(logical))
         fail("logical");
-    const rule = RESOURCE_NAME_RULES[resourceType];
+    const rule = namingRule(resourceType);
     if (!rule)
         fail(`resource type ${resourceType}`);
     const legacy = (context.naming_profile ?? "derived") === "legacy";
@@ -378,5 +389,62 @@ export function keeperDecision(rules, logical, awsResult) {
     if (awsResult === "empty" || awsResult === "not_found")
         return "allowed_no_events";
     return "not_shared";
+}
+/** The types AWS keeps unique across Regions. */
+const ACCOUNT_GLOBAL_TYPES = new Set([
+    "iam_role",
+    "iam_managed_policy",
+    "dashboard",
+]);
+/** The API display names AWS does not keep unique, so nothing is reserved. */
+const NOT_UNIQUE_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
+/**
+ * The scope in which AWS requires a type's names to be unique (contract section
+ * 11.1). A type the contract states no scope for is refused: it cannot be
+ * reserved, so it cannot be deployed through the reservation index until a
+ * revision states its scope.
+ */
+export function namingScope(resourceType) {
+    if (namingRule(resourceType) === undefined) {
+        throw new Error("a type with no stated naming scope cannot be reserved");
+    }
+    if (NOT_UNIQUE_TYPES.has(resourceType))
+        return "not_unique";
+    if (ACCOUNT_GLOBAL_TYPES.has(resourceType))
+        return "account";
+    return "account_region";
+}
+/**
+ * Refuse two different logical resources in one naming context that derive the
+ * same name in the same naming scope, and return the derived-name artifact
+ * (contract section 11.4). A Lambda function and its IAM role may share a name
+ * because their scopes differ, and two APIs may share one because AWS does not
+ * keep API names unique. Rows keep the order of the entries.
+ */
+export function synthCheck(entries) {
+    const seen = new Map();
+    const artifact = [];
+    for (const entry of entries) {
+        const scope = namingScope(entry.type);
+        const row = {
+            ...(entry.name !== undefined && !entry.generated
+                ? { name: entry.name }
+                : {}),
+            type: entry.type,
+            scope,
+            logical_id: entry.logical_id,
+            ...(entry.generated ? { generated: true } : {}),
+        };
+        artifact.push(row);
+        if (scope === "not_unique" || entry.generated)
+            continue;
+        const key = `${scope}\u0000${entry.type}\u0000${entry.name ?? ""}`;
+        const held = seen.get(key);
+        if (held !== undefined && held !== entry.logical_id) {
+            throw new Error(`${held} and ${entry.logical_id} derive ${entry.name ?? ""} in scope ${scope}`);
+        }
+        seen.set(key, entry.logical_id);
+    }
+    return artifact;
 }
 //# sourceMappingURL=naming.js.map

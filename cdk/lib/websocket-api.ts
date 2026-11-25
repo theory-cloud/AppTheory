@@ -95,6 +95,10 @@ export class AppTheoryWebSocketApi extends Construct {
     this.api = new apigwv2.WebSocketApi(this, "Api", {
       apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
     });
+    if (namingContext && logical) {
+      // Contract section 11.4: declare the resource carrying the composed name.
+      namingContext.declareName("api_websocket", logical, this.api);
+    }
 
     const useRouteSpecificHandlers =
       Boolean(props.connectHandler) || Boolean(props.disconnectHandler) || Boolean(props.defaultHandler);
@@ -155,6 +159,9 @@ export class AppTheoryWebSocketApi extends Construct {
         },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
+      if (namingContext && logical) {
+        namingContext.declareName("dynamodb_table", `${logical}-connections`, this.connectionTable);
+      }
     }
 
     if (this.connectionTable) {
@@ -186,6 +193,9 @@ export class AppTheoryWebSocketApi extends Construct {
               removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
             });
       this.accessLogGroup = logGroup;
+      if (standard && namingContext && logical && !props.accessLogGroup) {
+        namingContext.declareName("log_group", `logs/access/api/${logical}`, logGroup);
+      }
 
       logGroup.addToResourcePolicy(
         new iam.PolicyStatement({

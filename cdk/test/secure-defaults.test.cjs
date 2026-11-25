@@ -40,9 +40,15 @@ function labContext(stack, overrides = {}) {
   });
 }
 
-function synth(build) {
+// A naming context and every stack that declares through it must resolve to one
+// environment (SANITY-AT-N3-06), so the legacy-profile test builds its stack in
+// the live account too.
+const LAB_ENV = { account: ACCOUNT, region: "us-east-1" };
+const LIVE_ENV = { account: "784055308075", region: "us-east-1" };
+
+function synth(build, env = LAB_ENV) {
   const app = new cdk.App();
-  const stack = new cdk.Stack(app, "Stack", { env: { account: ACCOUNT, region: "us-east-1" } });
+  const stack = new cdk.Stack(app, "Stack", { env });
   build(stack);
   return assertions.Template.fromStack(stack).toJSON();
 }
@@ -835,6 +841,7 @@ test("S5: a legacy naming context keeps AppTheoryBucket without the TLS policy",
       }),
       logical: "assets",
     }),
+    LIVE_ENV,
   );
   assert.equal(tlsDenies(template).length, 0);
 });

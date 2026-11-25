@@ -82,7 +82,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>862 exported top-level symbols</summary>
+<summary>868 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
@@ -237,6 +237,10 @@ KEEPER_NOT_SHARED,
 log_group_name,
 LOG_SOURCE_PREFIX,
 log_source_prefix,
+naming_scope,
+NAMING_SCOPE_ACCOUNT,
+NAMING_SCOPE_ACCOUNT_REGION,
+NAMING_SCOPE_NOT_UNIQUE,
 physical_resource_name,
 RESOURCE_NAME_RULES,
 RESOURCE_NAMING_CONTRACT,
@@ -244,6 +248,8 @@ ROLE_POLICY_MAX,
 s3_account_regional_suffix,
 shorten_resource_name,
 source_visible,
+synth_check,
+UNKNOWN_NAMING_SCOPE,
 validate_naming_context,
 validate_visibility_selector,
 visibility_manifest,

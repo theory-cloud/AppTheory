@@ -718,6 +718,10 @@ export class AppTheorySsrSite extends Construct {
         removalPolicy,
         autoDeleteObjects,
       });
+    if (namingContext && logical && props.assetsBucket === undefined) {
+      // Contract section 11.4: declare the resource carrying the composed name.
+      namingContext.declareName("s3_bucket", `${logical}-assets`, this.assetsBucket);
+    }
 
     if (enableLogging && !standardLogging) {
       this.logsBucket =
@@ -761,6 +765,9 @@ export class AppTheorySsrSite extends Construct {
           removalPolicy,
           autoDeleteObjects,
         });
+      if (namingContext && logical && props.htmlStoreBucket === undefined) {
+        namingContext.declareName("s3_bucket", `${logical}-html-store`, this.htmlStoreBucket);
+      }
     }
 
     this.isrMetadataTable = props.isrMetadataTable;

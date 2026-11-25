@@ -19,6 +19,9 @@ bash ./scripts/verify-runtime-floor-claims.sh
 ./scripts/verify-cdk-deprecation-warnings.sh
 ./scripts/verify-cdk-packaging.sh
 ./scripts/verify-cdk-go.sh
+# The jsii surface is one contract in three languages: the Go binding test lives
+# in the cdk-go module above, and the Python binding synth runs here.
+./scripts/verify-cdk-python-bindings.sh
 ./scripts/verify-cdk-synth.sh
 ./scripts/verify-microvm-conformance-harness.sh
 # The scaffold gate above packs the working tree; this pairs the templates with the

@@ -359,6 +359,10 @@ export class AppTheoryHttpApi extends Construct {
       createDefaultStage: !needsExplicitStage,
       disableExecuteApiEndpoint: props.domain?.mutualTlsAuthentication !== undefined ? true : undefined,
     });
+    if (namingContext && logical) {
+      // Contract section 11.4: declare the resource carrying the composed name.
+      namingContext.declareName("api_http", logical, this.api);
+    }
 
     const stage = needsExplicitStage
       ? new apigwv2.HttpStage(this, "Stage", {
@@ -487,6 +491,10 @@ export class AppTheoryHttpApi extends Construct {
         : new logs.LogGroup(this, "AccessLogs", {
             retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
           });
+      if (standard && logical && namingContext) {
+        // Contract section 11.4: declare the resource carrying the log-source name.
+        namingContext.declareName("log_group", `logs/access/api/${logical}`, logGroup);
+      }
     } else {
       logGroup = stageOpts.accessLogging;
     }

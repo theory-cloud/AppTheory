@@ -637,7 +637,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1343 exported top-level symbols</summary>
+<summary>1351 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -833,6 +833,8 @@ WithToolContextHook, WithVerboseHandlerErrors, WithWebSocketClientFactory, WithW
 CompilePolicy,
 ComposedName,
 Contract,
+DerivedName,
+ErrUnknownNamingScope,
 FutureRules,
 KeeperActionsGroup,
 KeeperActionsStream,
@@ -845,8 +847,10 @@ LogPrefix,
 LogSourcePrefix,
 Manifest,
 ManifestBuild,
+NameEntry,
 NamingProfileDerived,
 NamingProfileLegacy,
+NamingScope,
 PhysicalName,
 Preview,
 PreviewBuild,
@@ -856,10 +860,14 @@ RolePolicyMax,
 Rules,
 RuleVersion,
 S3AccountRegionalSuffix,
+ScopeAccount,
+ScopeAccountRegion,
+ScopeNotUnique,
 SelectorARNs,
 SelectorMatches,
 ShortenName,
 Statement,
+SynthCheck,
 ValidateContext,
 ValidateSelector,
 Visible

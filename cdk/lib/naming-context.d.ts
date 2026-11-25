@@ -1,4 +1,4 @@
-import { Construct } from "constructs";
+import { IConstruct, Construct } from "constructs";
 import { AppTheoryLoggingProfile, AppTheoryNamingProfile, AppTheoryNamingContextValues, AppTheoryPhysicalName } from "./naming";
 /**
  * Properties for an `AppTheoryNamingContext`.
@@ -24,10 +24,19 @@ export interface AppTheoryNamingContextProps {
     /**
      * Twelve-digit account id from stage config. An unresolved token fails
      * synthesis.
+     *
+     * This is the account the derived-name artifact claims. AppTheory does not
+     * compare it with the account of the stack that declares a resource;
+     * TheoryCloud.ai's installer validates the artifact's account against the
+     * stack it deploys.
      */
     readonly account: string;
     /**
      * Full Region code, for example `us-east-1`.
+     *
+     * This is the Region the derived-name artifact claims. AppTheory does not
+     * compare it with the Region of the stack that declares a resource;
+     * TheoryCloud.ai's installer validates it against the stack it deploys.
      */
     readonly region: string;
     /**
@@ -81,11 +90,13 @@ export declare class AppTheoryNamingContext extends Construct {
      */
     readonly stage: string;
     /**
-     * Twelve-digit account id.
+     * Twelve-digit account id. The derived-name artifact claims this account; it
+     * is not compared with any declaring stack's account.
      */
     readonly account: string;
     /**
-     * Full Region code.
+     * Full Region code. The derived-name artifact claims this Region; it is not
+     * compared with any declaring stack's Region.
      */
     readonly region: string;
     /**
@@ -102,6 +113,13 @@ export declare class AppTheoryNamingContext extends Construct {
      * The naming entries a construct has consumed at synthesis.
      */
     private readonly consumed;
+    /**
+     * The physically named resources a construct has declared (contract section
+     * 11.4). Each declaration ties one composed name to the CloudFormation
+     * resource that carries it, so synthesis can refuse a collision and emit the
+     * derived-name artifact the reservation index reserves.
+     */
+    private readonly declared;
     /**
      * Naming profile.
      */
@@ -127,6 +145,92 @@ export declare class AppTheoryNamingContext extends Construct {
      * Compose the physical name of one resource under this context.
      */
     physicalName(resourceType: string, logical: string): AppTheoryPhysicalName;
+    /**
+     * Declare the CloudFormation resource that carries one composed name
+     * (contract section 11.4).
+     *
+     * Synthesis refuses two different logical resources in one naming context that
+     * derive the same name in the same naming scope, and emits the derived-name
+     * artifact the name reservation index reserves. A construct declares every
+     * physically named resource it creates; an application that names its own
+     * resource with `physicalName` declares it here once the resource exists, so
+     * the artifact covers it too.
+     *
+     * A name AppTheory only wires for a resource another stack owns, such as
+     * `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
+     * stack declares its own resource.
+     *
+     * A `log_group` type declares a log-source name (contract section 3): a log
+     * group takes no pin or generated entry.
+     */
+    declareName(resourceType: string, logical: string, resource: IConstruct): void;
+    /**
+     * Declare the CloudFormation resource that carries one name the contract fixes
+     * rather than derives (contract section 11.4).
+     *
+     * Two names AppTheory creates fall outside the derivation table: the Lambda
+     * service log group `/aws/lambda/{function name}`, and the visibility manifest
+     * parameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section
+     * 6). They are still names the context determines and resources the stack
+     * creates, so the artifact carries them; the reserved scope is the type's scope
+     * from contract section 11.1.
+     *
+     * An application that names its own resource with a fixed contract path
+     * declares it here too, so the artifact covers it.
+     *
+     * A fixed name is still a physical name of its type, so it must satisfy the
+     * character and shape rules of the contract's section 2 rule table for that
+     * type (length, charset, the S3 start/end rule, the SSM and KMS path rules,
+     * the secret suffix rule). A name outside them fails synthesis instead of
+     * entering the artifact as a name the installer can never create
+     * (SANITY-AT-N3-08).
+     *
+     * A fixed `log_group` name is narrowed further, because a log-group name is
+     * either this context's own log source or the Lambda service path and nothing
+     * else: the structural check in `validatePhysicalName` cannot know the bound
+     * prefix, so the context completes it here (see
+     * `assertFixedLogGroupName`).
+     */
+    declareFixedName(resourceType: string, name: string, resource: IConstruct): void;
+    /**
+     * The CloudFormation resource a declaration names. The construct's default
+     * child is the L1 resource a construct creates for itself, so an L2 construct
+     * is the expected argument.
+     */
+    private cloudFormationResource;
+    /**
+     * Refuse a declaration whose owning stack is in a different CDK Stage from the
+     * context (SANITY-AT-N3-02).
+     *
+     * Each Stage is a separate cloud assembly, and CDK validates a tree stage by
+     * stage, so the synth check never sees the other assembly: a context above a
+     * Stage cannot compare its names, and a document written after that assembly
+     * exists is silently lost. A context and every stack declaring through it
+     * therefore belong to one Stage (or to none, at the App root).
+     */
+    private assertSameStage;
+    /**
+     * Admit only the two fixed log-group shapes contract section 3 states for a
+     * log group this context owns (SANITY-AT-N3-08, round 4).
+     *
+     * A log group is either a log source of this context —
+     * `theorycloud_{namespace}_{app}_{stage}_{logical}`, built from this
+     * context's own namespace, app and stage — or the Lambda service path
+     * `/aws/lambda/{function name}`. `validatePhysicalName` already refused every
+     * other `/`-bearing shape, but it is structural: it holds no context values,
+     * so it admits any `/`-free name, including one that is no log source at all
+     * (`orders`) or one shaped for another context
+     * (`theorycloud_other_app_lab_x`). Both would enter the artifact as names the
+     * installer reserves and this app's logging never writes, so the context
+     * completes the rule where the bound prefix is known.
+     */
+    private assertFixedLogGroupName;
+    /**
+     * The nearest stack above the context, if it has one. A context created above
+     * the stacks has none: its artifact then appears on the stacks its
+     * declarations attribute to.
+     */
+    private owningStack;
     /**
      * The physical log-group name of a logical source under this context.
      */

@@ -3,6 +3,15 @@
  */
 export declare const RESOURCE_NAMING_CONTRACT = "theorycloud_resource_naming.v0.1";
 /**
+ * The schema identifier of the derived-name artifact a naming context emits.
+ */
+export declare const DERIVED_NAMES_SCHEMA = "apptheory_resource_naming.derived_names.v1";
+/**
+ * The cloud-assembly metadata type that carries the derived-name artifact. The
+ * artifact lands in `{stack}.metadata.json` in `cdk.out`.
+ */
+export declare const DERIVED_NAMES_METADATA_KEY = "apptheory:resource-naming/derived-names";
+/**
  * Naming profiles accepted by a naming context.
  */
 export declare enum AppTheoryNamingProfile {
@@ -132,6 +141,103 @@ export interface AppTheoryPhysicalName {
     readonly generated?: boolean;
 }
 /**
+ * One physically named resource a stack declares, as the synth check (contract
+ * section 11.4) consumes it. A generated entry carries no name: CloudFormation
+ * owns the name, so there is nothing to reserve.
+ */
+export interface AppTheoryDerivedNameInput {
+    /**
+     * The physical name. Absent for a generated entry.
+     * @default undefined
+     */
+    readonly name?: string;
+    /**
+     * The contract resource type, for example `lambda_function`.
+     */
+    readonly type: string;
+    /**
+     * The CloudFormation logical id of the resource carrying the name, or — when
+     * the caller's naming context spans several stacks — the owning stack's
+     * construct path plus that logical id, because a logical id is unique only
+     * within one template.
+     */
+    readonly logicalId: string;
+    /**
+     * Whether CloudFormation generates the name, so nothing is reserved.
+     * @default false
+     */
+    readonly generated?: boolean;
+}
+/**
+ * One row of the derived-name artifact: the complete set the name reservation
+ * index (contract section 11.2) reserves.
+ */
+export interface AppTheoryDerivedName {
+    /**
+     * The physical name. Absent for a generated entry.
+     * @default undefined
+     */
+    readonly name?: string;
+    /**
+     * The contract resource type.
+     */
+    readonly type: string;
+    /**
+     * The scope in which AWS requires the name to be unique: `account`,
+     * `account_region`, or `not_unique`.
+     */
+    readonly scope: string;
+    /**
+     * The CloudFormation logical id of the resource carrying the name.
+     */
+    readonly logicalId: string;
+    /**
+     * Whether CloudFormation generates the name, so nothing is reserved.
+     * @default false
+     */
+    readonly generated?: boolean;
+}
+/**
+ * The derived-name artifact a naming context emits at synthesis (contract
+ * section 11.4), keyed `{stack}.metadata.json` in the cloud assembly.
+ */
+export interface AppTheoryDerivedNames {
+    /**
+     * The contract identifier.
+     */
+    readonly contract: string;
+    /**
+     * The artifact schema identifier.
+     */
+    readonly schema: string;
+    /**
+     * The naming context that produced the artifact.
+     */
+    readonly context: AppTheoryNamingContextValues;
+    /**
+     * Every physically named resource the context declares, sorted by `scope`,
+     * `type`, `name` and `logicalId`.
+     */
+    readonly entries: AppTheoryDerivedName[];
+}
+/**
+ * The naming scopes of contract section 11.1.
+ */
+export declare enum AppTheoryNamingScope {
+    /**
+     * AWS keeps the name unique across the whole account, whatever the Region.
+     */
+    ACCOUNT = "account",
+    /**
+     * AWS keeps the name unique per account and Region.
+     */
+    ACCOUNT_REGION = "account_region",
+    /**
+     * AWS does not keep the name unique, so nothing is reserved for it.
+     */
+    NOT_UNIQUE = "not_unique"
+}
+/**
  * Include and exclude visibility selectors.
  */
 export interface AppTheoryVisibilityRules {
@@ -213,6 +319,57 @@ export declare class AppTheoryResourceNaming {
      * profile needs exactly one of a pin or a generated entry.
      */
     static physicalName(values: AppTheoryNamingContextValues, resourceType: string, logical: string): AppTheoryPhysicalName;
+    /**
+     * The scope in which AWS requires a type's names to be unique (contract
+     * section 11.1). A type the contract states no scope for is refused: it cannot
+     * be reserved, so it cannot be deployed through the index until a revision
+     * states its scope.
+     */
+    static namingScope(resourceType: string): AppTheoryNamingScope;
+    /**
+     * Validate a physical name the contract fixes rather than derives against the
+     * character and shape rules of the type's section 2 row: charset, the length
+     * range (**both** bounds when the row states a lower one, not only the upper),
+     * the S3 start/end rule, the path rules (lead, non-empty segments, depth,
+     * reserved prefixes, the `alias/aws/` namespace) and the secret ARN-suffix
+     * rule. Throws on a name outside them.
+     *
+     * This is the section 2 table, not a second one: it reads the same rule rows
+     * the derivation uses. A `log_group` accepts `/` in addition to the section 2
+     * charset, but only for the two fixed shapes contract section 3 states: a
+     * log-source name (which carries no `/` at all, because section 3 joins its
+     * segments with `_`) or the Lambda service path `/aws/lambda/{function name}`,
+     * whose function name satisfies the `lambda_function` row. Any other
+     * `/`-bearing log group is refused (SANITY-AT-N3-08).
+     *
+     * The check is **structural**: it holds no context values, so it cannot tell
+     * whether a log-source-shaped name is this naming context's own source. The
+     * context completes that rule in `AppTheoryNamingContext.declareFixedName`,
+     * which owns the bound `theorycloud_{namespace}_{app}_{stage}_` prefix
+     * (SANITY-AT-N3-08, round 4).
+     */
+    static validatePhysicalName(resourceType: string, name: string): void;
+    /**
+     * Refuse two different logical resources in one naming context that derive the
+     * same name in the same naming scope, and return the derived-name artifact
+     * (contract section 11.4). A Lambda function and its IAM role may share a name
+     * because their scopes differ, and two APIs may share one because AWS does not
+     * keep API names unique. Rows keep the order of the entries.
+     *
+     * `logicalId` is the resource's identity inside the naming context: its
+     * CloudFormation logical id, or the owning stack's construct path plus that
+     * logical id when the context spans several stacks. A CloudFormation logical id
+     * is unique only inside one template, so a caller that owns more than one
+     * template must pass the qualified form; otherwise two resources in different
+     * stacks with the same local logical id look like one re-declared resource
+     * (SANITY-AT-N3-05). The returned row echoes the identity it was given.
+     */
+    static synthCheck(entries: AppTheoryDerivedNameInput[]): AppTheoryDerivedName[];
+    /**
+     * The derived-name artifact as the cloud-assembly metadata document, with the
+     * contract's snake_case wire keys and a deterministic entry order.
+     */
+    static derivedNamesJson(artifact: AppTheoryDerivedNames): string;
     /**
      * Validate one selector. Throws on a selector outside the grammar.
      */

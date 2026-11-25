@@ -88,7 +88,7 @@ if [[ "${observed_module}" != "${expected_module}" ]]; then
   exit 1
 fi
 
-for handwritten_test in bindings_test.go generated_sync_test.go; do
+for handwritten_test in bindings_test.go generated_sync_test.go naming_synth_test.go; do
   if [[ ! -f "cdk-go/apptheorycdk/${handwritten_test}" ]]; then
     echo "cdk-go: FAIL (missing handwritten cdk-go/apptheorycdk/${handwritten_test})" >&2
     exit 1

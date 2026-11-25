@@ -78,26 +78,24 @@ export class AppTheoryBucket extends Construct {
         );
       }
       this.bucket = new s3.Bucket(this, "Bucket", { ...resolvedProps });
-      return;
-    }
-
-    if (composed.pinned) {
+    } else if (composed.pinned) {
       if (bucketProps.bucketNamePrefix !== undefined || bucketProps.bucketNamespace !== undefined) {
         throw new Error(
           `AppTheoryBucket cannot honor an account-regional prefix when the pin for s3_bucket:${logical} owns the name`,
         );
       }
       this.bucket = new s3.Bucket(this, "Bucket", { ...resolvedProps, bucketName: composed.name });
-      return;
+    } else {
+      if (composed.bucketNamePrefix === undefined) {
+        throw new Error(`AppTheoryBucket requires an account-regional prefix for s3_bucket:${logical}`);
+      }
+      this.bucket = new s3.Bucket(this, "Bucket", {
+        ...resolvedProps,
+        bucketNamespace: s3.BucketNamespace.ACCOUNT_REGIONAL,
+        bucketNamePrefix: composed.bucketNamePrefix,
+      });
     }
-
-    if (composed.bucketNamePrefix === undefined) {
-      throw new Error(`AppTheoryBucket requires an account-regional prefix for s3_bucket:${logical}`);
-    }
-    this.bucket = new s3.Bucket(this, "Bucket", {
-      ...resolvedProps,
-      bucketNamespace: s3.BucketNamespace.ACCOUNT_REGIONAL,
-      bucketNamePrefix: composed.bucketNamePrefix,
-    });
+    // Contract section 11.4: declare the resource carrying the composed name.
+    namingContext.declareName("s3_bucket", logical, this.bucket);
   }
 }

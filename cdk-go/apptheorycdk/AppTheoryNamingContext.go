@@ -12,6 +12,9 @@ import (
 type AppTheoryNamingContext interface {
 	constructs.Construct
 	// Twelve-digit account id.
+	//
+	// The derived-name artifact claims this account; it
+	// is not compared with any declaring stack's account.
 	Account() *string
 	// App instance id.
 	App() *string
@@ -28,6 +31,9 @@ type AppTheoryNamingContext interface {
 	// Physical pins keyed `{type}:{logical}`.
 	Pins() *map[string]*string
 	// Full Region code.
+	//
+	// The derived-name artifact claims this Region; it is not
+	// compared with any declaring stack's Region.
 	Region() *string
 	// Retention in days for standard-profile log groups.
 	RetentionDays() *float64
@@ -35,6 +41,47 @@ type AppTheoryNamingContext interface {
 	Stage() *string
 	// Whether the standard logging profile is active.
 	StandardLogging() *bool
+	// Declare the CloudFormation resource that carries one name the contract fixes rather than derives (contract section 11.4).
+	//
+	// Two names AppTheory creates fall outside the derivation table: the Lambda
+	// service log group `/aws/lambda/{function name}`, and the visibility manifest
+	// parameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section
+	// 6). They are still names the context determines and resources the stack
+	// creates, so the artifact carries them; the reserved scope is the type's scope
+	// from contract section 11.1.
+	//
+	// An application that names its own resource with a fixed contract path
+	// declares it here too, so the artifact covers it.
+	//
+	// A fixed name is still a physical name of its type, so it must satisfy the
+	// character and shape rules of the contract's section 2 rule table for that
+	// type (length, charset, the S3 start/end rule, the SSM and KMS path rules,
+	// the secret suffix rule). A name outside them fails synthesis instead of
+	// entering the artifact as a name the installer can never create
+	// (SANITY-AT-N3-08).
+	//
+	// A fixed `log_group` name is narrowed further, because a log-group name is
+	// either this context's own log source or the Lambda service path and nothing
+	// else: the structural check in `validatePhysicalName` cannot know the bound
+	// prefix, so the context completes it here (see
+	// `assertFixedLogGroupName`).
+	DeclareFixedName(resourceType *string, name *string, resource constructs.IConstruct)
+	// Declare the CloudFormation resource that carries one composed name (contract section 11.4).
+	//
+	// Synthesis refuses two different logical resources in one naming context that
+	// derive the same name in the same naming scope, and emits the derived-name
+	// artifact the name reservation index reserves. A construct declares every
+	// physically named resource it creates; an application that names its own
+	// resource with `physicalName` declares it here once the resource exists, so
+	// the artifact covers it too.
+	//
+	// A name AppTheory only wires for a resource another stack owns, such as
+	// `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
+	// stack declares its own resource.
+	//
+	// A `log_group` type declares a log-source name (contract section 3): a log
+	// group takes no pin or generated entry.
+	DeclareName(resourceType *string, logical *string, resource constructs.IConstruct)
 	// The physical log-group name of a logical source under this context.
 	LogGroupName(logical *string) *string
 	// The bound prefix shared by this app's log sources.
@@ -241,6 +288,28 @@ func AppTheoryNamingContext_IsConstruct(x interface{}) *bool {
 	)
 
 	return returns
+}
+
+func (a *jsiiProxy_AppTheoryNamingContext) DeclareFixedName(resourceType *string, name *string, resource constructs.IConstruct) {
+	if err := a.validateDeclareFixedNameParameters(resourceType, name, resource); err != nil {
+		panic(err)
+	}
+	_jsii_.InvokeVoid(
+		a,
+		"declareFixedName",
+		[]interface{}{resourceType, name, resource},
+	)
+}
+
+func (a *jsiiProxy_AppTheoryNamingContext) DeclareName(resourceType *string, logical *string, resource constructs.IConstruct) {
+	if err := a.validateDeclareNameParameters(resourceType, logical, resource); err != nil {
+		panic(err)
+	}
+	_jsii_.InvokeVoid(
+		a,
+		"declareName",
+		[]interface{}{resourceType, logical, resource},
+	)
 }
 
 func (a *jsiiProxy_AppTheoryNamingContext) LogGroupName(logical *string) *string {
