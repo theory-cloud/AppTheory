@@ -101,7 +101,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>188 exported top-level symbols</summary>
+<summary>192 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps,
@@ -143,6 +143,9 @@ AppTheoryRestV1OriginLockOptions, AppTheoryRestV1OriginReachability,
 AppTheoryBucket,
 AppTheoryBucketProps,
 AppTheoryCloudFrontLogFormat,
+AppTheoryDerivedName,
+AppTheoryDerivedNameInput,
+AppTheoryDerivedNames,
 AppTheoryKeeperAnswer,
 AppTheoryKeeperVisibility,
 AppTheoryKeeperVisibilityProps,
@@ -151,6 +154,7 @@ AppTheoryNamingContext,
 AppTheoryNamingContextProps,
 AppTheoryNamingContextValues,
 AppTheoryNamingProfile,
+AppTheoryNamingScope,
 AppTheoryPhysicalName,
 AppTheoryResourceNaming,
 AppTheoryVisibilityManifest,

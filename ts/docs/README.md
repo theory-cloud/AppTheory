@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>1001 exported top-level symbols</summary>
+<summary>1006 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest,
@@ -259,6 +259,7 @@ WebSocketClientFactory, WebSocketContext, WebSocketManagementClient, WebSocketMa
 wrapError, wrapJobLedgerError, XMLSanitizationPattern,
 compileVisibilityPolicy,
 ComposedName,
+DerivedName,
 KEEPER_ACTIONS_GROUP,
 KEEPER_ACTIONS_STREAM,
 KeeperAnswer,
@@ -267,9 +268,12 @@ LOG_SOURCE_PREFIX,
 LoggingProfile,
 logGroupName,
 logSourcePrefix,
+NameEntry,
 NamingContext,
 NamingPins,
 NamingProfile,
+NamingScope,
+namingScope,
 physicalResourceName,
 RESOURCE_NAME_RULES,
 RESOURCE_NAMING_CONTRACT,
@@ -279,6 +283,7 @@ ROLE_POLICY_MAX,
 s3AccountRegionalSuffix,
 shortenResourceName,
 sourceVisible,
+synthCheck,
 validateNamingContext,
 validateVisibilitySelector,
 VisibilityFutureRules,
