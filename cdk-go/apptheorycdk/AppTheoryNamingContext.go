@@ -35,6 +35,22 @@ type AppTheoryNamingContext interface {
 	Stage() *string
 	// Whether the standard logging profile is active.
 	StandardLogging() *bool
+	// Declare the CloudFormation resource that carries one composed name (contract section 11.4).
+	//
+	// Synthesis refuses two different logical resources in one naming context that
+	// derive the same name in the same naming scope, and emits the derived-name
+	// artifact the name reservation index reserves. A construct declares every
+	// physically named resource it creates; an application that names its own
+	// resource with `physicalName` declares it here once the resource exists, so
+	// the artifact covers it too.
+	//
+	// A name AppTheory only wires for a resource another stack owns, such as
+	// `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
+	// stack declares its own resource.
+	//
+	// A `log_group` type declares a log-source name (contract section 3): a log
+	// group takes no pin or generated entry.
+	DeclareName(resourceType *string, logical *string, resource constructs.IConstruct)
 	// The physical log-group name of a logical source under this context.
 	LogGroupName(logical *string) *string
 	// The bound prefix shared by this app's log sources.
@@ -241,6 +257,17 @@ func AppTheoryNamingContext_IsConstruct(x interface{}) *bool {
 	)
 
 	return returns
+}
+
+func (a *jsiiProxy_AppTheoryNamingContext) DeclareName(resourceType *string, logical *string, resource constructs.IConstruct) {
+	if err := a.validateDeclareNameParameters(resourceType, logical, resource); err != nil {
+		panic(err)
+	}
+	_jsii_.InvokeVoid(
+		a,
+		"declareName",
+		[]interface{}{resourceType, logical, resource},
+	)
 }
 
 func (a *jsiiProxy_AppTheoryNamingContext) LogGroupName(logical *string) *string {

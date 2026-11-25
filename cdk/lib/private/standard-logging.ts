@@ -96,10 +96,13 @@ export function standardLogGroup(
   context: AppTheoryNamingContext,
   logical: string,
 ): logs.LogGroup {
-  return new logs.LogGroup(scope, id, {
+  const logGroup = new logs.LogGroup(scope, id, {
     logGroupName: context.logGroupName(logical),
     retention: retentionFor(context.retentionDays),
   });
+  // Contract section 11.4: declare the resource carrying the log-source name.
+  context.declareName("log_group", logical, logGroup);
+  return logGroup;
 }
 
 /**
@@ -149,12 +152,15 @@ export function enableCloudFrontStandardLogging(options: {
     logType: "ACCESS_LOGS",
     resourceArn: distribution.distributionArn,
   });
+  // Contract section 11.4: declare the resources carrying the composed names.
+  context.declareName("log_delivery_source", logical, source);
 
   const destination = new logs.CfnDeliveryDestination(scope, `${id}DeliveryDestination`, {
     name: context.physicalName("log_delivery_destination", logical).name as string,
     destinationResourceArn: logGroup.logGroupArn,
     outputFormat: format,
   });
+  context.declareName("log_delivery_destination", logical, destination);
 
   const delivery = new logs.CfnDelivery(scope, `${id}Delivery`, {
     deliverySourceName: source.name,

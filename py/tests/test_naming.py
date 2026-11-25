@@ -14,8 +14,10 @@ from apptheory import (  # noqa: E402
     compile_visibility_policy,
     keeper_decision,
     log_group_name,
+    naming_scope,
     physical_resource_name,
     source_visible,
+    synth_check,
     validate_naming_context,
     visibility_manifest,
     visibility_preview,
@@ -179,6 +181,64 @@ class VisibilityTests(unittest.TestCase):
             with self.subTest(logical=logical, aws_result=aws_result):
                 self.assertEqual(keeper_decision(self.rules, logical, aws_result), want)
         self.assertEqual(keeper_decision(None, "logs/runtime/api", "events"), KEEPER_NOT_SHARED)
+
+    def test_naming_scope_follows_contract_section_11(self) -> None:
+        cases = {
+            "iam_role": "account",
+            "iam_managed_policy": "account",
+            "dashboard": "account",
+            "api_rest": "not_unique",
+            "api_http": "not_unique",
+            "api_websocket": "not_unique",
+            "lambda_function": "account_region",
+            "log_group": "account_region",
+            "s3_bucket": "account_region",
+        }
+        for resource_type, want in cases.items():
+            with self.subTest(resource_type=resource_type):
+                self.assertEqual(naming_scope(resource_type), want)
+        with self.assertRaisesRegex(ValueError, "no stated naming scope"):
+            naming_scope("opensearch_domain")
+
+    def test_synth_check_refuses_one_name_in_one_scope(self) -> None:
+        shared = synth_check(
+            [
+                {"name": "shop-lab-worker", "type": "lambda_function", "logical_id": "Worker"},
+                {"name": "shop-lab-worker", "type": "iam_role", "logical_id": "WorkerRole"},
+            ]
+        )
+        self.assertEqual(
+            shared,
+            [
+                {"name": "shop-lab-worker", "type": "lambda_function", "scope": "account_region", "logical_id": "Worker"},
+                {"name": "shop-lab-worker", "type": "iam_role", "scope": "account", "logical_id": "WorkerRole"},
+            ],
+        )
+
+        # Two APIs may share a name: AWS does not keep API display names unique.
+        synth_check(
+            [
+                {"name": "shop-lab-api", "type": "api_http", "logical_id": "First"},
+                {"name": "shop-lab-api", "type": "api_http", "logical_id": "Second"},
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account",
+        ):
+            synth_check(
+                [
+                    {"name": "shop-lab-lab-site-status", "type": "dashboard", "logical_id": "LabSiteStatus"},
+                    {"name": "shop-lab-lab-site-status", "type": "dashboard", "logical_id": "SiteStatus"},
+                ]
+            )
+
+        # A generated entry carries no name and takes no part in the check.
+        self.assertEqual(
+            synth_check([{"type": "lambda_function", "logical_id": "Worker", "generated": True}]),
+            [{"type": "lambda_function", "scope": "account_region", "logical_id": "Worker", "generated": True}],
+        )
 
 
 if __name__ == "__main__":

@@ -433,6 +433,10 @@ export class AppTheoryMicrovmController extends Construct {
       apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
       createDefaultStage: !needsExplicitStage(stageOpts, stageName),
     });
+    if (namingContext && logical) {
+      // Contract section 11.4: declare the resource carrying the composed name.
+      namingContext.declareName("api_http", logical, this.api);
+    }
 
     const stage = this.createStage(stageOpts, stageName, namingContext, logical);
     if (!stage) {
@@ -548,6 +552,10 @@ export class AppTheoryMicrovmController extends Construct {
             retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
           });
       (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
+      if (standard && namingContext && logical) {
+        // Contract section 11.4: declare the resource carrying the log-source name.
+        namingContext.declareName("log_group", `logs/access/api/${logical}`, logGroup);
+      }
 
       const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
       cfnStage.accessLogSettings = {

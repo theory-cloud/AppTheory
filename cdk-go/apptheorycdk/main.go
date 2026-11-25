@@ -182,6 +182,18 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunnerProps",
 		reflect.TypeOf((*AppTheoryCodeBuildJobRunnerProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryDerivedName",
+		reflect.TypeOf((*AppTheoryDerivedName)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryDerivedNameInput",
+		reflect.TypeOf((*AppTheoryDerivedNameInput)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryDerivedNames",
+		reflect.TypeOf((*AppTheoryDerivedNames)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping",
 		reflect.TypeOf((*AppTheoryDynamoDBStreamMapping)(nil)).Elem(),
@@ -1093,6 +1105,7 @@ func init() {
 		[]_jsii_.Member{
 			_jsii_.MemberProperty{JsiiProperty: "account", GoGetter: "Account"},
 			_jsii_.MemberProperty{JsiiProperty: "app", GoGetter: "App"},
+			_jsii_.MemberMethod{JsiiMethod: "declareName", GoMethod: "DeclareName"},
 			_jsii_.MemberProperty{JsiiProperty: "generated", GoGetter: "Generated"},
 			_jsii_.MemberProperty{JsiiProperty: "loggingProfile", GoGetter: "LoggingProfile"},
 			_jsii_.MemberMethod{JsiiMethod: "logGroupName", GoMethod: "LogGroupName"},
@@ -1130,6 +1143,15 @@ func init() {
 		map[string]interface{}{
 			"DERIVED": AppTheoryNamingProfile_DERIVED,
 			"LEGACY":  AppTheoryNamingProfile_LEGACY,
+		},
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryNamingScope",
+		reflect.TypeOf((*AppTheoryNamingScope)(nil)).Elem(),
+		map[string]interface{}{
+			"ACCOUNT":        AppTheoryNamingScope_ACCOUNT,
+			"ACCOUNT_REGION": AppTheoryNamingScope_ACCOUNT_REGION,
+			"NOT_UNIQUE":     AppTheoryNamingScope_NOT_UNIQUE,
 		},
 	)
 	_jsii_.RegisterClass(

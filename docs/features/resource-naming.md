@@ -127,6 +127,11 @@ execution role.
 API and log-group names aside, these are the entries that must appear in `pins` (or, under `legacy`, `generated`) for
 a legacy stack. Access-log groups, the Lambda runtime group and CloudFront logs buckets never appear in either list.
 
+Every construct above that creates the resource also declares it through `declareName()`, so the derived-name artifact
+covers it (see [Cross-app uniqueness](#cross-app-uniqueness)). `AppTheorySsrSite`'s
+`dynamodb_table:{logical}-isr-metadata` entry is the exception: the construct only wires the name into the SSR
+function, so the stack that creates the table declares it.
+
 ### Explicit name props
 
 When an AppTheory construct has a naming context, an explicit physical-name prop fails synthesis under either
@@ -197,14 +202,80 @@ table `{logical}-sessions`.
 The same primitives are exposed in each language:
 
 - Go: `pkg/naming` — `Context`, `ValidateContext`, `PhysicalName`, `LogGroupName`, `CompilePolicy`,
-  `PreviewBuild`, `ManifestBuild`, `KeeperDecision`.
+  `PreviewBuild`, `ManifestBuild`, `KeeperDecision`, `NamingScope`, `SynthCheck`.
 - TypeScript: `physicalResourceName`, `logGroupName`, `compileVisibilityPolicy`, `visibilityPreview`,
-  `visibilityManifest`, `keeperDecision` from `@theory-cloud/apptheory`.
+  `visibilityManifest`, `keeperDecision`, `namingScope`, `synthCheck` from `@theory-cloud/apptheory`.
 - Python: `physical_resource_name`, `log_group_name`, `compile_visibility_policy`, `visibility_preview`,
-  `visibility_manifest`, `keeper_decision` from `apptheory`.
+  `visibility_manifest`, `keeper_decision`, `naming_scope`, `synth_check` from `apptheory`.
 
 The contract corpus lives in `contract-tests/fixtures/resource-naming/v0.1/`. A conformance runner in each language
 evaluates every fixture and must agree with its `expected` value, including every rejection.
+
+## Cross-app uniqueness
+
+Derivation alone does not keep two apps from producing the same physical name: `{app}-{stage}-{logical}` with hyphens
+inside app ids and logical names is ambiguous (app `shop`, stage `lab`, logical `lab-site-status` and app `shop-lab`,
+stage `lab`, logical `site-status` both derive `shop-lab-lab-site-status`), and an over-budget shortened name can equal
+a valid one. Contract r4 adds no derivation change — every existing name is unchanged and nothing is renamed — and
+enforces uniqueness in three layers. AppTheory owns layer one (naming scope, below) and layer two (the synth check and
+its artifact); TheoryCloud.ai's installer owns layer three, the name reservation index.
+
+### Naming scope
+
+Each type has the scope in which AWS requires its names to be unique.
+
+| Scope | Types |
+|---|---|
+| `account` (global across Regions) | `iam_role`, `iam_managed_policy`, `dashboard` |
+| `account_region` | every other type except the API names; S3 account-regional buckets carry the Region in the name |
+| `not_unique` | `api_rest`, `api_http`, `api_websocket` — display names AWS does not keep unique |
+
+A type with no stated scope cannot be reserved, so it cannot be deployed through the installer until a revision states
+it: `AppTheoryResourceNaming.namingScope`, `namingScope`, and `naming_scope` refuse it. Uniqueness is per
+**(scope, type, name)**, so a Lambda function and its IAM role may share a name.
+
+### Synth check and the derived-name artifact
+
+At synthesis a naming context refuses two **different** logical resources that derive the same name in the same
+naming scope. The refusal names both CloudFormation logical ids, the name and the scope:
+
+```
+LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account
+```
+
+A Lambda function and its IAM role may share a name because their scopes differ, and two APIs may share one because
+AWS does not keep API names unique. The check runs inside one naming context, so two contexts in one stack never
+collide with each other.
+
+Every synth with a naming context writes the **derived-name artifact** the installer reserves: the complete set of
+`{name, type, scope, logical_id}` for each physically named resource the context's constructs declare, where
+`logical_id` is the CloudFormation logical id of the resource that carries the name. Constructs declare through
+`AppTheoryNamingContext.declareName(resourceType, logical, resource)`; an application that names its own resource with
+`physicalName()` declares it the same way once the resource exists.
+
+- **Location.** `cdk.out/<stack>.metadata.json`, in the cloud assembly the deploy already consumes. AppTheory writes it
+  as cloud-assembly metadata under the type `apptheory:resource-naming/derived-names` rather than to a file of its own,
+  so it travels with the assembly through `cdk synth`, `cdk deploy`, and CDK Pipelines, needs no filesystem writes
+  during synthesis, and never touches a template (the synthesized `Resources` are byte-identical to a run without it).
+- **Format.** One document per naming context:
+
+  ```json
+  {
+    "contract": "theorycloud_resource_naming.v0.1",
+    "schema": "apptheory_resource_naming.derived_names.v1",
+    "context": { "namespace": "theorycloud", "app": "shop", "stage": "lab", "account": "998115851393", "region": "us-east-1" },
+    "entries": [
+      { "name": "shop-lab-worker", "type": "iam_role", "scope": "account", "logical_id": "WorkerServiceRole8543584E" },
+      { "name": "shop-lab-worker", "type": "lambda_function", "scope": "account_region", "logical_id": "Worker11F36D0F" }
+    ]
+  }
+  ```
+
+- **Order.** Entries sort by `scope`, then `type`, then `name`, then `logical_id`, so the document is byte-identical
+  whatever order the constructs were created in.
+- **Generated entries.** A `generated` entry means CloudFormation owns the name today, so nothing exists to reserve.
+  Its row carries `"generated": true` and **no** `name`, and it takes no part in the check.
+- **Stacks without a naming context.** No check and no artifact: synthesis is byte-identical to before this contract.
 
 ## CDK
 

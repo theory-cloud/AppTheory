@@ -27,15 +27,16 @@ type fixture struct {
 }
 
 type scenario struct {
-	Type         string            `json:"type"`
-	Context      *naming.Context   `json:"context"`
-	ResourceType string            `json:"resource_type"`
-	Logical      string            `json:"logical"`
-	Pins         map[string]string `json:"pins"`
-	Generated    []string          `json:"generated"`
-	Rules        *naming.Rules     `json:"rules"`
-	Sources      []string          `json:"sources"`
-	AWSResult    *string           `json:"aws_result"`
+	Type         string             `json:"type"`
+	Context      *naming.Context    `json:"context"`
+	ResourceType string             `json:"resource_type"`
+	Logical      string             `json:"logical"`
+	Pins         map[string]string  `json:"pins"`
+	Generated    []string           `json:"generated"`
+	Rules        *naming.Rules      `json:"rules"`
+	Sources      []string           `json:"sources"`
+	AWSResult    *string            `json:"aws_result"`
+	Entries      []naming.NameEntry `json:"entries"`
 }
 
 func main() {
@@ -181,9 +182,29 @@ func evaluate(raw json.RawMessage) (any, error) {
 		return map[string]any{"answer": naming.KeeperDecision(sc.Rules, sc.Logical, awsResult)}, nil
 	case "visible":
 		return map[string]any{"visible": naming.Visible(rulesOf(sc.Rules), sc.Logical)}, nil
+	case "naming_scope":
+		return evaluateNamingScope(sc)
+	case "synth_check":
+		return evaluateSynthCheck(sc)
 	default:
 		return nil, fmt.Errorf("unknown scenario type %s", sc.Type)
 	}
+}
+
+func evaluateNamingScope(sc scenario) (any, error) {
+	scope, err := naming.NamingScope(sc.ResourceType)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"scope": scope}, nil
+}
+
+func evaluateSynthCheck(sc scenario) (any, error) {
+	artifact, err := naming.SynthCheck(sc.Entries)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"artifact": toGeneric(artifact)}, nil
 }
 
 func evaluateName(sc scenario) (any, error) {

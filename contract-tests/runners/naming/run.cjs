@@ -64,6 +64,20 @@ function evaluate(scenario) {
       return { answer: naming.keeperDecision(scenario.rules, scenario.logical, scenario.aws_result) };
     case "visible":
       return { visible: naming.sourceVisible(scenario.rules ?? {}, scenario.logical) };
+    case "naming_scope":
+      return { scope: naming.namingScope(scenario.resource_type) };
+    case "synth_check": {
+      const artifact = naming.synthCheck(scenario.entries ?? []).map((row) => {
+        const out = {};
+        if (row.name !== undefined) out.name = row.name;
+        out.type = row.type;
+        out.scope = row.scope;
+        out.logical_id = row.logical_id;
+        if (row.generated) out.generated = true;
+        return out;
+      });
+      return { artifact };
+    }
     default:
       throw new Error(`unknown scenario type ${scenario.type}`);
   }

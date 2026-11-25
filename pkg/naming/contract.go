@@ -582,3 +582,103 @@ func KeeperDecision(rules *Rules, logical, awsResult string) string {
 		return KeeperNotShared
 	}
 }
+
+// Naming scopes (contract section 11.1).
+const (
+	// ScopeAccount is the scope of names AWS keeps unique across the whole
+	// account, whatever the Region.
+	ScopeAccount = "account"
+	// ScopeAccountRegion is the scope of names AWS keeps unique per account and
+	// Region.
+	ScopeAccountRegion = "account_region"
+	// ScopeNotUnique is the scope of display names AWS does not keep unique, so
+	// nothing is reserved for them.
+	ScopeNotUnique = "not_unique"
+)
+
+// ErrUnknownNamingScope is the refusal for a type the contract states no naming
+// scope for. Such a type cannot be reserved, so it cannot be deployed through the
+// reservation index until a revision states its scope.
+var ErrUnknownNamingScope = errors.New("a type with no stated naming scope cannot be reserved")
+
+// accountGlobalTypes are the types AWS keeps unique across Regions.
+var accountGlobalTypes = map[string]struct{}{
+	"iam_role":           {},
+	"iam_managed_policy": {},
+	"dashboard":          {},
+}
+
+// notUniqueTypes are the API display names AWS does not keep unique (r4).
+var notUniqueTypes = map[string]struct{}{
+	"api_rest":      {},
+	"api_http":      {},
+	"api_websocket": {},
+}
+
+// NamingScope returns the scope in which AWS requires a type's names to be
+// unique (contract section 11.1). A type the contract states no scope for is
+// refused.
+func NamingScope(resourceType string) (string, error) {
+	if _, ok := ResourceRules[resourceType]; !ok {
+		return "", ErrUnknownNamingScope
+	}
+	if _, ok := notUniqueTypes[resourceType]; ok {
+		return ScopeNotUnique, nil
+	}
+	if _, ok := accountGlobalTypes[resourceType]; ok {
+		return ScopeAccount, nil
+	}
+	return ScopeAccountRegion, nil
+}
+
+// NameEntry is one physically named resource a stack declares, as the synth
+// check (contract section 11.4) consumes it. A generated entry carries no name:
+// CloudFormation owns the name, so there is nothing to reserve.
+type NameEntry struct {
+	Name      string `json:"name,omitempty"`
+	Type      string `json:"type"`
+	LogicalID string `json:"logical_id"`
+	Generated bool   `json:"generated,omitempty"`
+}
+
+// DerivedName is one row of the derived-name artifact: the complete set the
+// reservation index (contract section 11.2) reserves.
+type DerivedName struct {
+	Name      string `json:"name,omitempty"`
+	Type      string `json:"type"`
+	Scope     string `json:"scope"`
+	LogicalID string `json:"logical_id"`
+	Generated bool   `json:"generated,omitempty"`
+}
+
+// SynthCheck refuses two different logical resources in one naming context that
+// derive the same name in the same naming scope, and returns the derived-name
+// artifact (contract section 11.4). A Lambda function and its IAM role may share
+// a name because their scopes differ, and two APIs may share one because AWS does
+// not keep API names unique. Rows keep the order of the entries.
+func SynthCheck(entries []NameEntry) ([]DerivedName, error) {
+	seen := make(map[string]string, len(entries))
+	artifact := make([]DerivedName, 0, len(entries))
+	for _, entry := range entries {
+		scope, err := NamingScope(entry.Type)
+		if err != nil {
+			return nil, err
+		}
+		artifact = append(artifact, DerivedName{
+			Name:      entry.Name,
+			Type:      entry.Type,
+			Scope:     scope,
+			LogicalID: entry.LogicalID,
+			Generated: entry.Generated,
+		})
+		if scope == ScopeNotUnique || entry.Generated {
+			continue
+		}
+		key := scope + "\x00" + entry.Type + "\x00" + entry.Name
+		if held, ok := seen[key]; ok && held != entry.LogicalID {
+			return nil, fmt.Errorf("%s and %s derive %s in scope %s", held, entry.LogicalID, entry.Name, scope)
+		}
+		seen[key] = entry.LogicalID
+	}
+	return artifact, nil
+}

@@ -6,6 +6,17 @@ import { createHash } from "node:crypto";
 export const RESOURCE_NAMING_CONTRACT = "theorycloud_resource_naming.v0.1";
 
 /**
+ * The schema identifier of the derived-name artifact a naming context emits.
+ */
+export const DERIVED_NAMES_SCHEMA = "apptheory_resource_naming.derived_names.v1";
+
+/**
+ * The cloud-assembly metadata type that carries the derived-name artifact. The
+ * artifact lands in `{stack}.metadata.json` in `cdk.out`.
+ */
+export const DERIVED_NAMES_METADATA_KEY = "apptheory:resource-naming/derived-names";
+
+/**
  * Naming profiles accepted by a naming context.
  */
 export enum AppTheoryNamingProfile {
@@ -151,6 +162,114 @@ export interface AppTheoryPhysicalName {
 }
 
 /**
+ * One physically named resource a stack declares, as the synth check (contract
+ * section 11.4) consumes it. A generated entry carries no name: CloudFormation
+ * owns the name, so there is nothing to reserve.
+ */
+export interface AppTheoryDerivedNameInput {
+  /**
+   * The physical name. Absent for a generated entry.
+   * @default undefined
+   */
+  readonly name?: string;
+
+  /**
+   * The contract resource type, for example `lambda_function`.
+   */
+  readonly type: string;
+
+  /**
+   * The CloudFormation logical id of the resource carrying the name.
+   */
+  readonly logicalId: string;
+
+  /**
+   * Whether CloudFormation generates the name, so nothing is reserved.
+   * @default false
+   */
+  readonly generated?: boolean;
+}
+
+/**
+ * One row of the derived-name artifact: the complete set the name reservation
+ * index (contract section 11.2) reserves.
+ */
+export interface AppTheoryDerivedName {
+  /**
+   * The physical name. Absent for a generated entry.
+   * @default undefined
+   */
+  readonly name?: string;
+
+  /**
+   * The contract resource type.
+   */
+  readonly type: string;
+
+  /**
+   * The scope in which AWS requires the name to be unique: `account`,
+   * `account_region`, or `not_unique`.
+   */
+  readonly scope: string;
+
+  /**
+   * The CloudFormation logical id of the resource carrying the name.
+   */
+  readonly logicalId: string;
+
+  /**
+   * Whether CloudFormation generates the name, so nothing is reserved.
+   * @default false
+   */
+  readonly generated?: boolean;
+}
+
+/**
+ * The derived-name artifact a naming context emits at synthesis (contract
+ * section 11.4), keyed `{stack}.metadata.json` in the cloud assembly.
+ */
+export interface AppTheoryDerivedNames {
+  /**
+   * The contract identifier.
+   */
+  readonly contract: string;
+
+  /**
+   * The artifact schema identifier.
+   */
+  readonly schema: string;
+
+  /**
+   * The naming context that produced the artifact.
+   */
+  readonly context: AppTheoryNamingContextValues;
+
+  /**
+   * Every physically named resource the context declares, sorted by `scope`,
+   * `type`, `name` and `logicalId`.
+   */
+  readonly entries: AppTheoryDerivedName[];
+}
+
+/**
+ * The naming scopes of contract section 11.1.
+ */
+export enum AppTheoryNamingScope {
+  /**
+   * AWS keeps the name unique across the whole account, whatever the Region.
+   */
+  ACCOUNT = "account",
+  /**
+   * AWS keeps the name unique per account and Region.
+   */
+  ACCOUNT_REGION = "account_region",
+  /**
+   * AWS does not keep the name unique, so nothing is reserved for it.
+   */
+  NOT_UNIQUE = "not_unique",
+}
+
+/**
  * Include and exclude visibility selectors.
  */
 export interface AppTheoryVisibilityRules {
@@ -265,6 +384,23 @@ const RULES: { [type: string]: Rule } = {
  * explicit and takes a pin, never a generated entry (r3, ADV-1312-3).
  */
 const API_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
+
+/**
+ * Types AWS keeps unique across Regions (contract section 11.1).
+ */
+const ACCOUNT_GLOBAL_TYPES = new Set(["iam_role", "iam_managed_policy", "dashboard"]);
+
+/**
+ * API display names AWS does not keep unique, so nothing is reserved for them.
+ */
+const NOT_UNIQUE_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
+
+/**
+ * The refusal for a type the contract states no naming scope for: it cannot be
+ * reserved, so it cannot be deployed through the index until a revision states
+ * its scope.
+ */
+const UNKNOWN_NAMING_SCOPE = "a type with no stated naming scope cannot be reserved";
 
 const KEEPER_ACTIONS_GROUP = ["logs:FilterLogEvents", "logs:DescribeLogStreams"];
 const KEEPER_ACTIONS_STREAM = ["logs:GetLogEvents"];
@@ -420,6 +556,84 @@ export class AppTheoryResourceNaming {
       fail("s3 start/end");
     }
     return out;
+  }
+
+  /**
+   * The scope in which AWS requires a type's names to be unique (contract
+   * section 11.1). A type the contract states no scope for is refused: it cannot
+   * be reserved, so it cannot be deployed through the index until a revision
+   * states its scope.
+   */
+  public static namingScope(resourceType: string): AppTheoryNamingScope {
+    if (!(resourceType in RULES)) fail(UNKNOWN_NAMING_SCOPE);
+    if (NOT_UNIQUE_TYPES.has(resourceType)) return AppTheoryNamingScope.NOT_UNIQUE;
+    if (ACCOUNT_GLOBAL_TYPES.has(resourceType)) return AppTheoryNamingScope.ACCOUNT;
+    return AppTheoryNamingScope.ACCOUNT_REGION;
+  }
+
+  /**
+   * Refuse two different logical resources in one naming context that derive the
+   * same name in the same naming scope, and return the derived-name artifact
+   * (contract section 11.4). A Lambda function and its IAM role may share a name
+   * because their scopes differ, and two APIs may share one because AWS does not
+   * keep API names unique. Rows keep the order of the entries.
+   */
+  public static synthCheck(entries: AppTheoryDerivedNameInput[]): AppTheoryDerivedName[] {
+    const seen = new Map<string, string>();
+    const artifact: AppTheoryDerivedName[] = [];
+    for (const entry of entries) {
+      const scope = AppTheoryResourceNaming.namingScope(entry.type);
+      const generated = entry.generated === true;
+      artifact.push({
+        ...(entry.name !== undefined && !generated ? { name: entry.name } : {}),
+        type: entry.type,
+        scope,
+        logicalId: entry.logicalId,
+        ...(generated ? { generated: true } : {}),
+      });
+      if (scope === AppTheoryNamingScope.NOT_UNIQUE || generated) continue;
+      const key = `${scope}\u0000${entry.type}\u0000${entry.name ?? ""}`;
+      const held = seen.get(key);
+      if (held !== undefined && held !== entry.logicalId) {
+        fail(`${held} and ${entry.logicalId} derive ${entry.name ?? ""} in scope ${scope}`);
+      }
+      seen.set(key, entry.logicalId);
+    }
+    return artifact;
+  }
+
+  /**
+   * The derived-name artifact as the cloud-assembly metadata document, with the
+   * contract's snake_case wire keys and a deterministic entry order.
+   */
+  public static derivedNamesJson(artifact: AppTheoryDerivedNames): string {
+    const entries = [...artifact.entries]
+      .map((entry) => ({
+        ...(entry.name !== undefined && !entry.generated ? { name: entry.name } : {}),
+        type: entry.type,
+        scope: entry.scope,
+        logical_id: entry.logicalId,
+        ...(entry.generated ? { generated: true } : {}),
+      }))
+      .sort((a, b) => {
+        const key = (row: typeof a): string =>
+          [row.scope, row.type, row.name ?? "", row.logical_id].join("\u0000");
+        const left = key(a);
+        const right = key(b);
+        return left < right ? -1 : left > right ? 1 : 0;
+      });
+    return JSON.stringify({
+      contract: artifact.contract,
+      schema: artifact.schema,
+      context: {
+        namespace: artifact.context.namespace ?? LOG_PREFIX,
+        app: artifact.context.app,
+        stage: artifact.context.stage,
+        account: artifact.context.account,
+        region: artifact.context.region,
+      },
+      entries,
+    });
   }
 
   /**

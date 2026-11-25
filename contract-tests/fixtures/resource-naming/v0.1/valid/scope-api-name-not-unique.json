@@ -1,0 +1,18 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "scope-api-name-not-unique",
+  "scenario": {
+    "type": "naming_scope",
+    "resource_type": "api_http"
+  },
+  "expected": {
+    "scope": "not_unique"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

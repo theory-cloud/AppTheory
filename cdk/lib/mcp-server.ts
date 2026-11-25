@@ -913,6 +913,10 @@ export class AppTheoryMcpServer extends Construct {
       });
       (this as { ownedApi?: apigwv2.HttpApi }).ownedApi = api;
       this.api = api;
+      if (namingContext && logical) {
+        // Contract section 11.4: declare the resource carrying the composed name.
+        namingContext.declareName("api_http", logical, api);
+      }
       if (originReachability === AppTheoryMcpOriginReachability.DISABLED) {
         registerOwnedDisabledOriginValidation(this, api);
       }
@@ -947,6 +951,10 @@ export class AppTheoryMcpServer extends Construct {
               retention: stageOptions.accessLogRetention,
             });
         (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
+        if (standard && namingContext && logical) {
+          // Contract section 11.4: declare the resource carrying the log-source name.
+          namingContext.declareName("log_group", `logs/access/api/${logical}`, logGroup);
+        }
         const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
         cfnStage.accessLogSettings = {
           destinationArn: logGroup.logGroupArn,
@@ -1062,6 +1070,9 @@ export class AppTheoryMcpServer extends Construct {
       });
       table.grantReadWriteData(props.handler);
       this.sessionTable = table;
+      if (sessionNamingContext && logical) {
+        sessionNamingContext.declareName("dynamodb_table", `${logical}-sessions`, table);
+      }
       this.addEnvironment(props.handler, "MCP_SESSION_TABLE", table.tableName);
       this.addEnvironment(props.handler, "MCP_SESSION_TTL_MINUTES", String(sessionState.ttlMinutes));
     }

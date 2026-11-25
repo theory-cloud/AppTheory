@@ -1,0 +1,18 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-scope-unknown-type",
+  "scenario": {
+    "type": "naming_scope",
+    "resource_type": "opensearch_domain"
+  },
+  "expected": {
+    "error": "a type with no stated naming scope cannot be reserved"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

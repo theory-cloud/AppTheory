@@ -5,8 +5,10 @@ import {
   compileVisibilityPolicy,
   keeperDecision,
   logGroupName,
+  namingScope,
   physicalResourceName,
   sourceVisible,
+  synthCheck,
   validateNamingContext,
   visibilityManifest,
   visibilityPreview,
@@ -177,4 +179,47 @@ test("keeper decisions fail closed", () => {
   assert.equal(keeperDecision(rules, "logs/runtime/api", "unreachable"), "not_shared");
   assert.equal(keeperDecision(rules, "logs/access/api/main", "events"), "not_shared");
   assert.equal(keeperDecision(undefined, "logs/runtime/api", "events"), "not_shared");
+});
+
+test("naming scopes follow contract section 11", () => {
+  assert.equal(namingScope("iam_role"), "account");
+  assert.equal(namingScope("iam_managed_policy"), "account");
+  assert.equal(namingScope("dashboard"), "account");
+  assert.equal(namingScope("api_rest"), "not_unique");
+  assert.equal(namingScope("api_http"), "not_unique");
+  assert.equal(namingScope("api_websocket"), "not_unique");
+  assert.equal(namingScope("lambda_function"), "account_region");
+  assert.equal(namingScope("log_group"), "account_region");
+  assert.throws(() => namingScope("opensearch_domain"), /no stated naming scope/);
+});
+
+test("the synth check refuses one name in one scope and keeps types apart", () => {
+  const shared = synthCheck([
+    { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
+    { name: "shop-lab-worker", type: "iam_role", logical_id: "WorkerRole" },
+  ]);
+  assert.deepEqual(shared, [
+    { name: "shop-lab-worker", type: "lambda_function", scope: "account_region", logical_id: "Worker" },
+    { name: "shop-lab-worker", type: "iam_role", scope: "account", logical_id: "WorkerRole" },
+  ]);
+
+  assert.doesNotThrow(() =>
+    synthCheck([
+      { name: "shop-lab-api", type: "api_http", logical_id: "First" },
+      { name: "shop-lab-api", type: "api_http", logical_id: "Second" },
+    ]),
+  );
+
+  assert.throws(
+    () =>
+      synthCheck([
+        { name: "shop-lab-lab-site-status", type: "dashboard", logical_id: "LabSiteStatus" },
+        { name: "shop-lab-lab-site-status", type: "dashboard", logical_id: "SiteStatus" },
+      ]),
+    /LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account/,
+  );
+
+  assert.deepEqual(synthCheck([{ type: "lambda_function", logical_id: "Worker", generated: true }]), [
+    { type: "lambda_function", scope: "account_region", logical_id: "Worker", generated: true },
+  ]);
 });

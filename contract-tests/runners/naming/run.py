@@ -45,6 +45,10 @@ def evaluate(apptheory: Any, scenario: dict[str, Any]) -> Any:
         return {"answer": apptheory.keeper_decision(scenario.get("rules"), scenario["logical"], scenario.get("aws_result"))}
     if kind == "visible":
         return {"visible": apptheory.source_visible(scenario.get("rules", {}), scenario["logical"])}
+    if kind == "naming_scope":
+        return {"scope": apptheory.naming_scope(scenario["resource_type"])}
+    if kind == "synth_check":
+        return {"artifact": apptheory.synth_check(scenario["entries"])}
     raise ValueError(f"unknown scenario type {kind}")
 
 

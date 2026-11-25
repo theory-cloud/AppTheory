@@ -699,6 +699,14 @@ const NamingProfileLegacy = "legacy"
 
 const RolePolicyMax = 10240
 
+const ScopeAccount = "account"
+
+const ScopeAccountRegion = "account_region"
+
+const ScopeNotUnique = "not_unique"
+
+var ErrUnknownNamingScope = errors.New("a type with no stated naming scope cannot be reserved")
+
 var KeeperActionsGroup = []string{"logs:FilterLogEvents", "logs:DescribeLogStreams"}
 
 var KeeperActionsStream = []string{"logs:GetLogEvents"}
@@ -751,6 +759,14 @@ type Context struct {
 	namespaceExplicit bool
 }
 
+type DerivedName struct {
+	Name      string `json:"name,omitempty"`
+	Type      string `json:"type"`
+	Scope     string `json:"scope"`
+	LogicalID string `json:"logical_id"`
+	Generated bool   `json:"generated,omitempty"`
+}
+
 type FutureRules struct {
 	Include []string `json:"include"`
 	Exclude []string `json:"exclude"`
@@ -760,6 +776,13 @@ type Manifest struct {
 	RuleVersion string      `json:"rule_version"`
 	MatchedNow  []string    `json:"matched_now"`
 	Future      FutureRules `json:"future"`
+}
+
+type NameEntry struct {
+	Name      string `json:"name,omitempty"`
+	Type      string `json:"type"`
+	LogicalID string `json:"logical_id"`
+	Generated bool   `json:"generated,omitempty"`
 }
 
 type Policy struct {
@@ -805,6 +828,8 @@ func LogSourcePrefix(Context) string
 
 func ManifestBuild(Rules, []string) (Manifest, error)
 
+func NamingScope(string) (string, error)
+
 func NormalizeStage(string) string
 
 func PhysicalName(Context, string, string, map[string]string, []string) (ComposedName, error)
@@ -822,6 +847,8 @@ func SelectorARNs(Context, string) []string
 func SelectorMatches(string, string) bool
 
 func ShortenName(string, int) string
+
+func SynthCheck([]NameEntry) ([]DerivedName, error)
 
 func ValidateContext(Context) error
 

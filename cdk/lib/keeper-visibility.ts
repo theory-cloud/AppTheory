@@ -108,6 +108,8 @@ export class AppTheoryKeeperVisibility extends Construct {
       description: `Keeper reader role for ${context.app}/${context.stage}`,
       inlinePolicies: { Visibility: document },
     });
+    // Contract section 11.4: declare the resource carrying the composed name.
+    context.declareName("iam_role", "keeper-reader", this.readerRole);
 
     const memo: { preview?: AppTheoryVisibilityPreview } = {};
     this.previewProvider = () => {

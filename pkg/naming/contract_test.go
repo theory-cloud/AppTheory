@@ -2,6 +2,7 @@ package naming
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -347,5 +348,77 @@ func TestKeeperDecisionFailsClosed(t *testing.T) {
 	}
 	if got := KeeperDecision(nil, "logs/runtime/api", "events"); got != KeeperNotShared {
 		t.Fatalf("missing manifest must answer not_shared, got %s", got)
+	}
+}
+
+func TestNamingScopeFollowsContractSection11(t *testing.T) {
+	cases := map[string]string{
+		"iam_role":           ScopeAccount,
+		"iam_managed_policy": ScopeAccount,
+		"dashboard":          ScopeAccount,
+		"api_rest":           ScopeNotUnique,
+		"api_http":           ScopeNotUnique,
+		"api_websocket":      ScopeNotUnique,
+		"lambda_function":    ScopeAccountRegion,
+		"dynamodb_table":     ScopeAccountRegion,
+		"log_group":          ScopeAccountRegion,
+		"s3_bucket":          ScopeAccountRegion,
+	}
+	for resourceType, want := range cases {
+		got, err := NamingScope(resourceType)
+		if err != nil {
+			t.Fatalf("%s: unexpected error %v", resourceType, err)
+		}
+		if got != want {
+			t.Fatalf("%s: scope %q, want %q", resourceType, got, want)
+		}
+	}
+	if _, err := NamingScope("opensearch_domain"); !errors.Is(err, ErrUnknownNamingScope) {
+		t.Fatalf("an unknown type must be refused, got %v", err)
+	}
+}
+
+func TestSynthCheckRefusesOneNameInOneScope(t *testing.T) {
+	artifact, err := SynthCheck([]NameEntry{
+		{Name: "shop-lab-worker", Type: "lambda_function", LogicalID: "Worker"},
+		{Name: "shop-lab-worker", Type: "iam_role", LogicalID: "WorkerRole"},
+	})
+	if err != nil {
+		t.Fatalf("a Lambda function and its role may share a name: %v", err)
+	}
+	if len(artifact) != 2 || artifact[0].Scope != ScopeAccountRegion || artifact[1].Scope != ScopeAccount {
+		t.Fatalf("unexpected artifact %+v", artifact)
+	}
+
+	if _, apiErr := SynthCheck([]NameEntry{
+		{Name: "shop-lab-api", Type: "api_http", LogicalID: "First"},
+		{Name: "shop-lab-api", Type: "api_http", LogicalID: "Second"},
+	}); apiErr != nil {
+		t.Fatalf("two APIs may share a name: %v", apiErr)
+	}
+
+	_, err = SynthCheck([]NameEntry{
+		{Name: "shop-lab-lab-site-status", Type: "dashboard", LogicalID: "LabSiteStatus"},
+		{Name: "shop-lab-lab-site-status", Type: "dashboard", LogicalID: "SiteStatus"},
+	})
+	if err == nil {
+		t.Fatal("two dashboards deriving one name must be refused")
+	}
+	const want = "LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account"
+	if err.Error() != want {
+		t.Fatalf("refusal %q, want %q", err.Error(), want)
+	}
+
+	same, err := SynthCheck([]NameEntry{{Name: "shop-lab-worker", Type: "lambda_function", LogicalID: "Worker"}})
+	if err != nil || len(same) != 1 || same[0].Name != "shop-lab-worker" {
+		t.Fatalf("a single entry must pass: %v %+v", err, same)
+	}
+
+	generated, err := SynthCheck([]NameEntry{{Type: "lambda_function", LogicalID: "Worker", Generated: true}})
+	if err != nil {
+		t.Fatalf("a generated entry takes no part in the check: %v", err)
+	}
+	if len(generated) != 1 || generated[0].Name != "" || !generated[0].Generated {
+		t.Fatalf("a generated entry keeps no name and stays marked: %+v", generated)
 	}
 }

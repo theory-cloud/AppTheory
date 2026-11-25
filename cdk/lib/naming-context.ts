@@ -1,12 +1,18 @@
-import { Token } from "aws-cdk-lib";
-import { Construct } from "constructs";
+import { CfnResource, Stack, Token } from "aws-cdk-lib";
+import { IConstruct, Construct } from "constructs";
 
 import {
+  AppTheoryDerivedName,
+  AppTheoryDerivedNameInput,
+  AppTheoryDerivedNames,
   AppTheoryLoggingProfile,
   AppTheoryNamingProfile,
   AppTheoryNamingContextValues,
   AppTheoryPhysicalName,
   AppTheoryResourceNaming,
+  DERIVED_NAMES_METADATA_KEY,
+  DERIVED_NAMES_SCHEMA,
+  RESOURCE_NAMING_CONTRACT,
 } from "./naming";
 
 /**
@@ -91,6 +97,18 @@ export interface AppTheoryNamingContextProps {
 }
 
 /**
+ * One declared physically named resource: the composed name, and the construct
+ * whose CloudFormation resource carries it.
+ */
+interface AppTheoryNameDeclaration {
+  readonly type: string;
+  readonly logical: string;
+  readonly name?: string;
+  readonly generated: boolean;
+  readonly resource: IConstruct;
+}
+
+/**
  * The bound naming and logging context shared by AppTheory constructs.
  */
 export class AppTheoryNamingContext extends Construct {
@@ -133,6 +151,14 @@ export class AppTheoryNamingContext extends Construct {
    * The naming entries a construct has consumed at synthesis.
    */
   private readonly consumed = new Set<string>();
+
+  /**
+   * The physically named resources a construct has declared (contract section
+   * 11.4). Each declaration ties one composed name to the CloudFormation
+   * resource that carries it, so synthesis can refuse a collision and emit the
+   * derived-name artifact the reservation index reserves.
+   */
+  private readonly declared: AppTheoryNameDeclaration[] = [];
 
   /**
    * Naming profile.
@@ -185,10 +211,38 @@ export class AppTheoryNamingContext extends Construct {
         const orphans = [...new Set([...Object.keys(this.pins), ...this.generated])].filter(
           (key) => !this.consumed.has(key),
         );
-        if (orphans.length === 0) return [];
-        return [
-          `AppTheoryNamingContext naming entries match no resource in the stack: ${orphans.join(", ")}; remove them or pass the matching logical name to the construct that owns the resource`,
-        ];
+        const errors: string[] = [];
+        if (orphans.length > 0) {
+          errors.push(
+            `AppTheoryNamingContext naming entries match no resource in the stack: ${orphans.join(", ")}; remove them or pass the matching logical name to the construct that owns the resource`,
+          );
+        }
+
+        const entries: AppTheoryDerivedNameInput[] = this.declared.map((entry) => ({
+          ...(entry.name !== undefined ? { name: entry.name } : {}),
+          type: entry.type,
+          logicalId: this.cloudFormationLogicalId(entry),
+          ...(entry.generated ? { generated: true } : {}),
+        }));
+
+        let artifact: AppTheoryDerivedName[] = [];
+        try {
+          artifact = AppTheoryResourceNaming.synthCheck(entries);
+        } catch (error) {
+          errors.push(
+            `AppTheoryNamingContext ${String((error as Error).message)}; two different logical resources in one naming context cannot share a physical name in the same scope`,
+          );
+        }
+        if (errors.length > 0) return errors;
+
+        const document: AppTheoryDerivedNames = {
+          contract: RESOURCE_NAMING_CONTRACT,
+          schema: DERIVED_NAMES_SCHEMA,
+          context: this.values(),
+          entries: artifact,
+        };
+        this.node.addMetadata(DERIVED_NAMES_METADATA_KEY, JSON.parse(AppTheoryResourceNaming.derivedNamesJson(document)));
+        return [];
       },
     });
   }
@@ -225,6 +279,57 @@ export class AppTheoryNamingContext extends Construct {
     const composed = AppTheoryResourceNaming.physicalName(this.values(), resourceType, logical);
     this.consumed.add(`${resourceType}:${logical}`);
     return composed;
+  }
+
+  /**
+   * Declare the CloudFormation resource that carries one composed name
+   * (contract section 11.4).
+   *
+   * Synthesis refuses two different logical resources in one naming context that
+   * derive the same name in the same naming scope, and emits the derived-name
+   * artifact the name reservation index reserves. A construct declares every
+   * physically named resource it creates; an application that names its own
+   * resource with `physicalName` declares it here once the resource exists, so
+   * the artifact covers it too.
+   *
+   * A name AppTheory only wires for a resource another stack owns, such as
+   * `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
+   * stack declares its own resource.
+   *
+   * A `log_group` type declares a log-source name (contract section 3): a log
+   * group takes no pin or generated entry.
+   */
+  public declareName(resourceType: string, logical: string, resource: IConstruct): void {
+    if (resourceType === "log_group") {
+      const name = AppTheoryResourceNaming.logGroupName(this.values(), logical);
+      this.declared.push({ type: resourceType, logical, name, generated: false, resource });
+      return;
+    }
+    const composed = this.physicalName(resourceType, logical);
+    this.declared.push({
+      type: resourceType,
+      logical,
+      ...(composed.generated ? {} : { name: composed.name }),
+      generated: composed.generated === true,
+      resource,
+    });
+  }
+
+  /**
+   * The CloudFormation logical id of the resource a declaration names. The
+   * construct's default child is the L1 resource a construct creates for itself,
+   * so an L2 construct is the expected argument.
+   */
+  private cloudFormationLogicalId(declaration: AppTheoryNameDeclaration): string {
+    const resource: IConstruct = declaration.resource;
+    const candidate: IConstruct | undefined =
+      resource instanceof CfnResource ? resource : resource.node.defaultChild;
+    if (!(candidate instanceof CfnResource)) {
+      throw new Error(
+        `AppTheoryNamingContext cannot declare ${declaration.type}:${declaration.logical} because ${resource.node.path} has no CloudFormation resource as its default child; declare the construct that owns the named resource`,
+      );
+    }
+    return String(Stack.of(candidate).resolve(candidate.logicalId));
   }
 
   /**

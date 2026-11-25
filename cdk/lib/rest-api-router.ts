@@ -479,6 +479,10 @@ export class AppTheoryRestApiRouter extends Construct {
             apiKeySourceType: props.apiKeySourceType,
             deployOptions: this.buildDeployOptions(stageOpts, stageName),
         });
+        if (this.namingContext && this.logicalName) {
+            // Contract section 11.4: declare the resource carrying the composed name.
+            this.namingContext.declareName("api_rest", this.logicalName, this.api);
+        }
 
         this.stage = this.api.deploymentStage;
 
@@ -668,6 +672,10 @@ export class AppTheoryRestApiRouter extends Construct {
                 : {
                     retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
                 });
+            if (standard && this.namingContext && this.logicalName) {
+                // Contract section 11.4: declare the resource carrying the log-source name.
+                this.namingContext.declareName("log_group", `logs/access/api/${this.logicalName}`, logGroup);
+            }
             (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
             accessLogDestination = new apigw.LogGroupLogDestination(logGroup);
             accessLogFormat = accessLogFormat ?? (standard ? restApiAccessLogFormat() : apigw.AccessLogFormat.clf());

@@ -1,4 +1,4 @@
-import { Construct } from "constructs";
+import { IConstruct, Construct } from "constructs";
 import { AppTheoryLoggingProfile, AppTheoryNamingProfile, AppTheoryNamingContextValues, AppTheoryPhysicalName } from "./naming";
 /**
  * Properties for an `AppTheoryNamingContext`.
@@ -103,6 +103,13 @@ export declare class AppTheoryNamingContext extends Construct {
      */
     private readonly consumed;
     /**
+     * The physically named resources a construct has declared (contract section
+     * 11.4). Each declaration ties one composed name to the CloudFormation
+     * resource that carries it, so synthesis can refuse a collision and emit the
+     * derived-name artifact the reservation index reserves.
+     */
+    private readonly declared;
+    /**
      * Naming profile.
      */
     readonly namingProfile: AppTheoryNamingProfile;
@@ -127,6 +134,31 @@ export declare class AppTheoryNamingContext extends Construct {
      * Compose the physical name of one resource under this context.
      */
     physicalName(resourceType: string, logical: string): AppTheoryPhysicalName;
+    /**
+     * Declare the CloudFormation resource that carries one composed name
+     * (contract section 11.4).
+     *
+     * Synthesis refuses two different logical resources in one naming context that
+     * derive the same name in the same naming scope, and emits the derived-name
+     * artifact the name reservation index reserves. A construct declares every
+     * physically named resource it creates; an application that names its own
+     * resource with `physicalName` declares it here once the resource exists, so
+     * the artifact covers it too.
+     *
+     * A name AppTheory only wires for a resource another stack owns, such as
+     * `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
+     * stack declares its own resource.
+     *
+     * A `log_group` type declares a log-source name (contract section 3): a log
+     * group takes no pin or generated entry.
+     */
+    declareName(resourceType: string, logical: string, resource: IConstruct): void;
+    /**
+     * The CloudFormation logical id of the resource a declaration names. The
+     * construct's default child is the L1 resource a construct creates for itself,
+     * so an L2 construct is the expected argument.
+     */
+    private cloudFormationLogicalId;
     /**
      * The physical log-group name of a logical source under this context.
      */

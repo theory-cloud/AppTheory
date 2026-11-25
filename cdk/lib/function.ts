@@ -291,6 +291,19 @@ export class AppTheoryFunction extends Construct {
       (this as { logGroup?: logs.ILogGroupRef }).logGroup = logGroup;
     }
 
+    if (namingContext && logical) {
+      // Contract section 11.4: every composed name is declared with the
+      // CloudFormation resource that carries it, so synthesis refuses a
+      // collision and emits the derived-name artifact.
+      namingContext.declareName("lambda_function", logical, this.fn);
+      if (!lambdaProps.role && this.fn.role) {
+        namingContext.declareName("iam_role", logical, this.fn.role);
+      }
+      if (standardLogging && boundLogGroup) {
+        namingContext.declareName("log_group", `logs/runtime/${logical}`, boundLogGroup);
+      }
+    }
+
     if (alias) {
       this.configureAlias(alias);
     }

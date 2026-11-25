@@ -98,6 +98,7 @@ DefaultEmbeddingDimensions	const
 DefaultQueryTopK	const
 DefaultTitanEmbedTextModelId	const
 DeleteVectorsInput	interface
+DerivedName	interface
 DynamicClientRegistrationPolicy	interface
 DynamicClientRegistrationRequest	interface
 DynamicClientRegistrationResponse	interface
@@ -478,9 +479,11 @@ MicroVMTokenIssuanceContract	interface
 Middleware	type
 MultiWindowStrategy	class
 NAMESPACE_MCP_PATTERN	const
+NameEntry	interface
 NamingContext	interface
 NamingPins	type
 NamingProfile	type
+NamingScope	type
 OAuthBearerError	class
 OAuthDiscoveryTemplate	interface
 OAuthFacadeTemplate	interface
@@ -878,6 +881,7 @@ microVMSessionRegistryTableName	function
 microVMSessionTokenMetadataFromProviderToken	function
 min	const
 minLength	const
+namingScope	function
 newAutheoryProvider	function
 newAuthorizationServerMetadata	function
 newError	function
@@ -968,6 +972,7 @@ supportedIssuerModes	function
 supportedOAuthDiscoveryTemplates	function
 supportedOAuthFacadeTemplates	function
 supportedStageGlobalRoutes	function
+synthCheck	function
 terminalTokenVerdictCodes	function
 text	function
 timeoutMiddleware	function

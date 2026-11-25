@@ -94,7 +94,7 @@ test("the CDK naming API agrees with every contract fixture", () => {
       evaluated += 1;
     }
   }
-  assert.equal(evaluated, 83);
+  assert.equal(evaluated, 90);
 });
 
 function evaluateFixture(fixture) {
@@ -160,6 +160,27 @@ function evaluateScenario(naming, scenario) {
     }
     case "visible":
       return { visible: naming.sourceVisible(scenario.rules ?? {}, scenario.logical) };
+    case "naming_scope":
+      return { scope: naming.namingScope(scenario.resource_type) };
+    case "synth_check": {
+      const artifact = naming.synthCheck(
+        scenario.entries.map((entry) => ({
+          ...(entry.name !== undefined ? { name: entry.name } : {}),
+          type: entry.type,
+          logicalId: entry.logical_id,
+        })),
+      );
+      return {
+        artifact: artifact.map((row) => {
+          const out = {};
+          if (row.name !== undefined) out.name = row.name;
+          out.type = row.type;
+          out.scope = row.scope;
+          out.logical_id = row.logicalId;
+          return out;
+        }),
+      };
+    }
     default:
       throw new Error(`unknown scenario type ${scenario.type}`);
   }
@@ -1516,5 +1537,254 @@ test("AppTheorySsrSite takes no ISR entry when the caller supplies the metadata 
         ),
       ),
     /match no resource/,
+  );
+});
+
+// ---- r4: synth refusal and the derived-name artifact (contract section 11) --
+
+const DERIVED_NAMES_KEY = "apptheory:resource-naming/derived-names";
+
+function synthAssembly(build) {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack", { env: { account: "998115851393", region: "us-east-1" } });
+  build(stack);
+  const assembly = app.synth();
+  const artifact = assembly.getStackByName("Stack");
+  const documents = [];
+  for (const entries of Object.values(artifact.metadata ?? {})) {
+    for (const entry of entries) {
+      if (entry.type === DERIVED_NAMES_KEY) documents.push(entry.data);
+    }
+  }
+  return { template: JSON.parse(JSON.stringify(artifact.template ?? {})), documents };
+}
+
+function shopContext(stack, id = "Naming", overrides = {}) {
+  return new apptheory.AppTheoryNamingContext(stack, id, {
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+    ...overrides,
+  });
+}
+
+function shopFunction(stack, id, logicalName, context) {
+  return new apptheory.AppTheoryFunction(stack, id, {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 204 });"),
+    namingContext: context,
+    logicalName,
+  });
+}
+
+test("R1: two logical resources deriving one name in one scope fail synthesis", () => {
+  // logistics: `site/status` and `site-status` both compose shop-lab-site-status,
+  // the separator ambiguity the r4 contract exists to catch (docs/155).
+  assert.throws(
+    () =>
+      synth((stack) => {
+        const context = shopContext(stack);
+        shopFunction(stack, "Slash", "site/status", context);
+        shopFunction(stack, "Dash", "site-status", context);
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(
+        message,
+        /AppTheoryNamingContext (\S+) and (\S+) derive shop-lab-site-status in scope account_region/,
+      );
+      const [, first, second] = message.match(/AppTheoryNamingContext (\S+) and (\S+) derive /);
+      assert.notEqual(first, second);
+      assert.match(message, /two different logical resources in one naming context cannot share a physical name/);
+      return true;
+    },
+  );
+});
+
+test("R1: the refusal names the scope of an account-global type", () => {
+  assert.throws(
+    () =>
+      synth((stack) => {
+        const context = shopContext(stack);
+        new apptheory.AppTheoryKeeperVisibility(stack, "First", {
+          namingContext: context,
+          readerPrincipalArn: "arn:aws:iam::123456789012:role/cloud-keeper",
+          rules: {},
+        });
+        new apptheory.AppTheoryKeeperVisibility(stack, "Second", {
+          namingContext: context,
+          readerPrincipalArn: "arn:aws:iam::123456789012:role/cloud-keeper",
+          rules: {},
+        });
+      }),
+    /derive shop-lab-keeper-reader in scope account/,
+  );
+});
+
+test("R2: a Lambda function and its IAM role may share a name", () => {
+  const { documents } = synthAssembly((stack) => {
+    shopFunction(stack, "Worker", "worker", shopContext(stack));
+  });
+  assert.equal(documents.length, 1);
+  const rows = documents[0].entries.filter((entry) => entry.name === "shop-lab-worker");
+  assert.deepEqual(
+    rows.map((row) => [row.type, row.scope]).sort(),
+    [
+      ["iam_role", "account"],
+      ["lambda_function", "account_region"],
+    ],
+  );
+});
+
+test("R2: two APIs may share a name because AWS does not keep API names unique", () => {
+  const { documents, template } = synthAssembly((stack) => {
+    const context = shopContext(stack);
+    new apptheory.AppTheoryHttpApi(stack, "First", {
+      namingContext: context,
+      logicalName: "api",
+      handler: handler(stack, "FirstHandler"),
+    });
+    new apptheory.AppTheoryHttpApi(stack, "Second", {
+      namingContext: context,
+      logicalName: "api",
+      handler: handler(stack, "SecondHandler"),
+    });
+  });
+  const apiNames = resourcesOfType(template, "AWS::ApiGatewayV2::Api")
+    .map((api) => api.Properties?.Name)
+    .filter((name) => name !== undefined);
+  assert.deepEqual(apiNames, ["shop-lab-api", "shop-lab-api"]);
+  const rows = documents[0].entries.filter((entry) => entry.type === "api_http");
+  assert.equal(rows.length, 2);
+  for (const row of rows) assert.equal(row.scope, "not_unique");
+});
+
+test("R3: every physically named resource AppTheory declares lands in the artifact", () => {
+  const { documents, template } = synthAssembly((stack) => {
+    const context = shopContext(stack, "Naming", { loggingProfile: apptheory.AppTheoryLoggingProfile.STANDARD });
+    shopFunction(stack, "Worker", "worker", context);
+    new apptheory.AppTheoryBucket(stack, "Assets", { namingContext: context, logical: "site-assets" });
+  });
+  assert.equal(documents.length, 1);
+  const document = documents[0];
+  assert.equal(document.contract, "theorycloud_resource_naming.v0.1");
+  assert.equal(document.schema, "apptheory_resource_naming.derived_names.v1");
+  assert.deepEqual(document.context, {
+    namespace: "theorycloud",
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+  });
+
+  const logicalIds = new Set(Object.keys(template.Resources));
+  assert.ok(document.entries.length >= 4);
+  for (const row of document.entries) {
+    assert.ok(logicalIds.has(row.logical_id), `${row.logical_id} is not a template resource`);
+    assert.equal(typeof row.type, "string");
+    assert.ok(["account", "account_region", "not_unique"].includes(row.scope));
+  }
+  assert.deepEqual(
+    document.entries.map((row) => row.type).sort(),
+    ["iam_role", "lambda_function", "log_group", "s3_bucket"],
+  );
+  const bucket = document.entries.find((row) => row.type === "s3_bucket");
+  assert.equal(bucket.name, "shop-lab-site-assets-998115851393-us-east-1-an");
+  const logGroup = document.entries.find((row) => row.type === "log_group");
+  assert.equal(logGroup.name, "theorycloud_theorycloud_shop_lab_logs_runtime_worker");
+  assert.equal(logGroup.scope, "account_region");
+});
+
+test("R3: the artifact is deterministic in order and bytes", () => {
+  const build = (stack) => {
+    const context = shopContext(stack);
+    shopFunction(stack, "Worker", "worker", context);
+    new apptheory.AppTheoryBucket(stack, "Assets", { namingContext: context, logical: "site-assets" });
+    new apptheory.AppTheoryHttpApi(stack, "Api", {
+      namingContext: context,
+      logicalName: "api",
+      handler: handler(stack, "ApiHandler"),
+    });
+  };
+  const reversed = (stack) => {
+    const context = shopContext(stack);
+    new apptheory.AppTheoryHttpApi(stack, "Api", {
+      namingContext: context,
+      logicalName: "api",
+      handler: handler(stack, "ApiHandler"),
+    });
+    new apptheory.AppTheoryBucket(stack, "Assets", { namingContext: context, logical: "site-assets" });
+    shopFunction(stack, "Worker", "worker", context);
+  };
+  const first = synthAssembly(build);
+  const again = synthAssembly(build);
+  const other = synthAssembly(reversed);
+  assert.equal(JSON.stringify(first.documents), JSON.stringify(again.documents));
+  assert.equal(JSON.stringify(first.documents), JSON.stringify(other.documents));
+
+  const keys = first.documents[0].entries.map((row) =>
+    [row.scope, row.type, row.name ?? "", row.logical_id].join("\u0000"),
+  );
+  assert.deepEqual(keys, [...keys].sort());
+});
+
+test("R3: a generated entry is marked and carries no name", () => {
+  const { documents } = synthAssembly((stack) => {
+    const context = new apptheory.AppTheoryNamingContext(stack, "Naming", {
+      app: "shop",
+      stage: "live",
+      account: "784055308075",
+      region: "us-east-1",
+      namingProfile: apptheory.AppTheoryNamingProfile.LEGACY,
+      generated: ["lambda_function:worker", "iam_role:worker"],
+    });
+    shopFunction(stack, "Worker", "worker", context);
+  });
+  const rows = documents[0].entries;
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.generated, true);
+    assert.equal(row.name, undefined);
+  }
+  assert.deepEqual(rows.map((row) => row.type).sort(), ["iam_role", "lambda_function"]);
+});
+
+test("R5: a stack without a naming context emits no artifact", () => {
+  const { documents, template } = synthAssembly((stack) => {
+    new lambda.Function(stack, "Plain", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 204 });"),
+    });
+  });
+  assert.deepEqual(documents, []);
+  assert.equal(resourcesOfType(template, "AWS::S3::Bucket").length, 0);
+});
+
+test("R4: the jsii scope and synth-check primitives refuse an unknown type", () => {
+  const naming = apptheory.AppTheoryResourceNaming;
+  assert.equal(naming.namingScope("dashboard"), "account");
+  assert.equal(naming.namingScope("api_websocket"), "not_unique");
+  assert.equal(naming.namingScope("dynamodb_table"), "account_region");
+  assert.throws(() => naming.namingScope("opensearch_domain"), /no stated naming scope/);
+  assert.deepEqual(
+    naming.synthCheck([
+      { type: "lambda_function", name: "shop-lab-worker", logicalId: "Worker" },
+      { type: "iam_role", name: "shop-lab-worker", logicalId: "WorkerRole" },
+    ]),
+    [
+      { name: "shop-lab-worker", type: "lambda_function", scope: "account_region", logicalId: "Worker" },
+      { name: "shop-lab-worker", type: "iam_role", scope: "account", logicalId: "WorkerRole" },
+    ],
+  );
+  assert.throws(
+    () =>
+      naming.synthCheck([
+        { type: "dashboard", name: "shop-lab-lab-site-status", logicalId: "LabSiteStatus" },
+        { type: "dashboard", name: "shop-lab-lab-site-status", logicalId: "SiteStatus" },
+      ]),
+    /LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account/,
   );
 });

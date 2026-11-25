@@ -1,0 +1,29 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-synth-same-scope-duplicate",
+  "scenario": {
+    "type": "synth_check",
+    "entries": [
+      {
+        "type": "dashboard",
+        "name": "shop-lab-lab-site-status",
+        "logical_id": "LabSiteStatus"
+      },
+      {
+        "type": "dashboard",
+        "name": "shop-lab-lab-site-status",
+        "logical_id": "SiteStatus"
+      }
+    ]
+  },
+  "expected": {
+    "error": "LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

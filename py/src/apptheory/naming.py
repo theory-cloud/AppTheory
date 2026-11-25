@@ -350,3 +350,65 @@ def keeper_decision(rules: dict[str, Any] | None, logical: str, aws_result: str 
     if aws_result in ("empty", "not_found"):
         return KEEPER_ALLOWED_NO_EVENTS
     return KEEPER_NOT_SHARED
+
+
+# ---- r4: cross-app uniqueness (contract section 11) -------------------------
+
+NAMING_SCOPE_ACCOUNT = "account"
+NAMING_SCOPE_ACCOUNT_REGION = "account_region"
+NAMING_SCOPE_NOT_UNIQUE = "not_unique"
+
+UNKNOWN_NAMING_SCOPE = "a type with no stated naming scope cannot be reserved"
+
+# Types AWS keeps unique across Regions.
+_ACCOUNT_GLOBAL_TYPES = frozenset({"iam_role", "iam_managed_policy", "dashboard"})
+
+# API display names AWS does not keep unique, so nothing is reserved for them.
+_NOT_UNIQUE_TYPES = frozenset({"api_rest", "api_http", "api_websocket"})
+
+
+def naming_scope(resource_type: str) -> str:
+    """The scope in which AWS requires a type's names to be unique (section 11.1).
+
+    A type the contract states no scope for is refused: it cannot be reserved, so
+    it cannot be deployed through the reservation index until a revision states
+    its scope.
+    """
+    if resource_type not in RESOURCE_NAME_RULES:
+        raise ValueError(UNKNOWN_NAMING_SCOPE)
+    if resource_type in _NOT_UNIQUE_TYPES:
+        return NAMING_SCOPE_NOT_UNIQUE
+    if resource_type in _ACCOUNT_GLOBAL_TYPES:
+        return NAMING_SCOPE_ACCOUNT
+    return NAMING_SCOPE_ACCOUNT_REGION
+
+
+def synth_check(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Refuse two different logical resources in one naming context that derive
+    the same name in the same naming scope, and return the derived-name artifact
+    (contract section 11.4).
+
+    A Lambda function and its IAM role may share a name because their scopes
+    differ, and two APIs may share one because AWS does not keep API names
+    unique. A generated entry carries no name: CloudFormation owns the name, so
+    there is nothing to reserve. Rows keep the order of the entries.
+    """
+    seen: dict[tuple[str, str, str], str] = {}
+    artifact: list[dict[str, Any]] = []
+    for entry in entries:
+        scope = naming_scope(entry["type"])
+        generated = bool(entry.get("generated"))
+        row: dict[str, Any] = {"type": entry["type"], "scope": scope, "logical_id": entry["logical_id"]}
+        if not generated and entry.get("name") is not None:
+            row = {"name": entry["name"], **row}
+        if generated:
+            row["generated"] = True
+        artifact.append(row)
+        if scope == NAMING_SCOPE_NOT_UNIQUE or generated:
+            continue
+        key = (scope, entry["type"], entry.get("name") or "")
+        held = seen.get(key)
+        if held is not None and held != entry["logical_id"]:
+            raise ValueError(f"{held} and {entry['logical_id']} derive {entry.get('name') or ''} in scope {scope}")
+        seen[key] = entry["logical_id"]
+    return artifact
