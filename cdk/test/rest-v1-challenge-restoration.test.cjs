@@ -229,7 +229,9 @@ test("synthesizes the distribution, origin request policy and origin-response ed
   }
 
   const functions = resourcesOfType(template, "AWS::Lambda::Function");
-  assert.equal(functions[0].Properties.Runtime, "nodejs22.x");
+  // The edge function follows the current default Node line; a runtime the
+  // restore handler would have to be re-proven on is never pinned by accident.
+  assert.equal(functions[0].Properties.Runtime, "nodejs24.x");
   assert.equal(functions[0].Properties.Handler, "index.handler");
   assert.equal(
     resourcesOfType(template, "AWS::Lambda::Version").length,
