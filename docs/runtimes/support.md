@@ -38,18 +38,21 @@ for the release you actually deploy.
 
 ## Node.js 22 is deprecated
 
-Node.js 22 reaches end of life on **2027-04-30**. AppTheory keeps Node.js 22 as
-the floor and keeps testing it until then, but it is no longer the line new work
-should target:
+AppTheory stops testing Node.js 22 with its **2027-02 major**. That is the one
+cutoff this page announces: the release raises the floor to `>=24`, drops Node.js
+22 from the tested set, and moves `engines.node` in `ts/package.json` and
+`cdk/package.json` to `>=24`. It is a breaking change for anyone still installing
+on 22, which is why it is a major and why it is dated rather than immediate.
+
+Upstream context, not an AppTheory cutoff: AWS ends support for the Node.js 22
+Lambda runtime on 2027-04-30. AppTheory's cutoff comes first, so no deployment
+outlives the runtime it runs on.
 
 - **Now (next release):** Node.js 26 is tested and supported alongside 22 and 24.
   No code change is required to move to it, and no API changes with it.
-- **2027-02 major:** the floor rises to `>=24`, Node.js 22 stops being tested, and
-  `engines.node` in `ts/package.json` and `cdk/package.json` becomes `>=24`. That
-  is a breaking change for anyone still installing on 22, which is why it is a
-  major and why it is dated rather than immediate.
-- **Between now and then:** Node.js 22 keeps working. A deprecation notice is a
-  notice; only the dated major changes the requirement.
+- **Until the 2027-02 major:** Node.js 22 keeps working and stays inside the
+  tested set. A deprecation notice is a notice; the dated major is what changes
+  the requirement.
 
 Migration notes for the floor move live in
 [Upgrading AppTheory](../../UPGRADING.md).
@@ -63,14 +66,20 @@ Selection is unchanged by this support-table update:
   (`AppTheoryMicrovmImage`, `AppTheoryRestV1ChallengeRestoration`).
 - The `apptheory-init` templates select `NODEJS_24_X` for TypeScript and
   `PYTHON_3_14` for Python.
-- `AppTheoryFunction`'s own default stays `PROVIDED_AL2023`; AppTheory does not
-  pick a managed runtime for a handler you provide.
+- `AppTheoryFunction` does not choose a runtime for you: `runtime` is a required
+  prop, and omitting it fails at synthesis instead of picking a line on your
+  behalf. The `provided.al2023` default belongs to `AppTheoryApp`, which deploys a
+  `provided.al2023` bootstrap (handler `bootstrap`) when you pass neither
+  `runtime` nor `handler`.
 
 Selecting `NODEJS_26_X` or `PYTHON_3_15` yourself is supported: both are real
 Lambda runtimes in the pinned `aws-cdk-lib`, both resolve their own bundling
 image, and a stack that declares them synthesizes. That path is proven on every
 commit by the clean-consumer install proof, which installs the packed CDK
-artifact into an empty project, selects both runtimes, and synthesizes them.
+artifact into an empty project, selects both runtimes, synthesizes them, and then
+bundles one real asset per line through the `apptheory-init` bundlers and loads
+and invokes the handler that landed in the emitted asset directory under the
+matching interpreter.
 
 ## How support is proven
 
