@@ -6,16 +6,16 @@
         "scripts/verify-consumer-install.sh",
         "ts"
       ],
-      "durationSeconds": 10.359,
+      "durationSeconds": 7.064,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T19:15:45Z",
+      "finishedAt": "2026-11-25T20:02:53Z",
       "id": "consumer-install-ts",
-      "inputsDigest": "sha256:a1643feed06e7a14dd4ebdea82b59a94fb308f7a1a4dd4a7352d3d57ffdc6d89",
+      "inputsDigest": "sha256:40c76492473bc4a1ae32b74e2a84d01157b2d98f73c9e61b6c6f2f4c8018c08b",
       "logDigest": "sha256:83a336f24695b5a0b2649c6560c8376ca636267b0cdb6478fa652ddf753ffc26",
-      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-ts-20261125T191535Z-36983.log",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-ts-20261125T200246Z-69685.log",
       "reused": false,
-      "startedAt": "2026-11-25T19:15:35Z"
+      "startedAt": "2026-11-25T20:02:46Z"
     },
     {
       "argv": [
@@ -23,16 +23,16 @@
         "scripts/verify-consumer-install.sh",
         "py"
       ],
-      "durationSeconds": 12.027,
+      "durationSeconds": 8.072,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T19:15:58Z",
+      "finishedAt": "2026-11-25T20:03:01Z",
       "id": "consumer-install-py",
-      "inputsDigest": "sha256:037f5a240e19bbacf64d717b1040265b01aaf7ee8682712eaf39b6af7a0ee745",
+      "inputsDigest": "sha256:4d590ffbc7b7fd3d6e7fd858cbb8d6a4db6ef6a40a9a769986d5f2bb56011667",
       "logDigest": "sha256:2c4e52998aad766b06a2723dcc3887fc91b1bbf335c01958e1091daba0129f24",
-      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-py-20261125T191545Z-36983.log",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-py-20261125T200253Z-69685.log",
       "reused": false,
-      "startedAt": "2026-11-25T19:15:45Z"
+      "startedAt": "2026-11-25T20:02:53Z"
     },
     {
       "argv": [
@@ -40,16 +40,16 @@
         "scripts/verify-consumer-install.sh",
         "cdk"
       ],
-      "durationSeconds": 35.213,
+      "durationSeconds": 25.469,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T19:16:33Z",
+      "finishedAt": "2026-11-25T20:03:26Z",
       "id": "consumer-install-cdk",
-      "inputsDigest": "sha256:ef7a8913dbabd472926c7e1cde7309f6a4f014f918b16e31226decd419a6e7bf",
-      "logDigest": "sha256:15507220b2e897067baaf9fcef1e727f03801706b052bd1808ca5e858ff9e2f0",
-      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-cdk-20261125T191558Z-36983.log",
+      "inputsDigest": "sha256:a63203d7fa8635b22a92a7d9893bc68e0f6cdecd182b50422ac0e963dcdd6423",
+      "logDigest": "sha256:fb78ee9cacf58c1cf7fb062c6e754894c18f789860b69336c51db42988c3d093",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-cdk-20261125T200301Z-69685.log",
       "reused": false,
-      "startedAt": "2026-11-25T19:15:58Z"
+      "startedAt": "2026-11-25T20:03:01Z"
     }
   ],
   "consumed": [],
@@ -71,7 +71,7 @@
   },
   "profile": "node26-py3.15",
   "reason": "",
-  "recordedAt": "2026-11-25T19:16:33Z",
+  "recordedAt": "2026-11-25T20:03:26Z",
   "releaseOnly": {
     "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
     "fileCount": 537,
@@ -81,7 +81,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:95ac49aac343a23c7d83ea644bbf9addd78cf2e29912893f36add2330283e9c9",
+    "digest": "sha256:ffb5db1fe54728667c7362c2bce5e3d7da06aa400638589779295f31f8c9884c",
     "fileCount": 972,
     "paths": [
       "VERSION",
@@ -97,7 +97,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:7f3088afa9787b260cd88d27f16ecdece0c021964b3e0b5ce929b87a60ce4fc1",
+    "digest": "sha256:50dc375d7c064b265fb539d024edbc2b9f3616f64b8a2cbfbd5b60fdcdbd88fd",
     "fileCount": 2792
   },
   "verdict": "PASS"
