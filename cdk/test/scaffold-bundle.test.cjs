@@ -506,6 +506,58 @@ test("the TypeScript bundler stages an npm alias under the name it is imported b
   }
 });
 
+test("the TypeScript bundler nests a linked checkout's copy where the project's copy owns the name", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-link-conflict-"));
+  // A linked checkout and the project resolve two different copies of one name:
+  // the project's own install inside the project, the linked checkout's from the
+  // workspace hoist above it. The asset cannot put both at `node_modules/shared`,
+  // so the linked checkout's copy goes where only it looks first.
+  const root = path.join(workspace, "packages", "project");
+  const linked = path.join(workspace, "linked");
+  const outputDir = path.join(workspace, "asset");
+  try {
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "handler.mjs"),
+      'import local from "@scope/local";\nexport const handler = () => local;\n',
+    );
+    writePackage(root, {
+      name: "project",
+      version: "0.0.0",
+      type: "module",
+      dependencies: { "@scope/local": "file:../../linked", shared: "2.0.0" },
+    });
+    installPackage(root, "shared", "2.0.0", { code: "module.exports = 2" });
+    writePackage(linked, {
+      name: "@scope/local",
+      version: "1.0.0",
+      main: "index.cjs",
+      dependencies: { shared: "1.0.0" },
+    });
+    fs.writeFileSync(path.join(linked, "index.cjs"), 'module.exports = require("shared");\n');
+    installPackage(workspace, "shared", "1.0.0", { code: "module.exports = 1" });
+    fs.mkdirSync(path.join(root, "node_modules", "@scope"), { recursive: true });
+    fs.symlinkSync(linked, path.join(root, "node_modules", "@scope", "local"));
+
+    const closure = tsBundle().productionClosure(root);
+    assert.deepEqual(
+      [...closure.keys()].sort(),
+      [
+        "node_modules/@scope/local",
+        "node_modules/@scope/local/node_modules/shared",
+        "node_modules/shared",
+      ],
+      `staged ${JSON.stringify([...closure.keys()])}`,
+    );
+
+    tsBundle().stage(root, outputDir);
+    assert.equal(resolveInAsset(outputDir, "", "shared").version, "2.0.0");
+    assert.equal(resolveInAsset(outputDir, "node_modules/@scope/local", "shared").version, "1.0.0");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("the staged-resolution walk follows Node's own walk from a directory", () => {
   // The bundler only reuses a staged copy when this walk finds exactly that
   // copy, so the walk itself is pinned: the directory's own `node_modules`, then
