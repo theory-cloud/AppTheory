@@ -12212,7 +12212,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 197
+        "line": 200
       },
       "name": "AppTheoryDerivedName",
       "properties": [
@@ -12224,7 +12224,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 218
+            "line": 221
           },
           "name": "logicalId",
           "type": {
@@ -12239,7 +12239,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 213
+            "line": 216
           },
           "name": "scope",
           "type": {
@@ -12254,7 +12254,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 207
+            "line": 210
           },
           "name": "type",
           "type": {
@@ -12270,7 +12270,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 224
+            "line": 227
           },
           "name": "generated",
           "optional": true,
@@ -12288,7 +12288,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 202
+            "line": 205
           },
           "name": "name",
           "optional": true,
@@ -12316,12 +12316,12 @@
         {
           "abstract": true,
           "docs": {
-            "summary": "The CloudFormation logical id of the resource carrying the name."
+            "summary": "The CloudFormation logical id of the resource carrying the name, or — when the caller's naming context spans several stacks — the owning stack's construct path plus that logical id, because a logical id is unique only within one template."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 184
+            "line": 187
           },
           "name": "logicalId",
           "type": {
@@ -12352,7 +12352,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 190
+            "line": 193
           },
           "name": "generated",
           "optional": true,
@@ -12391,7 +12391,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 231
+        "line": 234
       },
       "name": "AppTheoryDerivedNames",
       "properties": [
@@ -12403,7 +12403,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 245
+            "line": 248
           },
           "name": "context",
           "type": {
@@ -12418,7 +12418,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 235
+            "line": 238
           },
           "name": "contract",
           "type": {
@@ -12433,7 +12433,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 251
+            "line": 254
           },
           "name": "entries",
           "type": {
@@ -12453,7 +12453,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 240
+            "line": 243
           },
           "name": "schema",
           "type": {
@@ -25698,12 +25698,12 @@
       "methods": [
         {
           "docs": {
-            "remarks": "Two names AppTheory creates fall outside the derivation table: the Lambda\nservice log group `/aws/lambda/{function name}`, and the visibility manifest\nparameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section\n6). They are still names the context determines and resources the stack\ncreates, so the artifact carries them; the reserved scope is the type's scope\nfrom contract section 11.1.\n\nAn application that names its own resource with a fixed contract path\ndeclares it here too, so the artifact covers it.",
+            "remarks": "Two names AppTheory creates fall outside the derivation table: the Lambda\nservice log group `/aws/lambda/{function name}`, and the visibility manifest\nparameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section\n6). They are still names the context determines and resources the stack\ncreates, so the artifact carries them; the reserved scope is the type's scope\nfrom contract section 11.1.\n\nAn application that names its own resource with a fixed contract path\ndeclares it here too, so the artifact covers it.\n\nA fixed name is still a physical name of its type, so it must satisfy the\ncharacter and shape rules of the contract's section 2 rule table for that\ntype (length, charset, the S3 start/end rule, the SSM and KMS path rules,\nthe secret suffix rule). A name outside them fails synthesis instead of\nentering the artifact as a name the installer can never create\n(SANITY-AT-N3-08).",
             "summary": "Declare the CloudFormation resource that carries one name the contract fixes rather than derives (contract section 11.4)."
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 349
+            "line": 397
           },
           "name": "declareFixedName",
           "parameters": [
@@ -25734,7 +25734,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 319
+            "line": 358
           },
           "name": "declareName",
           "parameters": [
@@ -25764,7 +25764,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 386
+            "line": 492
           },
           "name": "logGroupName",
           "parameters": [
@@ -25787,7 +25787,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 393
+            "line": 499
           },
           "name": "logSourcePrefix",
           "returns": {
@@ -25802,7 +25802,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 295
+            "line": 334
           },
           "name": "physicalName",
           "parameters": [
@@ -25831,7 +25831,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 277
+            "line": 316
           },
           "name": "values",
           "returns": {
@@ -26000,7 +26000,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 270
+            "line": 309
           },
           "name": "standardLogging",
           "type": {
@@ -26432,7 +26432,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 257
+        "line": 260
       },
       "members": [
         {
@@ -29200,7 +29200,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 466
+        "line": 482
       },
       "methods": [
         {
@@ -29210,7 +29210,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 691
+            "line": 763
           },
           "name": "compileVisibilityPolicyJson",
           "parameters": [
@@ -29240,7 +29240,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 620
+            "line": 692
           },
           "name": "derivedNamesJson",
           "parameters": [
@@ -29265,7 +29265,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 773
+            "line": 845
           },
           "name": "keeperDecision",
           "parameters": [
@@ -29301,7 +29301,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 497
+            "line": 513
           },
           "name": "logGroupName",
           "parameters": [
@@ -29331,7 +29331,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 490
+            "line": 506
           },
           "name": "logSourcePrefix",
           "parameters": [
@@ -29355,7 +29355,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 761
+            "line": 833
           },
           "name": "manifestJson",
           "parameters": [
@@ -29379,7 +29379,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 578
+            "line": 594
           },
           "name": "namingScope",
           "parameters": [
@@ -29404,7 +29404,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 508
+            "line": 524
           },
           "name": "physicalName",
           "parameters": [
@@ -29440,7 +29440,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 682
+            "line": 754
           },
           "name": "ruleVersion",
           "parameters": [
@@ -29464,7 +29464,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 483
+            "line": 499
           },
           "name": "s3AccountRegionalSuffix",
           "parameters": [
@@ -29489,7 +29489,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 665
+            "line": 737
           },
           "name": "selectorMatches",
           "parameters": [
@@ -29519,7 +29519,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 673
+            "line": 745
           },
           "name": "sourceVisible",
           "parameters": [
@@ -29545,11 +29545,12 @@
         },
         {
           "docs": {
+            "remarks": "`logicalId` is the resource's identity inside the naming context: its\nCloudFormation logical id, or the owning stack's construct path plus that\nlogical id when the context spans several stacks. A CloudFormation logical id\nis unique only inside one template, so a caller that owns more than one\ntemplate must pass the qualified form; otherwise two resources in different\nstacks with the same local logical id look like one re-declared resource\n(SANITY-AT-N3-05). The returned row echoes the identity it was given.",
             "summary": "Refuse two different logical resources in one naming context that derive the same name in the same naming scope, and return the derived-name artifact (contract section 11.4). A Lambda function and its IAM role may share a name because their scopes differ, and two APIs may share one because AWS does not keep API names unique. Rows keep the order of the entries."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 592
+            "line": 664
           },
           "name": "synthCheck",
           "parameters": [
@@ -29584,7 +29585,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 472
+            "line": 488
           },
           "name": "validateContext",
           "parameters": [
@@ -29599,12 +29600,38 @@
         },
         {
           "docs": {
+            "remarks": "Throws on a name outside them.\n\nThis is the section 2 table, not a second one: it reads the same rule rows\nthe derivation uses. A `log_group` accepts `/` in addition to the section 2\ncharset because its fixed names are absolute service paths — the Lambda\ngroup `/aws/lambda/{function name}` of section 3 — and section 3 reserves\nonly the `aws/` prefix, which this still refuses.",
+            "summary": "Validate a physical name the contract fixes rather than derives against the character and shape rules of the type's section 2 row: charset, length, the S3 start/end rule, the SSM and KMS path rules (lead, depth, reserved prefixes) and the secret ARN-suffix rule."
+          },
+          "locationInModule": {
+            "filename": "lib/naming.ts",
+            "line": 613
+          },
+          "name": "validatePhysicalName",
+          "parameters": [
+            {
+              "name": "resourceType",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "name",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "static": true
+        },
+        {
+          "docs": {
             "remarks": "Throws on a selector outside the grammar.",
             "summary": "Validate one selector."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 653
+            "line": 725
           },
           "name": "validateSelector",
           "parameters": [
@@ -29623,7 +29650,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 749
+            "line": 821
           },
           "name": "visibilityManifest",
           "parameters": [
@@ -29664,7 +29691,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 729
+            "line": 801
           },
           "name": "visibilityPreview",
           "parameters": [
@@ -33914,7 +33941,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 317
+        "line": 320
       },
       "name": "AppTheoryVisibilityManifest",
       "properties": [
@@ -33926,7 +33953,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 331
+            "line": 334
           },
           "name": "future",
           "type": {
@@ -33941,7 +33968,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 326
+            "line": 329
           },
           "name": "matchedNow",
           "type": {
@@ -33961,7 +33988,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 321
+            "line": 324
           },
           "name": "ruleVersion",
           "type": {
@@ -34009,7 +34036,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 292
+        "line": 295
       },
       "name": "AppTheoryVisibilityPreview",
       "properties": [
@@ -34021,7 +34048,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 311
+            "line": 314
           },
           "name": "future",
           "type": {
@@ -34036,7 +34063,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 301
+            "line": 304
           },
           "name": "matchedNow",
           "type": {
@@ -34056,7 +34083,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 306
+            "line": 309
           },
           "name": "notMatchedNow",
           "type": {
@@ -34076,7 +34103,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 296
+            "line": 299
           },
           "name": "ruleVersion",
           "type": {
@@ -34096,7 +34123,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 275
+        "line": 278
       },
       "name": "AppTheoryVisibilityRules",
       "properties": [
@@ -34110,7 +34137,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 286
+            "line": 289
           },
           "name": "exclude",
           "optional": true,
@@ -34132,7 +34159,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 280
+            "line": 283
           },
           "name": "include",
           "optional": true,
@@ -35284,5 +35311,5 @@
     }
   },
   "version": "7.5.0",
-  "fingerprint": "cGi7mae4OoMXevjcUjwDOCuwBkDJgzRxppt2WhDtjCw="
+  "fingerprint": "9yRcOoh+/1vWahoUbrz8STLA+E333CiBlBdHl5Sffi8="
 }

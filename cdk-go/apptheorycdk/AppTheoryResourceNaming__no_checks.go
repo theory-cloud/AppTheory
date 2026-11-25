@@ -60,6 +60,10 @@ func validateAppTheoryResourceNaming_ValidateContextParameters(values *AppTheory
 	return nil
 }
 
+func validateAppTheoryResourceNaming_ValidatePhysicalNameParameters(resourceType *string, name *string) error {
+	return nil
+}
+
 func validateAppTheoryResourceNaming_ValidateSelectorParameters(selector *string) error {
 	return nil
 }

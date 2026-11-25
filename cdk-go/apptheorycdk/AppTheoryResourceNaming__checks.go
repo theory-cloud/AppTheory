@@ -193,6 +193,18 @@ func validateAppTheoryResourceNaming_ValidateContextParameters(values *AppTheory
 	return nil
 }
 
+func validateAppTheoryResourceNaming_ValidatePhysicalNameParameters(resourceType *string, name *string) error {
+	if resourceType == nil {
+		return fmt.Errorf("parameter resourceType is required, but nil was provided")
+	}
+
+	if name == nil {
+		return fmt.Errorf("parameter name is required, but nil was provided")
+	}
+
+	return nil
+}
+
 func validateAppTheoryResourceNaming_ValidateSelectorParameters(selector *string) error {
 	if selector == nil {
 		return fmt.Errorf("parameter selector is required, but nil was provided")

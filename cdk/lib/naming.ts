@@ -179,7 +179,10 @@ export interface AppTheoryDerivedNameInput {
   readonly type: string;
 
   /**
-   * The CloudFormation logical id of the resource carrying the name.
+   * The CloudFormation logical id of the resource carrying the name, or — when
+   * the caller's naming context spans several stacks — the owning stack's
+   * construct path plus that logical id, because a logical id is unique only
+   * within one template.
    */
   readonly logicalId: string;
 
@@ -397,6 +400,19 @@ function namingRule(resourceType: string): Rule | undefined {
 const API_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
 
 /**
+ * Types whose section 2 row adds the S3 start/end-alphanumeric rule.
+ */
+const S3_TYPES = new Set(["s3_bucket", "s3_vector_bucket", "s3_vector_index"]);
+
+/**
+ * Types whose fixed-name charset differs from the derived-name charset of their
+ * section 2 row. A log group is the only one: its fixed names are absolute
+ * service paths such as `/aws/lambda/{function name}` (section 3), so `/` is
+ * part of the name even though no derived log-group name contains one.
+ */
+const FIXED_NAME_CHARSETS = new Map([["log_group", "[A-Za-z0-9_/-]"]]);
+
+/**
  * Types AWS keeps unique across Regions (contract section 11.1).
  */
 const ACCOUNT_GLOBAL_TYPES = new Set(["iam_role", "iam_managed_policy", "dashboard"]);
@@ -583,11 +599,67 @@ export class AppTheoryResourceNaming {
   }
 
   /**
+   * Validate a physical name the contract fixes rather than derives against the
+   * character and shape rules of the type's section 2 row: charset, length, the
+   * S3 start/end rule, the SSM and KMS path rules (lead, depth, reserved
+   * prefixes) and the secret ARN-suffix rule. Throws on a name outside them.
+   *
+   * This is the section 2 table, not a second one: it reads the same rule rows
+   * the derivation uses. A `log_group` accepts `/` in addition to the section 2
+   * charset because its fixed names are absolute service paths — the Lambda
+   * group `/aws/lambda/{function name}` of section 3 — and section 3 reserves
+   * only the `aws/` prefix, which this still refuses.
+   */
+  public static validatePhysicalName(resourceType: string, name: string): void {
+    const rule = namingRule(resourceType);
+    if (rule === undefined) fail(UNKNOWN_NAMING_SCOPE);
+    const charset = FIXED_NAME_CHARSETS.get(resourceType) ?? rule.charset;
+    const quoted = JSON.stringify(name);
+    if (name.length === 0 || !new RegExp(`^(?:${charset})+$`).test(name)) {
+      fail(`a fixed ${resourceType} name must match ${charset} (contract section 2), got ${quoted}`);
+    }
+    if (name.length > rule.max) {
+      fail(`a fixed ${resourceType} name must be at most ${rule.max} characters, got ${name.length}`);
+    }
+    if (rule.lead !== undefined && !name.startsWith(rule.lead)) {
+      fail(`a fixed ${resourceType} name must start with ${JSON.stringify(rule.lead)} (contract section 2), got ${quoted}`);
+    }
+    if (S3_TYPES.has(resourceType) && !S3_EDGES_RE.test(name)) {
+      fail(`a fixed ${resourceType} name must start and end with a letter or digit (contract section 2), got ${quoted}`);
+    }
+    if (resourceType === "secret" && SECRET_TAIL_RE.test(name)) {
+      fail(`a fixed secret name must not end with a hyphen and six characters (contract section 2), got ${quoted}`);
+    }
+    if (resourceType === "ssm_parameter") {
+      if ((name.match(/\//g)?.length ?? 0) > 15) {
+        fail(`a fixed ssm_parameter name must have at most 15 levels (contract section 2), got ${quoted}`);
+      }
+      if (/^\/?(?:aws|ssm)(?:\/|$)/i.test(name)) {
+        fail(`a fixed ssm_parameter name must not begin with aws or ssm (contract section 2), got ${quoted}`);
+      }
+    }
+    if (resourceType === "kms_alias" && name.startsWith("alias/aws/")) {
+      fail(`a fixed kms_alias name must not be in the alias/aws/ namespace (contract section 2), got ${quoted}`);
+    }
+    if (resourceType === "log_group" && name.startsWith("aws/")) {
+      fail(`a fixed log_group name must not begin with aws/ (contract section 3), got ${quoted}`);
+    }
+  }
+
+  /**
    * Refuse two different logical resources in one naming context that derive the
    * same name in the same naming scope, and return the derived-name artifact
    * (contract section 11.4). A Lambda function and its IAM role may share a name
    * because their scopes differ, and two APIs may share one because AWS does not
    * keep API names unique. Rows keep the order of the entries.
+   *
+   * `logicalId` is the resource's identity inside the naming context: its
+   * CloudFormation logical id, or the owning stack's construct path plus that
+   * logical id when the context spans several stacks. A CloudFormation logical id
+   * is unique only inside one template, so a caller that owns more than one
+   * template must pass the qualified form; otherwise two resources in different
+   * stacks with the same local logical id look like one re-declared resource
+   * (SANITY-AT-N3-05). The returned row echoes the identity it was given.
    */
   public static synthCheck(entries: AppTheoryDerivedNameInput[]): AppTheoryDerivedName[] {
     const seen = new Map<string, string>();

@@ -257,6 +257,14 @@ func AppTheoryResourceNaming_SourceVisible(rules *AppTheoryVisibilityRules, logi
 }
 
 // Refuse two different logical resources in one naming context that derive the same name in the same naming scope, and return the derived-name artifact (contract section 11.4). A Lambda function and its IAM role may share a name because their scopes differ, and two APIs may share one because AWS does not keep API names unique. Rows keep the order of the entries.
+//
+// `logicalId` is the resource's identity inside the naming context: its
+// CloudFormation logical id, or the owning stack's construct path plus that
+// logical id when the context spans several stacks. A CloudFormation logical id
+// is unique only inside one template, so a caller that owns more than one
+// template must pass the qualified form; otherwise two resources in different
+// stacks with the same local logical id look like one re-declared resource
+// (SANITY-AT-N3-05). The returned row echoes the identity it was given.
 func AppTheoryResourceNaming_SynthCheck(entries *[]*AppTheoryDerivedNameInput) *[]*AppTheoryDerivedName {
 	_init_.Initialize()
 
@@ -288,6 +296,28 @@ func AppTheoryResourceNaming_ValidateContext(values *AppTheoryNamingContextValue
 		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
 		"validateContext",
 		[]interface{}{values},
+	)
+}
+
+// Validate a physical name the contract fixes rather than derives against the character and shape rules of the type's section 2 row: charset, length, the S3 start/end rule, the SSM and KMS path rules (lead, depth, reserved prefixes) and the secret ARN-suffix rule.
+//
+// Throws on a name outside them.
+//
+// This is the section 2 table, not a second one: it reads the same rule rows
+// the derivation uses. A `log_group` accepts `/` in addition to the section 2
+// charset because its fixed names are absolute service paths — the Lambda
+// group `/aws/lambda/{function name}` of section 3 — and section 3 reserves
+// only the `aws/` prefix, which this still refuses.
+func AppTheoryResourceNaming_ValidatePhysicalName(resourceType *string, name *string) {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_ValidatePhysicalNameParameters(resourceType, name); err != nil {
+		panic(err)
+	}
+	_jsii_.StaticInvokeVoid(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"validatePhysicalName",
+		[]interface{}{resourceType, name},
 	)
 }
 

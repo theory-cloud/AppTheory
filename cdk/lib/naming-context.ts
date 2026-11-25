@@ -1,4 +1,4 @@
-import { CfnResource, Stack, Token } from "aws-cdk-lib";
+import { App, CfnResource, Stack, Stage, Token } from "aws-cdk-lib";
 import { IConstruct, Construct } from "constructs";
 
 import {
@@ -218,19 +218,48 @@ export class AppTheoryNamingContext extends Construct {
           );
         }
 
-        const declarations = this.declared.map((entry) => ({
-          owner: Stack.of(entry.resource),
-          input: {
-            ...(entry.name !== undefined ? { name: entry.name } : {}),
-            type: entry.type,
-            logicalId: this.cloudFormationLogicalId(entry),
-            ...(entry.generated ? { generated: true } : {}),
-          } as AppTheoryDerivedNameInput,
-        }));
+        const declaredOnce = new Set<string>();
+        const declarations = this.declared
+          .map((entry) => {
+            const resource = this.cloudFormationResource(entry);
+            const owner = Stack.of(resource);
+            const logicalId = String(owner.resolve(resource.logicalId));
+            return {
+              owner,
+              // A CloudFormation logical id is unique only inside one template,
+              // so the comparison runs on an identity that is unique across the
+              // whole context: the owning stack's construct path and the
+              // template-local logical id (SANITY-AT-N3-05). The artifact row
+              // keeps the template-local id, which is what the installer joins
+              // on.
+              identity: `${owner.node.path}/${logicalId}`,
+              input: {
+                ...(entry.name !== undefined ? { name: entry.name } : {}),
+                type: entry.type,
+                logicalId,
+                ...(entry.generated ? { generated: true } : {}),
+              } as AppTheoryDerivedNameInput,
+            };
+          })
+          // A resource declared twice is one resource: it is admitted, and the
+          // artifact lists it once.
+          .filter((declaration) => {
+            const key = [
+              declaration.identity,
+              declaration.input.type,
+              declaration.input.name ?? "",
+              declaration.input.generated === true ? "generated" : "named",
+            ].join("\u0000");
+            if (declaredOnce.has(key)) return false;
+            declaredOnce.add(key);
+            return true;
+          });
 
         let artifact: AppTheoryDerivedName[] = [];
         try {
-          artifact = AppTheoryResourceNaming.synthCheck(declarations.map((declaration) => declaration.input));
+          artifact = AppTheoryResourceNaming.synthCheck(
+            declarations.map((declaration) => ({ ...declaration.input, logicalId: declaration.identity })),
+          );
         } catch (error) {
           errors.push(
             `AppTheoryNamingContext ${String((error as Error).message)}; two different logical resources in one naming context cannot share a physical name in the same scope`,
@@ -246,9 +275,19 @@ export class AppTheoryNamingContext extends Construct {
         const byStack = new Map<Stack, AppTheoryDerivedName[]>();
         declarations.forEach((declaration, index) => {
           const rows = byStack.get(declaration.owner) ?? [];
-          rows.push(artifact[index] as AppTheoryDerivedName);
+          const row = artifact[index] as AppTheoryDerivedName;
+          rows.push({ ...row, logicalId: (declaration.input as AppTheoryDerivedNameInput).logicalId });
           byStack.set(declaration.owner, rows);
         });
+
+        // Scenario 4: every synth with a naming context emits the artifact, so a
+        // context whose declarations all attribute to other stacks still leaves
+        // an explicit (empty) document on its own stack, and the installer can
+        // tell "declares nothing" from "no naming context at all" (scenario 5).
+        const ownStack = this.owningStack();
+        if (ownStack !== undefined && !byStack.has(ownStack)) {
+          byStack.set(ownStack, []);
+        }
 
         for (const [owner, entries] of byStack) {
           const document: AppTheoryDerivedNames = {
@@ -317,6 +356,8 @@ export class AppTheoryNamingContext extends Construct {
    * group takes no pin or generated entry.
    */
   public declareName(resourceType: string, logical: string, resource: IConstruct): void {
+    this.assertSameStage(resourceType, resource);
+    this.assertSameEnvironment(resourceType, resource);
     if (resourceType === "log_group") {
       const name = AppTheoryResourceNaming.logGroupName(this.values(), logical);
       this.declared.push({ type: resourceType, logical, name, generated: false, resource });
@@ -345,6 +386,13 @@ export class AppTheoryNamingContext extends Construct {
    *
    * An application that names its own resource with a fixed contract path
    * declares it here too, so the artifact covers it.
+   *
+   * A fixed name is still a physical name of its type, so it must satisfy the
+   * character and shape rules of the contract's section 2 rule table for that
+   * type (length, charset, the S3 start/end rule, the SSM and KMS path rules,
+   * the secret suffix rule). A name outside them fails synthesis instead of
+   * entering the artifact as a name the installer can never create
+   * (SANITY-AT-N3-08).
    */
   public declareFixedName(resourceType: string, name: string, resource: IConstruct): void {
     // A type outside contract section 2 has no stated scope, so it cannot be
@@ -355,20 +403,18 @@ export class AppTheoryNamingContext extends Construct {
         `AppTheoryNamingContext cannot declare ${resourceType} because the name is an unresolved token; a name the artifact reserves must be resolvable at synthesis`,
       );
     }
-    if (name.trim() === "" || name.trim() !== name) {
-      throw new Error(
-        `AppTheoryNamingContext cannot declare ${resourceType} because ${JSON.stringify(name)} is not a usable physical name`,
-      );
-    }
+    AppTheoryResourceNaming.validatePhysicalName(resourceType, name);
+    this.assertSameStage(resourceType, resource);
+    this.assertSameEnvironment(resourceType, resource);
     this.declared.push({ type: resourceType, logical: name, name, generated: false, resource });
   }
 
   /**
-   * The CloudFormation logical id of the resource a declaration names. The
-   * construct's default child is the L1 resource a construct creates for itself,
-   * so an L2 construct is the expected argument.
+   * The CloudFormation resource a declaration names. The construct's default
+   * child is the L1 resource a construct creates for itself, so an L2 construct
+   * is the expected argument.
    */
-  private cloudFormationLogicalId(declaration: AppTheoryNameDeclaration): string {
+  private cloudFormationResource(declaration: AppTheoryNameDeclaration): CfnResource {
     const resource: IConstruct = declaration.resource;
     const candidate: IConstruct | undefined =
       resource instanceof CfnResource ? resource : resource.node.defaultChild;
@@ -377,7 +423,67 @@ export class AppTheoryNamingContext extends Construct {
         `AppTheoryNamingContext cannot declare ${declaration.type}:${declaration.logical} because ${resource.node.path} has no CloudFormation resource as its default child; declare the construct that owns the named resource`,
       );
     }
-    return String(Stack.of(candidate).resolve(candidate.logicalId));
+    return candidate;
+  }
+
+  /**
+   * Refuse a declaration whose owning stack is in a different CDK Stage from the
+   * context (SANITY-AT-N3-02).
+   *
+   * Each Stage is a separate cloud assembly, and CDK validates a tree stage by
+   * stage, so the synth check never sees the other assembly: a context above a
+   * Stage cannot compare its names, and a document written after that assembly
+   * exists is silently lost. A context and every stack declaring through it
+   * therefore belong to one Stage (or to none, at the App root).
+   */
+  private assertSameStage(resourceType: string, resource: IConstruct): void {
+    const ownerStage = Stage.of(Stack.of(resource));
+    const contextStage = Stage.of(this);
+    if (ownerStage === contextStage) return;
+    // `App` is a `Stage` in CDK, so a construct above the stacks reports the App
+    // itself as its Stage; that is the App root, not a Stage the caller named.
+    const describe = (stage: Stage | undefined): string =>
+      stage === undefined || App.isApp(stage) ? "the App root" : `Stage ${stage.node.path}`;
+    throw new Error(
+      `AppTheoryNamingContext cannot declare ${resourceType} in ${Stack.of(resource).node.path} because the owning stack is in ${describe(ownerStage)} while the naming context is in ${describe(contextStage)}; a naming context and every stack that declares through it must sit in the same Stage, because each Stage is a separate cloud assembly whose derived-name artifact the synth check cannot compare with another Stage's`,
+    );
+  }
+
+  /**
+   * Refuse a declaration whose owning stack resolves to an environment the
+   * context does not claim (SANITY-AT-N3-06).
+   *
+   * The derived-name artifact claims the context's account and region, and the
+   * reservation index keys a name by its scope in that environment, so a stack
+   * in another account or Region would reserve names it cannot create while the
+   * check refused or admitted them against the wrong environment. An
+   * env-agnostic stack (an unresolved account or region) is admitted: it
+   * deploys into the context's environment, which is what the artifact claims.
+   */
+  private assertSameEnvironment(resourceType: string, resource: IConstruct): void {
+    const owner = Stack.of(resource);
+    const described = (value: string): string => (Token.isUnresolved(value) ? "unresolved" : value);
+    const mismatches: string[] = [];
+    if (!Token.isUnresolved(owner.account) && owner.account !== this.account) mismatches.push("account");
+    if (!Token.isUnresolved(owner.region) && owner.region !== this.region) mismatches.push("region");
+    if (mismatches.length === 0) return;
+    throw new Error(
+      `AppTheoryNamingContext cannot declare ${resourceType} in ${owner.node.path} because the stack resolves to account ${described(owner.account)} and region ${described(owner.region)}, while the naming context claims account ${this.account} and region ${this.region} (app ${this.app}, stage ${this.stage}); the derived-name artifact claims the context's environment, so every stack that declares through it must resolve to that environment or to no environment at all`,
+    );
+  }
+
+  /**
+   * The nearest stack above the context, if it has one. A context created above
+   * the stacks has none: its artifact then appears on the stacks its
+   * declarations attribute to.
+   */
+  private owningStack(): Stack | undefined {
+    let scope: IConstruct | undefined = this;
+    while (scope !== undefined) {
+      if (Stack.isStack(scope)) return scope;
+      scope = scope.node.scope;
+    }
+    return undefined;
   }
 
   /**

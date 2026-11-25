@@ -166,14 +166,50 @@ export declare class AppTheoryNamingContext extends Construct {
      *
      * An application that names its own resource with a fixed contract path
      * declares it here too, so the artifact covers it.
+     *
+     * A fixed name is still a physical name of its type, so it must satisfy the
+     * character and shape rules of the contract's section 2 rule table for that
+     * type (length, charset, the S3 start/end rule, the SSM and KMS path rules,
+     * the secret suffix rule). A name outside them fails synthesis instead of
+     * entering the artifact as a name the installer can never create
+     * (SANITY-AT-N3-08).
      */
     declareFixedName(resourceType: string, name: string, resource: IConstruct): void;
     /**
-     * The CloudFormation logical id of the resource a declaration names. The
-     * construct's default child is the L1 resource a construct creates for itself,
-     * so an L2 construct is the expected argument.
+     * The CloudFormation resource a declaration names. The construct's default
+     * child is the L1 resource a construct creates for itself, so an L2 construct
+     * is the expected argument.
      */
-    private cloudFormationLogicalId;
+    private cloudFormationResource;
+    /**
+     * Refuse a declaration whose owning stack is in a different CDK Stage from the
+     * context (SANITY-AT-N3-02).
+     *
+     * Each Stage is a separate cloud assembly, and CDK validates a tree stage by
+     * stage, so the synth check never sees the other assembly: a context above a
+     * Stage cannot compare its names, and a document written after that assembly
+     * exists is silently lost. A context and every stack declaring through it
+     * therefore belong to one Stage (or to none, at the App root).
+     */
+    private assertSameStage;
+    /**
+     * Refuse a declaration whose owning stack resolves to an environment the
+     * context does not claim (SANITY-AT-N3-06).
+     *
+     * The derived-name artifact claims the context's account and region, and the
+     * reservation index keys a name by its scope in that environment, so a stack
+     * in another account or Region would reserve names it cannot create while the
+     * check refused or admitted them against the wrong environment. An
+     * env-agnostic stack (an unresolved account or region) is admitted: it
+     * deploys into the context's environment, which is what the artifact claims.
+     */
+    private assertSameEnvironment;
+    /**
+     * The nearest stack above the context, if it has one. A context created above
+     * the stacks has none: its artifact then appears on the stacks its
+     * declarations attribute to.
+     */
+    private owningStack;
     /**
      * The physical log-group name of a logical source under this context.
      */

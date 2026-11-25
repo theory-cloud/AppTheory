@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const util = require("node:util");
@@ -51,11 +52,21 @@ function resourcesOfType(template, type) {
   return Object.values(template.Resources ?? {}).filter((resource) => resource.Type === type);
 }
 
-function synth(build) {
+// The two environments the suite synthesizes into. A naming context and every
+// stack that declares through it must resolve to one environment (SANITY-AT-N3-06),
+// so a legacy-profile test builds its stack in the live account too.
+const LAB_ENV = { account: "998115851393", region: "us-east-1" };
+const LIVE_ENV = { account: "784055308075", region: "us-east-1" };
+
+function synth(build, env = LAB_ENV) {
   const app = new cdk.App();
-  const stack = new cdk.Stack(app, "Stack", { env: { account: "998115851393", region: "us-east-1" } });
+  const stack = new cdk.Stack(app, "Stack", { env });
   build(stack);
   return assertions.Template.fromStack(stack).toJSON();
+}
+
+function synthLive(build) {
+  return synth(build, LIVE_ENV);
 }
 
 function microvmControllerBuild(stack, context, overrides = {}) {
@@ -277,7 +288,7 @@ test("AppTheoryBucket sets the account-regional namespace and prefix", () => {
 });
 
 test("AppTheoryBucket uses a legacy pin verbatim", () => {
-  const template = synth((stack) => {
+  const template = synthLive((stack) => {
     const context = legacyContext(stack, { pins: { "s3_bucket:audit-events": "autheory-live-audit-events" } });
     new apptheory.AppTheoryBucket(stack, "Data", { namingContext: context, logical: "audit-events" });
   });
@@ -644,8 +655,8 @@ test("CloudFront standard logging refuses a stack outside us-east-1", () => {
 // ---- N4: legacy profiles synthesize byte-identically -----------------------
 
 function assertIdentical(build, { pins = {}, generated = [] } = {}) {
-  const base = synth((stack) => build(stack, undefined));
-  const legacy = synth((stack) =>
+  const base = synthLive((stack) => build(stack, undefined));
+  const legacy = synthLive((stack) =>
     build(
       stack,
       new apptheory.AppTheoryNamingContext(stack, "Naming", {
@@ -1162,7 +1173,7 @@ test("AppTheoryKeeperVisibility rejects an invalid selector", () => {
 test("legacy logging keeps today's unnamed access-log group under either naming profile", () => {
   // Legacy naming plus legacy logging: the group keeps the name CloudFormation
   // generates today and consumes no naming entry.
-  const legacyTemplate = synth((stack) => {
+  const legacyTemplate = synthLive((stack) => {
     const context = legacyContext(stack, { pins: { "api_http:api": "autheory-live-api" } });
     new apptheory.AppTheoryHttpApi(stack, "Api", {
       handler: handler(stack),
@@ -1212,7 +1223,7 @@ test("legacy profiles synthesize byte-identically: AppTheoryHttpApi with access 
 test("a log_group entry naming a construct access-log group is an orphan", () => {
   assert.throws(
     () =>
-      synth((stack) => {
+      synthLive((stack) => {
         const context = legacyContext(stack, {
           pins: { "api_http:api": "autheory-live-api" },
           generated: ["log_group:logs/access/api/api"],
@@ -1321,7 +1332,7 @@ test("explicit-name refusals name the suffixed entry key the construct consumes"
 
 test("the suffixed entry keys written into stage config are accepted", () => {
   // WebSocket connection table.
-  const ws = synth((stack) => {
+  const ws = synthLive((stack) => {
     const context = legacyContext(stack, {
       pins: {
         "api_websocket:ws": "autheory-live-ws",
@@ -1340,7 +1351,7 @@ test("the suffixed entry keys written into stage config are accepted", () => {
   );
 
   // MCP session table.
-  const mcp = synth((stack) => {
+  const mcp = synthLive((stack) => {
     const context = legacyContext(stack, {
       pins: {
         "api_http:mcp": "autheory-live-mcp",
@@ -1359,14 +1370,14 @@ test("the suffixed entry keys written into stage config are accepted", () => {
   );
 
   // Media bucket.
-  const media = synth((stack) => {
+  const media = synthLive((stack) => {
     const context = legacyContext(stack, { pins: { "s3_bucket:media-media": "autheory-live-media" } });
     new apptheory.AppTheoryMediaCdn(stack, "Media", { namingContext: context, enableLogging: false });
   });
   assert.equal(resourcesOfType(media, "AWS::S3::Bucket")[0].Properties?.BucketName, "autheory-live-media");
 
   // SSR assets bucket, html store and ISR metadata table.
-  const site = synth((stack) => {
+  const site = synthLive((stack) => {
     const context = legacyContext(stack, {
       pins: {
         "s3_bucket:site-assets": "autheory-live-site-assets",
@@ -1544,9 +1555,9 @@ test("AppTheorySsrSite takes no ISR entry when the caller supplies the metadata 
 
 const DERIVED_NAMES_KEY = "apptheory:resource-naming/derived-names";
 
-function synthAssembly(build) {
+function synthAssembly(build, env = LAB_ENV) {
   const app = new cdk.App();
-  const stack = new cdk.Stack(app, "Stack", { env: { account: "998115851393", region: "us-east-1" } });
+  const stack = new cdk.Stack(app, "Stack", { env });
   build(stack);
   const assembly = app.synth();
   const artifact = assembly.getStackByName("Stack");
@@ -1557,6 +1568,10 @@ function synthAssembly(build) {
     }
   }
   return { template: JSON.parse(JSON.stringify(artifact.template ?? {})), documents };
+}
+
+function synthAssemblyLive(build) {
+  return synthAssembly(build, LIVE_ENV);
 }
 
 function shopContext(stack, id = "Naming", overrides = {}) {
@@ -1731,7 +1746,7 @@ test("R3: the artifact is deterministic in order and bytes", () => {
 });
 
 test("R3: a generated entry is marked and carries no name", () => {
-  const { documents } = synthAssembly((stack) => {
+  const { documents } = synthAssemblyLive((stack) => {
     const context = new apptheory.AppTheoryNamingContext(stack, "Naming", {
       app: "shop",
       stage: "live",
@@ -2049,4 +2064,399 @@ test("F3: the jsii scope primitive refuses inherited property names", () => {
       inherited,
     );
   }
+});
+
+// ---- r4 rework r2: identity, Stage, environment, empty document, fixed names --
+//
+// Each test below pins one defect the round-2 gate found. They are written to
+// fail on the round-1 tree and pass here:
+// SANITY-AT-N3-05 (G1), SANITY-AT-N3-02 (G2), SANITY-AT-N3-06 (G3),
+// SANITY-AT-N3-07 (G4) and SANITY-AT-N3-08 / ADV-N3-R1-01 (G5).
+
+function multiStack(build) {
+  const app = new cdk.App();
+  build(app);
+  return app;
+}
+
+test("G1: two stacks sharing a context cannot repeat a construct id and a name", () => {
+  // A CloudFormation logical id is unique only inside one template, so two
+  // stacks with the same construct id produced identical stack-local logical
+  // ids and the round-1 check read the second resource as a re-declaration of
+  // the first: the Lambda, its role and its log group collided and synth
+  // succeeded (SANITY-AT-N3-05). The identity is now the owning stack plus the
+  // logical id, so the refusal fires and names both resources and both stacks.
+  assert.throws(
+    () =>
+      multiStack((app) => {
+        const one = new cdk.Stack(app, "One", { env: LAB_ENV });
+        const two = new cdk.Stack(app, "Two", { env: LAB_ENV });
+        const context = shopContext(one);
+        shopFunction(one, "Worker", "worker", context);
+        shopFunction(two, "Worker", "worker", context);
+        app.synth();
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(message, /AppTheoryNamingContext One\/WorkerFunction[0-9A-F]{8} and Two\/WorkerFunction[0-9A-F]{8} derive shop-lab-worker in scope account_region/);
+      assert.match(message, /two different logical resources in one naming context cannot share a physical name/);
+      return true;
+    },
+  );
+});
+
+test("G1: re-declaring the same resource is admitted once", () => {
+  const { documents, template } = synthAssembly((stack) => {
+    const context = shopContext(stack);
+    const worker = shopFunction(stack, "Worker", "worker", context);
+    // The same CloudFormation resource declared twice is one resource, not two:
+    // the identity matches, so the check admits it and the artifact lists it once.
+    context.declareName("lambda_function", "worker", worker.fn);
+  });
+  assert.equal(documents.length, 1);
+  const workers = documents[0].entries.filter((row) => row.type === "lambda_function");
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0].name, "shop-lab-worker");
+  assert.ok(Object.keys(template.Resources).includes(workers[0].logical_id));
+});
+
+test("G1: a shared context keeps each stack's own template-local logical id", () => {
+  // Different logical names: no collision, and each stack's document carries the
+  // logical id its own template holds — the id the installer joins on.
+  const app = multiStack((scope) => {
+    const one = new cdk.Stack(scope, "One", { env: LAB_ENV });
+    const two = new cdk.Stack(scope, "Two", { env: LAB_ENV });
+    const context = shopContext(one);
+    shopFunction(one, "Worker", "worker", context);
+    shopFunction(two, "Worker", "api", context);
+  });
+  const assembly = app.synth();
+  const one = assembly.getStackByName("One");
+  const two = assembly.getStackByName("Two");
+  const oneRows = metadataDocuments(one)[0].entries;
+  const twoRows = metadataDocuments(two)[0].entries;
+
+  const oneFunctions = oneRows.filter((row) => row.type === "lambda_function");
+  const twoFunctions = twoRows.filter((row) => row.type === "lambda_function");
+  assert.equal(oneFunctions.length, 1);
+  assert.equal(twoFunctions.length, 1);
+  assert.equal(oneFunctions[0].name, "shop-lab-worker");
+  assert.equal(twoFunctions[0].name, "shop-lab-api");
+  assert.ok(Object.keys(one.template.Resources).includes(oneFunctions[0].logical_id));
+  assert.ok(Object.keys(two.template.Resources).includes(twoFunctions[0].logical_id));
+});
+
+test("G2: a declaration in a child Stage under a context above it is refused", () => {
+  // CDK validates one Stage at a time and every Stage is its own cloud
+  // assembly, so a context above a Stage cannot compare names and its document
+  // for that assembly is silently lost (SANITY-AT-N3-02). Refuse instead.
+  assert.throws(
+    () =>
+      multiStack((app) => {
+        const root = new cdk.Stack(app, "Root", { env: LAB_ENV });
+        const context = shopContext(root);
+        const stage = new cdk.Stage(app, "Child");
+        const stack = new cdk.Stack(stage, "Stack", { env: LAB_ENV });
+        shopFunction(stack, "Worker", "worker", context);
+        app.synth();
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(message, /cannot declare lambda_function in Root\/Child\/Stack|Child\/Stack/);
+      assert.match(message, /Stage Child/);
+      assert.match(message, /the App root/);
+      assert.match(message, /must sit in the same Stage/);
+      return true;
+    },
+  );
+});
+
+test("G2: a context inside the Stage emits its documents into that Stage", () => {
+  const outdir = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-naming-stage-"));
+  const app = new cdk.App({ outdir });
+  const stage = new cdk.Stage(app, "Child");
+  const context = shopContext(new cdk.Stack(stage, "Home", { env: LAB_ENV }));
+  const stack = new cdk.Stack(stage, "Stack", { env: LAB_ENV });
+  shopFunction(stack, "Worker", "worker", context);
+  const assembly = app.synth();
+
+  const childStacks = assembly.stacksRecursively.filter((artifact) => artifact.id.includes("Stack"));
+  const workerStack = childStacks.find((artifact) => Object.keys(artifact.template ?? {}).length > 0);
+  assert.ok(workerStack, "the child stage's stack must exist");
+  const documents = metadataDocuments(workerStack);
+  assert.equal(documents.length, 1);
+  assert.deepEqual(
+    documents[0].entries.map((row) => row.type).sort(),
+    ["iam_role", "lambda_function", "log_group"],
+  );
+  for (const row of documents[0].entries) {
+    assert.ok(Object.keys(workerStack.template.Resources).includes(row.logical_id), row.logical_id);
+  }
+});
+
+test("G2: a nested-stack row joins to the nested template, not the parent's", () => {
+  // The document is recorded under the owning stack's construct path, and CDK
+  // writes that path's `aws:cdk:templateFile` beside it. That pair is the join:
+  // the rows describe the template named there — for a NestedStack, the nested
+  // template — and never the parent's.
+  const outdir = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-naming-nested-"));
+  const app = new cdk.App({ outdir });
+  const parent = new cdk.Stack(app, "Parent", { env: LAB_ENV });
+  const context = shopContext(parent);
+  new apptheory.AppTheoryBucket(parent, "Assets", { namingContext: context, logical: "site-assets" });
+  const nested = new cdk.NestedStack(parent, "Child");
+  shopFunction(nested, "Worker", "worker", context);
+  const assembly = app.synth();
+
+  const parentArtifact = assembly.getStackByName("Parent");
+  const metadata = parentArtifact.metadata ?? {};
+  const parentTemplate = JSON.parse(fs.readFileSync(path.join(outdir, "Parent.template.json"), "utf8"));
+  const parentLogicalIds = new Set(Object.keys(parentTemplate.Resources ?? {}));
+
+  const documents = {};
+  const templateFiles = {};
+  for (const [constructPath, entries] of Object.entries(metadata)) {
+    for (const entry of entries) {
+      if (entry.type === DERIVED_NAMES_KEY) documents[constructPath] = entry.data;
+      if (entry.type === "aws:cdk:templateFile") templateFiles[constructPath] = entry.data;
+    }
+  }
+
+  const nestedPath = Object.keys(documents).find((constructPath) => constructPath === "/Parent/Child");
+  assert.ok(nestedPath, `the nested stack must own a document: ${Object.keys(documents)}`);
+  assert.ok(!("/Parent" in documents) || documents["/Parent"].entries.every((row) => row.type !== "lambda_function"));
+
+  const nestedTemplateFile = templateFiles[nestedPath];
+  assert.match(nestedTemplateFile, /\.nested\.template\.json$/);
+  const nestedTemplate = JSON.parse(fs.readFileSync(path.join(outdir, nestedTemplateFile), "utf8"));
+  const nestedLogicalIds = new Set(Object.keys(nestedTemplate.Resources ?? {}));
+
+  const nestedRows = documents[nestedPath].entries;
+  assert.deepEqual(nestedRows.map((row) => row.type).sort(), ["iam_role", "lambda_function", "log_group"]);
+  for (const row of nestedRows) {
+    assert.ok(nestedLogicalIds.has(row.logical_id), `${row.logical_id} is not in ${nestedTemplateFile}`);
+    assert.equal(parentLogicalIds.has(row.logical_id), false, `${row.logical_id} must not be a parent resource`);
+  }
+
+  // The parent's own document describes only what the parent's template holds.
+  assert.ok("/Parent" in documents, "the parent keeps its own document");
+  assert.deepEqual(
+    documents["/Parent"].entries.map((row) => row.type),
+    ["s3_bucket"],
+  );
+  for (const row of documents["/Parent"].entries) assert.ok(parentLogicalIds.has(row.logical_id));
+});
+
+test("G3: a stack resolving to another region is refused", () => {
+  assert.throws(
+    () =>
+      multiStack((app) => {
+        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
+        const away = new cdk.Stack(app, "Away", { env: { account: LAB_ENV.account, region: "eu-west-1" } });
+        const context = shopContext(home);
+        shopFunction(away, "Worker", "worker", context);
+        app.synth();
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(message, /cannot declare lambda_function in Away/);
+      assert.match(message, /region eu-west-1/);
+      assert.match(message, /region us-east-1/);
+      assert.match(message, /app shop, stage lab/);
+      return true;
+    },
+  );
+});
+
+test("G3: a stack resolving to another account is refused", () => {
+  assert.throws(
+    () =>
+      multiStack((app) => {
+        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
+        const away = new cdk.Stack(app, "Away", { env: { account: "111111111111", region: LAB_ENV.region } });
+        const context = shopContext(home);
+        shopFunction(away, "Worker", "worker", context);
+        app.synth();
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(message, /cannot declare lambda_function in Away/);
+      assert.match(message, /account 111111111111/);
+      assert.match(message, /account 998115851393/);
+      return true;
+    },
+  );
+});
+
+test("G3: a stack resolving to the context's environment is admitted", () => {
+  const app = multiStack((scope) => {
+    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
+    const twin = new cdk.Stack(scope, "Twin", { env: { account: LAB_ENV.account, region: LAB_ENV.region } });
+    const context = shopContext(home);
+    shopFunction(twin, "Worker", "worker", context);
+  });
+  const assembly = app.synth();
+  const twin = metadataDocuments(assembly.getStackByName("Twin"));
+  assert.equal(twin.length, 1);
+  assert.deepEqual(twin[0].entries.map((row) => row.type).sort(), ["iam_role", "lambda_function", "log_group"]);
+});
+
+test("G3: an env-agnostic stack is admitted and the artifact claims the context's environment", () => {
+  const app = multiStack((scope) => {
+    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
+    const agnostic = new cdk.Stack(scope, "Agnostic");
+    const context = shopContext(home);
+    shopFunction(agnostic, "Worker", "worker", context);
+  });
+  const assembly = app.synth();
+  const documents = metadataDocuments(assembly.getStackByName("Agnostic"));
+  assert.equal(documents.length, 1);
+  assert.deepEqual(documents[0].context, {
+    namespace: "theorycloud",
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+  });
+  assert.equal(documents[0].entries.length, 3);
+});
+
+test("G4: a context that declares nothing still emits the artifact, and no context emits none", () => {
+  // Scenario 4: every synth with a naming context emits the artifact, so a
+  // context whose declarations all attribute to other stacks still leaves an
+  // explicit (empty) document on its own stack. Scenario 5: a stack without a
+  // context emits none. The installer must be able to tell them apart
+  // (SANITY-AT-N3-07).
+  const declared = multiStack((app) => {
+    const stack = new cdk.Stack(app, "Stack", { env: LAB_ENV });
+    shopContext(stack);
+  });
+  const declaredDocuments = metadataDocuments(declared.synth().getStackByName("Stack"));
+  assert.equal(declaredDocuments.length, 1);
+  assert.equal(declaredDocuments[0].contract, "theorycloud_resource_naming.v0.1");
+  assert.equal(declaredDocuments[0].schema, "apptheory_resource_naming.derived_names.v1");
+  assert.deepEqual(declaredDocuments[0].entries, []);
+  assert.deepEqual(declaredDocuments[0].context, {
+    namespace: "theorycloud",
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+  });
+
+  const without = multiStack((app) => {
+    const stack = new cdk.Stack(app, "Stack", { env: LAB_ENV });
+    handler(stack, "Plain");
+  });
+  assert.deepEqual(metadataDocuments(without.synth().getStackByName("Stack")), []);
+});
+
+test("G4: a context above the stacks still labels the stack it declares nothing in", () => {
+  // The context's own stack gets the empty document; the stacks its constructs
+  // declare in keep their own. No stack claims another's rows.
+  const app = multiStack((scope) => {
+    const owner = new cdk.Stack(scope, "Owner", { env: LAB_ENV });
+    const consumer = new cdk.Stack(scope, "Consumer", { env: LAB_ENV });
+    const context = shopContext(owner);
+    shopFunction(consumer, "Worker", "worker", context);
+  });
+  const assembly = app.synth();
+  const ownerDocuments = metadataDocuments(assembly.getStackByName("Owner"));
+  assert.equal(ownerDocuments.length, 1);
+  assert.deepEqual(ownerDocuments[0].entries, []);
+
+  const consumerDocuments = metadataDocuments(assembly.getStackByName("Consumer"));
+  assert.equal(consumerDocuments.length, 1);
+  assert.equal(consumerDocuments[0].entries.length, 3);
+});
+
+test("G5: a fixed name outside its type's section 2 rules fails synthesis", () => {
+  // declareFixedName accepted any string, so a name AWS can never create
+  // entered the artifact and the installer reserved it (SANITY-AT-N3-08,
+  // ADV-N3-R1-01). The name is now checked against the section 2 rule row of
+  // its type.
+  const cases = [
+    ["shop lab bucket", /must match \[a-z0-9-\]/],
+    ["shop\u0000lab-bucket", /must match \[a-z0-9-\]/],
+    ["Bad Bucket Name!!", /must match \[a-z0-9-\]/],
+  ];
+  for (const [name, pattern] of cases) {
+    assert.throws(
+      () =>
+        synth((stack) => {
+          const context = shopContext(stack);
+          const bucket = new cdk.CfnResource(stack, "Fixed", {
+            type: "AWS::S3::Bucket",
+            properties: { BucketName: name },
+          });
+          context.declareFixedName("s3_bucket", name, bucket);
+        }),
+      (error) => {
+        assert.match(String(error.message), pattern, name);
+        assert.match(String(error.message), /contract section 2/, name);
+        return true;
+      },
+      name,
+    );
+  }
+});
+
+test("G5: a fixed name outside its type's shape rules fails synthesis", () => {
+  const cases = [
+    ["s3_bucket", "-shop-lab-assets", /start and end with a letter or digit/],
+    ["secret", "shop-lab-secret-ab12cd", /must not end with a hyphen and six characters/],
+    ["ssm_parameter", "/aws/shop-lab-parameter", /must not begin with aws or ssm/],
+    ["ssm_parameter", "/ssm/shop-lab-parameter", /must not begin with aws or ssm/],
+    ["ssm_parameter", "/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p", /at most 15 levels/],
+    ["kms_alias", "shop-lab-key", /must start with "alias\/"/],
+    ["kms_alias", "alias/aws/shop-lab", /must not be in the alias\/aws\/ namespace/],
+    ["log_group", "aws/shop-lab", /must not begin with aws\//],
+  ];
+  for (const [type, name, pattern] of cases) {
+    assert.throws(
+      () => apptheory.AppTheoryResourceNaming.validatePhysicalName(type, name),
+      pattern,
+      `${type}: ${name}`,
+    );
+  }
+});
+
+test("G5: the fixed names AppTheory actually declares stay admitted", () => {
+  const naming = apptheory.AppTheoryResourceNaming;
+  // The two fixed names the contract states: the Lambda service log group
+  // (section 3) and the visibility manifest parameter (section 6).
+  naming.validatePhysicalName("log_group", "/aws/lambda/shop-lab-worker");
+  naming.validatePhysicalName("ssm_parameter", "/theorycloud/visibility/shop/lab/manifest");
+  // And the derived shapes of the same types stay valid, so the rule is the
+  // section 2 row and not a stricter private one.
+  naming.validatePhysicalName("log_group", "theorycloud_theorycloud_shop_lab_logs_runtime_worker");
+  naming.validatePhysicalName("s3_bucket", "shop-lab-site-assets-998115851393-us-east-1-an");
+  naming.validatePhysicalName("iam_role", "shop-lab-worker");
+
+  // The Keeper manifest path still reaches the artifact through the construct
+  // that creates it.
+  const { documents, template } = synthAssembly((stack) => {
+    new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+      namingContext: shopContext(stack),
+      readerPrincipalArn: "arn:aws:iam::123456789012:role/cloud-keeper",
+      rules: {},
+    });
+  });
+  const parameters = namedResourcesOfType(template, "AWS::SSM::Parameter");
+  assert.equal(parameters[0].properties.Name, "/theorycloud/visibility/shop/lab/manifest");
+  assert.equal(
+    documents[0].entries.filter((row) => row.type === "ssm_parameter").length,
+    1,
+  );
+});
+
+test("G5: a fixed name naming a type the contract does not state is still refused first", () => {
+  assert.throws(
+    () => apptheory.AppTheoryResourceNaming.validatePhysicalName("opensearch_domain", "shop-lab-search"),
+    /no stated naming scope/,
+  );
+  assert.throws(
+    () => apptheory.AppTheoryResourceNaming.validatePhysicalName("toString", "shop-lab-search"),
+    /no stated naming scope/,
+  );
 });

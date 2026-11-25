@@ -46,6 +46,13 @@ type AppTheoryNamingContext interface {
 	//
 	// An application that names its own resource with a fixed contract path
 	// declares it here too, so the artifact covers it.
+	//
+	// A fixed name is still a physical name of its type, so it must satisfy the
+	// character and shape rules of the contract's section 2 rule table for that
+	// type (length, charset, the S3 start/end rule, the SSM and KMS path rules,
+	// the secret suffix rule). A name outside them fails synthesis instead of
+	// entering the artifact as a name the installer can never create
+	// (SANITY-AT-N3-08).
 	DeclareFixedName(resourceType *string, name *string, resource constructs.IConstruct)
 	// Declare the CloudFormation resource that carries one composed name (contract section 11.4).
 	//
