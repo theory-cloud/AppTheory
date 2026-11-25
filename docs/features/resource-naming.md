@@ -287,9 +287,21 @@ would read wrong:
   context created inside the Stage — in one of its stacks — works and emits that Stage's documents.
 - **One environment.** A stack that resolves to a concrete account or Region other than the context's fails synthesis.
   The artifact claims the context's account and Region, and the reservation index keys a name by its scope in that
-  environment, so a stack in another environment would reserve names it cannot create. An env-agnostic stack (an
-  unresolved account or Region) is admitted: it deploys into the context's environment, which is what the artifact
-  claims.
+  environment, so a stack in another environment would reserve names it cannot create.
+
+  The comparison reads the value **after** `Stack.resolve`, not the raw `Stack.account` / `Stack.region`:
+
+  | The stack's account or Region | Result |
+  |---|---|
+  | a concrete literal equal to the context's | admitted |
+  | a concrete literal that differs from the context's | refused |
+  | a `Lazy` or other token that resolves to a concrete literal | compared as that literal (refused when it differs) |
+  | a value that stays unresolved after `Stack.resolve` (`Aws.ACCOUNT_ID` → `{Ref: AWS::AccountId}`, a deploy-time reference) | admitted |
+
+  Reading the raw value is what a round-2 review caught: `env: { region: Lazy.string({ produce: () => "us-west-2" }) }`
+  left a token on `Stack.region`, so the check skipped it and the stack synthesized with rows claiming the context's
+  `us-east-1`. An env-agnostic stack — one whose account or Region never becomes a literal — is still admitted: it
+  deploys into the context's environment, which is what the artifact claims.
 
 Two names AppTheory creates fall outside the derivation table and go through `declareFixedName()`: the Lambda service
 log group `/aws/lambda/{function name}` that `AppTheoryFunction` creates under the legacy logging profile, and the
@@ -301,17 +313,28 @@ derivation uses, not a second table — or synthesis fails:
 
 | Rule | Applies to |
 |---|---|
-| charset and length of the type's row | every type |
+| charset of the type's row | every type |
+| the upper length limit of the row | every type |
+| the lower length limit of the row (3 for `dynamodb_table`; the only row that states one) | `dynamodb_table` |
 | start and end with a letter or digit | `s3_bucket`, `s3_vector_bucket`, `s3_vector_index` |
 | the row's path lead (`/` for `ssm_parameter`, `alias/` for `kms_alias`) | the path types that state one |
+| at least one non-empty segment after the lead, and no empty segment | `ssm_parameter` |
+| a name after the `alias/` lead | `kms_alias` |
 | at most 15 levels, never beginning `aws` or `ssm` | `ssm_parameter` |
 | never in the `alias/aws/` namespace | `kms_alias` |
 | never ending in a hyphen and six characters | `secret` |
 | never beginning `aws/` | `log_group` |
 
-A `log_group` additionally accepts `/` in its charset, because its fixed names are absolute service paths: the Lambda
-group `/aws/lambda/{function name}` of section 3 is one, and section 3 reserves only the `aws/` prefix. A name outside
-these rules is refused instead of entering the artifact as a name the installer reserves and no deploy can create.
+A `log_group` accepts `/` in its charset only for the two shapes contract section 3 states: a **log-source name**,
+`theorycloud_{namespace}_{app}_{stage}_{logical}`, whose segments are joined with `_` precisely so no `/` appears in it,
+and the **Lambda service path** `/aws/lambda/{function name}`, whose function name satisfies the `lambda_function` row.
+Every other `/`-bearing log group — `arbitrary/path`, `/aws/lambda/`, `/aws/lambda/worker/suffix` — is refused, because
+it is neither shape, and a path that is not a log group (`/theorycloud/visibility/...`) is an `ssm_parameter`, not a
+`log_group`.
+
+Every rule above is the row's own limit: a row that states no lower length limit has none, so a one-character
+`iam_role` name is admitted and a one-character `dynamodb_table` name is not. A name outside these rules is refused
+instead of entering the artifact as a name the installer reserves and no deploy can create.
 
 - **Location.** `cdk.out/<stack>.metadata.json`, in the cloud assembly the deploy already consumes. AppTheory writes it
   as cloud-assembly metadata under the type `apptheory:resource-naming/derived-names` rather than to a file of its own,
