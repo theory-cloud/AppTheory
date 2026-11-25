@@ -37,7 +37,12 @@ const SOURCE_DIR = "src";
 const PROJECT_FILES = ["package.json"];
 
 // The manifest fields that describe what the handler imports at run time.
-const RUNTIME_DEPENDENCIES = ["dependencies", "optionalDependencies"];
+// `peerDependencies` belong here: a peer is not a build-time opinion, it is a
+// package the dependency imports and the consumer installs instead of nesting a
+// copy. `@theory-cloud/tabletheory-ts`, for one, imports its AWS SDK clients that
+// way, and npm installs them, so an asset without them fails at load.
+const REQUIRED_DEPENDENCIES = ["dependencies", "peerDependencies"];
+const OPTIONAL_DEPENDENCIES = ["optionalDependencies"];
 
 function readManifest(dir) {
   let text;
@@ -80,6 +85,12 @@ function resolvePackageDir(fromDir, name) {
 // package that resolved a *different* copy of the same name is staged under its
 // parent instead, which is also where Node will look first. A name two sources
 // claim at the same destination is refused: the asset cannot carry both.
+// Whether a peer dependency is declared optional through `peerDependenciesMeta`.
+function peerIsOptional(manifest, name) {
+  const meta = manifest.peerDependenciesMeta;
+  return Boolean(meta && typeof meta === "object" && meta[name] && meta[name].optional === true);
+}
+
 function productionClosure(projectRoot) {
   const root = fs.realpathSync(path.resolve(projectRoot));
   const manifest = readManifest(root);
@@ -97,21 +108,37 @@ function productionClosure(projectRoot) {
     if (parentManifest === null) {
       continue;
     }
-    const declared = [];
-    for (const field of RUNTIME_DEPENDENCIES) {
+    const required = [];
+    const optional = [];
+    for (const field of REQUIRED_DEPENDENCIES) {
       const value = parentManifest[field];
       if (value && typeof value === "object") {
         for (const name of Object.keys(value)) {
-          if (!declared.includes(name)) {
-            declared.push(name);
+          if (field === "peerDependencies" && peerIsOptional(parentManifest, name)) {
+            if (!optional.includes(name)) optional.push(name);
+          } else if (!required.includes(name) && !optional.includes(name)) {
+            required.push(name);
+          }
+        }
+      }
+    }
+    for (const field of OPTIONAL_DEPENDENCIES) {
+      const value = parentManifest[field];
+      if (value && typeof value === "object") {
+        for (const name of Object.keys(value)) {
+          if (!required.includes(name) && !optional.includes(name)) {
+            optional.push(name);
           }
         }
       }
     }
 
-    for (const name of declared) {
+    for (const name of [...required, ...optional]) {
       const source = resolvePackageDir(parent.dir, name);
       if (source === null) {
+        if (optional.includes(name)) {
+          continue;
+        }
         throw new Error(
           `bundling: ${parent.dir} declares ${name} but it is not installed; run npm install`,
         );

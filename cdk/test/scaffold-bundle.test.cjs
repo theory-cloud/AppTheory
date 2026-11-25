@@ -186,6 +186,50 @@ test("the TypeScript bundler nests a second copy of a name instead of overwritin
   }
 });
 
+test("the TypeScript bundler carries peers the handler imports and skips optional ones", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-peers-"));
+  const root = path.join(workspace, "project");
+  try {
+    writeSources(root);
+    writePackage(root, { name: "project", version: "0.0.0", dependencies: { "@scope/data": "*" } });
+    // A data layer that imports its AWS SDK clients as peers, exactly like
+    // `@theory-cloud/tabletheory-ts` does: npm installs them at the project, and
+    // the handler cannot load without them.
+    writePackage(path.join(root, "node_modules", "@scope", "data"), {
+      name: "@scope/data",
+      version: "1.0.0",
+      peerDependencies: { "@aws-sdk/client-dynamodb": "^3", "@aws-sdk/client-kms": "^3" },
+      peerDependenciesMeta: { "@aws-sdk/client-kms": { optional: true } },
+      optionalDependencies: { "native-bindings": "^1" },
+    });
+    writePackage(path.join(root, "node_modules", "@aws-sdk", "client-dynamodb"), {
+      name: "@aws-sdk/client-dynamodb",
+      version: "3.0.0",
+    });
+
+    // An installed peer is staged; an optional peer and an optional dependency
+    // that are not installed are skipped rather than refused.
+    const closure = tsBundle().productionClosure(root);
+    assert.deepEqual(
+      [...closure.keys()].sort(),
+      ["node_modules/@aws-sdk/client-dynamodb", "node_modules/@scope/data"],
+      `staged ${JSON.stringify([...closure.keys()])}`,
+    );
+
+    // A required peer that is missing is refused by name.
+    fs.rmSync(path.join(root, "node_modules", "@aws-sdk", "client-dynamodb"), {
+      recursive: true,
+      force: true,
+    });
+    assert.throws(
+      () => tsBundle().productionClosure(root),
+      /declares @aws-sdk\/client-dynamodb but it is not installed/,
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("the TypeScript bundler refuses a declared dependency that is not installed", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-missing-"));
   const root = path.join(workspace, "project");
