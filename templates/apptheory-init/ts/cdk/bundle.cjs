@@ -50,6 +50,20 @@
 // the synth instead of emitting an asset that fails at load — or, worse, loads a
 // version the project never tested.
 //
+// Verification is by file, not by folder. Two of these package layouts resolve a
+// declared edge to the right *directory* while loading a different *file* — or
+// no file at all — so comparing installed paths is not enough. Every declared
+// edge is asked for its exact entry file on both sides, and the file the project
+// loads must be the file the asset loads, at the same path inside the same
+// staged copy. Both layouts an asset cannot reproduce are refused by name, with
+// the package and the path: a package whose entry point (`main` or `exports`)
+// resolves outside its own directory, and a `node_modules` directory below a
+// package's root that the asset does not carry. Neither is a shape `npm install`
+// produces — npm installs a dependency at its dependent's `node_modules` root,
+// never deeper, and the registry ships a package's own files — but an author can
+// build either by hand and a published tarball can ship the second, and staging
+// them would emit an asset that resolves differently from the project.
+//
 // The file is plain CommonJS with no dependencies, because it runs twice: from
 // the CDK app during local bundling, and inside the Node bundling image where
 // the CDK mounts the project at /asset-input and collects the asset from
@@ -339,6 +353,97 @@ function resolveWithNode(anchor, name) {
   return null;
 }
 
+// Ask Node itself which *file* it loads for `name` from a file or directory: the
+// exact entry point behind `main`/`exports`, not the folder that holds it.
+// Returns null when Node loads no file from the tree — a core module name — or
+// cannot resolve one at all.
+function resolveFileWithNode(anchor, name) {
+  const request = createRequire(anchor);
+  if (request.resolve.paths(name) === null) {
+    return null;
+  }
+  try {
+    return fs.realpathSync(request.resolve(name));
+  } catch {
+    return null;
+  }
+}
+
+function isDirectory(candidate) {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The entry points a manifest declares: `main`, and every string in `exports`
+// (conditions, arrays and patterns alike).
+function entryTargets(manifest) {
+  const targets = [];
+  if (typeof manifest.main === "string" && manifest.main.length > 0) {
+    targets.push({ field: "main", target: manifest.main });
+  }
+  const collect = (value, field) => {
+    if (typeof value === "string") {
+      targets.push({ field, target: value });
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        collect(item, field);
+      }
+    } else if (value !== null && typeof value === "object") {
+      for (const key of Object.keys(value)) {
+        collect(value[key], field);
+      }
+    }
+  };
+  if (manifest.exports !== undefined) {
+    collect(manifest.exports, "exports");
+  }
+  return targets;
+}
+
+// Every `node_modules` directory below a package's own root, topmost only: the
+// packages inside one are closure entries of their own, and are checked when
+// they are staged.
+function nestedNodeModules(source) {
+  const found = [];
+  const seen = new Set();
+  const walk = (dir, relative) => {
+    let real;
+    try {
+      real = fs.realpathSync(dir);
+    } catch {
+      return;
+    }
+    if (seen.has(real)) {
+      return;
+    }
+    seen.add(real);
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = path.join(dir, entry.name);
+      const childRelative = relative === "" ? entry.name : path.join(relative, entry.name);
+      if (entry.name === "node_modules") {
+        if (isDirectory(child)) {
+          found.push(childRelative);
+        }
+        continue;
+      }
+      if (isDirectory(child)) {
+        walk(child, childRelative);
+      }
+    }
+  };
+  walk(source, "");
+  return found;
+}
+
 // The production edges one package contributes: what its manifest declares, in
 // declaration order.
 function manifestEdges(manifest) {
@@ -346,17 +451,135 @@ function manifestEdges(manifest) {
   return [...required, ...optional];
 }
 
+// The names one manifest field declares.
+function declaredIn(manifest, field) {
+  const value = manifest[field];
+  return new Set(value !== null && typeof value === "object" ? Object.keys(value) : []);
+}
+
+// The packages one `node_modules` directory holds, by their install name: a
+// scoped directory is not a package, and an entry without a manifest is not
+// resolvable by name, so neither is a copy the asset has to carry.
+function heldPackages(dir) {
+  const held = [];
+  const collect = (parent, prefix) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(parent, { withFileTypes: true });
+    } catch {
+      return held;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) {
+        continue;
+      }
+      const candidate = path.join(parent, entry.name);
+      if (!isDirectory(candidate)) {
+        continue;
+      }
+      if (prefix === "" && entry.name.startsWith("@")) {
+        collect(candidate, `${entry.name}${path.sep}`);
+        continue;
+      }
+      if (fs.existsSync(path.join(candidate, "package.json"))) {
+        held.push({ name: `${prefix}${entry.name}`, path: candidate });
+      }
+    }
+    return held;
+  };
+  return collect(dir, "");
+}
+
+// The two package layouts the asset cannot reproduce faithfully, refused by name
+// before any edge is resolved.
+//
+// The first is a package whose entry point leaves its own directory: `main` or an
+// `exports` target that resolves above, below or beside the package. npm packs a
+// package's own files, so nothing outside its directory is published with it; the
+// project can still load such a file because it only exists in the project's
+// checkout, and an asset cannot.
+//
+// The second is a package holding packages of its own that the asset does not
+// carry. A `node_modules` inside the package's *subtree* is the shape that
+// matters: Node's walk from a file inside the package reaches it, so the project
+// loads what it holds, but the closure resolves a package's dependencies from the
+// package root and the asset carries no such subtree — the dependent would
+// silently load whichever copy the asset's own walk reaches instead. A package's
+// own root-level `node_modules` is the shape npm installs, and stays supported: a
+// copy the closure places (a bundled dependency) is carried, and a linked
+// checkout's development tree is excluded exactly as it always has been.
+function refuseUnfaithfulLayouts(output, stagedAt, closure) {
+  for (const [destination, source] of closure) {
+    const manifest = readManifest(source);
+    if (manifest === null) {
+      continue;
+    }
+    const name = typeof manifest.name === "string" && manifest.name.length > 0 ? manifest.name : path.basename(destination);
+
+    for (const { field, target } of entryTargets(manifest)) {
+      const entry = path.resolve(source, target);
+      if (!isInside(source, entry)) {
+        throw new Error(
+          `bundling: the staged package ${name} at ${destination} declares ${field} ${JSON.stringify(target)}, ` +
+            `which resolves outside its own directory (${entry}); ` +
+            `a supported layout keeps every package's entry point inside the package`,
+        );
+      }
+    }
+
+    const dev = declaredIn(manifest, "devDependencies");
+    for (const relative of nestedNodeModules(source)) {
+      const atRoot = relative === "node_modules";
+      for (const held of heldPackages(path.join(source, relative))) {
+        let heldSource;
+        try {
+          heldSource = fs.realpathSync(held.path);
+        } catch {
+          continue;
+        }
+        const carriedAt = path.join(output, destination, relative, held.name);
+        const carried = fs.existsSync(carriedAt) ? stagedAt.get(fs.realpathSync(carriedAt)) : undefined;
+        if (carried !== undefined && carried.source === heldSource) {
+          // A bundled dependency the closure already places: carried, and fine.
+          continue;
+        }
+        if (atRoot && dev.has(held.name)) {
+          // The linked checkout's own development tree: excluded by design, and
+          // never imported by the handler.
+          continue;
+        }
+        throw new Error(
+          `bundling: the staged package ${name} at ${destination} carries ${path.join(destination, relative, held.name)}, ` +
+            `which the asset does not carry; ` +
+            `a supported layout installs a package's dependencies through the project's own closure, ` +
+            `never inside a package's own subtree`,
+        );
+      }
+    }
+  }
+}
+
 // The fail-closed check: from the asset that was actually staged, ask Node to
 // resolve every declared production edge of every staged package and of the
-// handler entry, and refuse to emit the asset unless each edge lands on the same
-// copy the project resolves.
+// handler entry, and refuse to emit the asset unless each edge loads the same
+// file the project loads.
 //
 // The oracle is Node's resolver, not a re-implementation of its walk: the search
 // path comes from `require.resolve.paths`, so the `node_modules/node_modules`
 // skip, scoped link slots and every other shape of the walk are Node's own
 // rules. Identity is the copy, not the name: two copies of one version are still
 // two packages, and an edge pinned to the copy the project resolved must find
-// that copy (or a copy staged from the same source) inside the asset.
+// that copy (or a copy staged from the same source) inside the asset. And
+// identity is the *file*: an edge is accepted only when `require.resolve` finds
+// the same entry point at the same path inside the same staged copy, because a
+// package directory can resolve to the project's copy while the file a dependent
+// actually loads is a different copy's — or missing altogether.
+//
+// Before any edge is resolved, the two layouts an asset cannot reproduce are
+// refused by name: a package whose entry point leaves its own directory, and a
+// `node_modules` directory inside a package's subtree that the asset does not
+// carry. Both would otherwise stage a package the project loads differently, and
+// no edge check anchored at a package root can see the difference.
 function verifyStaged(projectRoot, outputDir, closure) {
   const root = fs.realpathSync(path.resolve(projectRoot));
   const output = path.resolve(outputDir);
@@ -374,6 +597,49 @@ function verifyStaged(projectRoot, outputDir, closure) {
     }
     stagedAt.set(fs.realpathSync(staged), { destination, source });
   }
+
+  // The staged copies, deepest first, for asking a staged file what it is.
+  const stagedCopies = [...stagedAt.entries()]
+    .map(([staged, entry]) => ({ staged, destination: entry.destination, source: entry.source }))
+    .sort((a, b) => b.staged.length - a.staged.length);
+
+  refuseUnfaithfulLayouts(output, stagedAt, closure);
+
+  const sources = path.join(root, SOURCE_DIR);
+
+  // What a file is: the copy it belongs to and its path inside that copy. The
+  // handler sources are copied to the asset root, and every other staged file
+  // sits inside a staged package, so both sides answer the same question.
+  const sourcesCopy = Symbol("handler sources");
+  const projectIdentity = (file) => {
+    if (isInside(sources, file)) {
+      return { copy: sourcesCopy, relative: path.relative(sources, file) };
+    }
+    let best = null;
+    for (const source of new Set(closure.values())) {
+      if (isInside(source, file) && (best === null || source.length > best.length)) {
+        best = source;
+      }
+    }
+    return best === null ? null : { copy: best, relative: path.relative(best, file) };
+  };
+  const stagedIdentity = (file) => {
+    for (const copy of stagedCopies) {
+      if (isInside(copy.staged, file)) {
+        return { copy: copy.source, relative: path.relative(copy.staged, file) };
+      }
+    }
+    if (isInside(realOutput, file)) {
+      return { copy: sourcesCopy, relative: path.relative(realOutput, file) };
+    }
+    return null;
+  };
+  const stagedDestination = (copy) => {
+    const staged = stagedCopies.find((candidate) => candidate.source === copy);
+    return staged === undefined ? copy : staged.destination;
+  };
+  const describe = ({ copy, relative }) =>
+    path.join(copy === sourcesCopy ? SOURCE_DIR : stagedDestination(copy), relative);
 
   const dependents = [];
   const rootManifest = readManifest(root);
@@ -399,6 +665,20 @@ function verifyStaged(projectRoot, outputDir, closure) {
       stagedAnchor: path.join(output, destination, "package.json"),
       manifest,
     });
+  }
+
+  // The handler entry itself: the file the runtime starts from must be in the
+  // asset, at the asset root, as the same bytes the project runs. It is not an
+  // edge, so nothing above asks Node about it.
+  const handlerEntry = path.join(root, SOURCE_DIR, "handler.mjs");
+  if (fs.existsSync(handlerEntry)) {
+    const stagedEntry = path.join(realOutput, path.relative(sources, fs.realpathSync(handlerEntry)));
+    if (!fs.existsSync(stagedEntry) || !fs.readFileSync(stagedEntry).equals(fs.readFileSync(handlerEntry))) {
+      throw new Error(
+        `bundling: the staged asset does not carry the handler entry: ` +
+          `${handlerEntry} is not at ${stagedEntry} in the asset`,
+      );
+    }
   }
 
   let verified = 0;
@@ -429,6 +709,42 @@ function verifyStaged(projectRoot, outputDir, closure) {
             `${dependent.label} imports ${name}, which resolves to ` +
             `${expected === null ? "nothing" : expected} in the project but to ${detail} from the asset`,
         );
+      }
+
+      // The same edge, one level down: the exact file Node loads. The directory
+      // is the same copy in the asset, so any difference here is a dependency
+      // the project resolves from inside that copy and the asset cannot.
+      const expectedFile = resolveFileWithNode(dependent.anchor, name);
+      const foundFile = resolveFileWithNode(dependent.stagedAnchor, name);
+      if (expectedFile !== null || foundFile !== null) {
+        const expectedWhere = expectedFile === null ? null : projectIdentity(expectedFile);
+        const foundWhere = foundFile === null ? null : stagedIdentity(foundFile);
+        const sameFile =
+          expectedFile !== null &&
+          foundFile !== null &&
+          expectedWhere !== null &&
+          foundWhere !== null &&
+          expectedWhere.copy === foundWhere.copy &&
+          expectedWhere.relative === foundWhere.relative;
+        if (!sameFile) {
+          const projectSide =
+            expectedFile === null
+              ? "no file (Node cannot resolve an entry point)"
+              : expectedWhere === null
+                ? `${expectedFile}, which is outside every staged copy`
+                : `${describe(expectedWhere)} (${expectedFile})`;
+          const assetSide =
+            foundFile === null
+              ? "nothing (Node cannot resolve an entry point)"
+              : foundWhere === null
+                ? `${foundFile}, which is outside every staged copy`
+                : `${describe(foundWhere)} (${foundFile})`;
+          throw new Error(
+            `bundling: the staged asset does not resolve like the project: ` +
+              `${dependent.label} imports ${name}, which loads ${projectSide} in the project ` +
+              `but ${assetSide} from the asset`,
+          );
+        }
       }
       verified += 1;
     }
