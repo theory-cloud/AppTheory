@@ -220,7 +220,7 @@ JSON
 
   echo "consumer-install(ts): installing $(basename "${tarball}") into an empty package"
   (cd "${consumer_dir}" &&
-    npm install --ignore-scripts --no-audit --no-fund --save-exact "${tarball}" >/dev/null)
+    npm install --ignore-scripts --no-audit --no-fund --save-exact "file:${tarball}" >/dev/null)
 
   local installed_package="${consumer_dir}/node_modules/@theory-cloud/apptheory/package.json"
   if [[ ! -f "${installed_package}" ]]; then
@@ -373,7 +373,7 @@ JSON
   echo "consumer-install(cdk): installing both tarballs with aws-cdk-lib ${aws_cdk_lib} and constructs ${constructs}"
   (cd "${consumer_dir}" &&
     npm install --ignore-scripts --no-audit --no-fund --save-exact \
-      "${artifacts_dir}/${expected_tgz}" "${runtime_tarball}" \
+      "file:${artifacts_dir}/${expected_tgz}" "file:${runtime_tarball}" \
       "aws-cdk-lib@${aws_cdk_lib}" "constructs@${constructs}" >/dev/null)
 
   local installed_package="${consumer_dir}/node_modules/@theory-cloud/apptheory-cdk/package.json"
