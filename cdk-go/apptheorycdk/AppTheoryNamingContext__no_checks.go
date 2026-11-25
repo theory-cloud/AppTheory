@@ -4,6 +4,10 @@ package apptheorycdk
 
 // Building without runtime type checking enabled, so all the below just return nil
 
+func (a *jsiiProxy_AppTheoryNamingContext) validateDeclareFixedNameParameters(resourceType *string, name *string, resource constructs.IConstruct) error {
+	return nil
+}
+
 func (a *jsiiProxy_AppTheoryNamingContext) validateDeclareNameParameters(resourceType *string, logical *string, resource constructs.IConstruct) error {
 	return nil
 }

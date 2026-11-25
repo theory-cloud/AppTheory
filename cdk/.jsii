@@ -17429,7 +17429,7 @@
           },
           "locationInModule": {
             "filename": "lib/keeper-visibility.ts",
-            "line": 165
+            "line": 171
           },
           "name": "preview",
           "returns": {
@@ -25698,12 +25698,43 @@
       "methods": [
         {
           "docs": {
+            "remarks": "Two names AppTheory creates fall outside the derivation table: the Lambda\nservice log group `/aws/lambda/{function name}`, and the visibility manifest\nparameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section\n6). They are still names the context determines and resources the stack\ncreates, so the artifact carries them; the reserved scope is the type's scope\nfrom contract section 11.1.\n\nAn application that names its own resource with a fixed contract path\ndeclares it here too, so the artifact covers it.",
+            "summary": "Declare the CloudFormation resource that carries one name the contract fixes rather than derives (contract section 11.4)."
+          },
+          "locationInModule": {
+            "filename": "lib/naming-context.ts",
+            "line": 349
+          },
+          "name": "declareFixedName",
+          "parameters": [
+            {
+              "name": "resourceType",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "name",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "resource",
+              "type": {
+                "fqn": "constructs.IConstruct"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
             "remarks": "Synthesis refuses two different logical resources in one naming context that\nderive the same name in the same naming scope, and emits the derived-name\nartifact the name reservation index reserves. A construct declares every\nphysically named resource it creates; an application that names its own\nresource with `physicalName` declares it here once the resource exists, so\nthe artifact covers it too.\n\nA name AppTheory only wires for a resource another stack owns, such as\n`AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that\nstack declares its own resource.\n\nA `log_group` type declares a log-source name (contract section 3): a log\ngroup takes no pin or generated entry.",
             "summary": "Declare the CloudFormation resource that carries one composed name (contract section 11.4)."
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 302
+            "line": 319
           },
           "name": "declareName",
           "parameters": [
@@ -25733,7 +25764,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 338
+            "line": 386
           },
           "name": "logGroupName",
           "parameters": [
@@ -25756,7 +25787,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 345
+            "line": 393
           },
           "name": "logSourcePrefix",
           "returns": {
@@ -25771,7 +25802,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 278
+            "line": 295
           },
           "name": "physicalName",
           "parameters": [
@@ -25800,7 +25831,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 260
+            "line": 277
           },
           "name": "values",
           "returns": {
@@ -25969,7 +26000,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 253
+            "line": 270
           },
           "name": "standardLogging",
           "type": {
@@ -35253,5 +35284,5 @@
     }
   },
   "version": "7.5.0",
-  "fingerprint": "ApICI9Cu7NSr4pZfDViNA1fQ1WSUFODAMQEo5SJzR50="
+  "fingerprint": "cGi7mae4OoMXevjcUjwDOCuwBkDJgzRxppt2WhDtjCw="
 }

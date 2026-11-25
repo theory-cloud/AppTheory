@@ -154,6 +154,21 @@ export declare class AppTheoryNamingContext extends Construct {
      */
     declareName(resourceType: string, logical: string, resource: IConstruct): void;
     /**
+     * Declare the CloudFormation resource that carries one name the contract fixes
+     * rather than derives (contract section 11.4).
+     *
+     * Two names AppTheory creates fall outside the derivation table: the Lambda
+     * service log group `/aws/lambda/{function name}`, and the visibility manifest
+     * parameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section
+     * 6). They are still names the context determines and resources the stack
+     * creates, so the artifact carries them; the reserved scope is the type's scope
+     * from contract section 11.1.
+     *
+     * An application that names its own resource with a fixed contract path
+     * declares it here too, so the artifact covers it.
+     */
+    declareFixedName(resourceType: string, name: string, resource: IConstruct): void;
+    /**
      * The CloudFormation logical id of the resource a declaration names. The
      * construct's default child is the L1 resource a construct creates for itself,
      * so an L2 construct is the expected argument.

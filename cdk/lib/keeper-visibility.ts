@@ -137,8 +137,9 @@ export class AppTheoryKeeperVisibility extends Construct {
 
     const tier = props.manifestTier ?? AppTheoryVisibilityManifestTier.STANDARD;
     const limit = MANIFEST_VALUE_LIMIT[tier];
+    const parameterName = manifestParameterName(context);
     this.manifestParameter = new ssm.StringParameter(this, "ManifestParameter", {
-      parameterName: manifestParameterName(context),
+      parameterName,
       tier: tier === AppTheoryVisibilityManifestTier.ADVANCED ? ssm.ParameterTier.ADVANCED : ssm.ParameterTier.STANDARD,
       stringValue: Lazy.string({
         produce: () => {
@@ -157,6 +158,11 @@ export class AppTheoryKeeperVisibility extends Construct {
         },
       }),
     });
+    // Contract section 11.4: the manifest parameter's name is the fixed section
+    // 6 path, not a derived one, so it declares through the fixed-name path and
+    // the artifact carries it. Two visibility constructs in one context would
+    // otherwise contend for one parameter with no synth-time sign.
+    context.declareFixedName("ssm_parameter", parameterName, this.manifestParameter);
   }
 
   /**

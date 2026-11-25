@@ -216,6 +216,10 @@ export class AppTheoryFunction extends Construct {
     }
 
     let boundLogGroup = lambdaProps.logGroup;
+    // The `/aws/lambda/{name}` group AppTheory creates under the legacy logging
+    // profile carries a name the context derives from the function name.
+    let managedServiceLogGroup: logs.LogGroup | undefined;
+    let serviceLogGroupName: string | undefined;
     const standardLogging = namingContext?.standardLogging === true;
     if (standardLogging) {
       if (lambdaProps.logGroup) {
@@ -234,12 +238,19 @@ export class AppTheoryFunction extends Construct {
     }
 
     if (!boundLogGroup && !standardLogging && lambdaProps.functionName) {
-      boundLogGroup = createManagedFunctionLogGroup(
+      const serviceLogGroup = createManagedFunctionLogGroup(
         this,
         `/aws/lambda/${lambdaProps.functionName}`,
         logRetention,
         requestedLogRemovalPolicy ?? RemovalPolicy.RETAIN,
       );
+      boundLogGroup = serviceLogGroup;
+      // The Lambda service keeps the runtime log group at `/aws/lambda/{function
+      // name}`. The name is the context's, so contract section 11.4 makes the
+      // group a declared resource: it is reserved like any other log group, and
+      // two functions deriving one name collide on it too.
+      managedServiceLogGroup = serviceLogGroup;
+      serviceLogGroupName = `/aws/lambda/${String(lambdaProps.functionName)}`;
     }
 
     this.fn = new lambda.Function(this, "Function", {
@@ -301,6 +312,9 @@ export class AppTheoryFunction extends Construct {
       }
       if (standardLogging && boundLogGroup) {
         namingContext.declareName("log_group", `logs/runtime/${logical}`, boundLogGroup);
+      }
+      if (managedServiceLogGroup !== undefined && serviceLogGroupName !== undefined) {
+        namingContext.declareFixedName("log_group", serviceLogGroupName, managedServiceLogGroup);
       }
     }
 

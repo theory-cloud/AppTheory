@@ -1789,6 +1789,253 @@ test("R4: the jsii scope and synth-check primitives refuse an unknown type", () 
   );
 });
 
+// ---- r4 rework r1: artifact completeness and stack attribution -------------
+
+function metadataDocuments(artifact) {
+  const documents = [];
+  for (const entries of Object.values(artifact.metadata ?? {})) {
+    for (const entry of entries) {
+      if (entry.type === DERIVED_NAMES_KEY) documents.push(entry.data);
+    }
+  }
+  return documents;
+}
+
+function namedResourcesOfType(template, type) {
+  return Object.entries(template.Resources ?? {})
+    .filter(([, resource]) => resource.Type === type)
+    .map(([logicalId, resource]) => ({ logicalId, properties: resource.Properties ?? {} }));
+}
+
+test("F1a: the legacy-profile Lambda service log group is declared", () => {
+  // AppTheoryFunction creates `/aws/lambda/{function name}` itself under the
+  // default (legacy) logging profile. The name is the context's, so a synth
+  // without this declaration under-reports the reserved set (SANITY-AT-N3-01).
+  const { documents, template } = synthAssembly((stack) => {
+    shopFunction(stack, "Worker", "worker", shopContext(stack));
+  });
+  assert.equal(documents.length, 1);
+  const logGroups = namedResourcesOfType(template, "AWS::Logs::LogGroup");
+  assert.equal(logGroups.length, 1);
+  assert.equal(logGroups[0].properties.LogGroupName, "/aws/lambda/shop-lab-worker");
+
+  const rows = documents[0].entries.filter((row) => row.type === "log_group");
+  assert.deepEqual(rows, [
+    { name: "/aws/lambda/shop-lab-worker", type: "log_group", scope: "account_region", logical_id: logGroups[0].logicalId },
+  ]);
+  // Every row still names a resource the template holds.
+  assert.ok(Object.keys(template.Resources).includes(rows[0].logical_id));
+});
+
+test("F1a: two functions colliding on a derived name also collide on the derived log group", () => {
+  assert.throws(
+    () =>
+      synth((stack) => {
+        const context = shopContext(stack);
+        shopFunction(stack, "Slash", "site/status", context);
+        shopFunction(stack, "Dash", "site-status", context);
+      }),
+    /derive shop-lab-site-status in scope account_region/,
+  );
+});
+
+test("F1b: the visibility manifest parameter is declared with its fixed contract path", () => {
+  const { documents, template } = synthAssembly((stack) => {
+    new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+      namingContext: shopContext(stack),
+      readerPrincipalArn: "arn:aws:iam::123456789012:role/cloud-keeper",
+      rules: {},
+    });
+  });
+  assert.equal(documents.length, 1);
+  const parameters = namedResourcesOfType(template, "AWS::SSM::Parameter");
+  assert.equal(parameters.length, 1);
+  assert.equal(parameters[0].properties.Name, "/theorycloud/visibility/shop/lab/manifest");
+
+  const rows = documents[0].entries.filter((row) => row.type === "ssm_parameter");
+  assert.deepEqual(rows, [
+    {
+      name: "/theorycloud/visibility/shop/lab/manifest",
+      type: "ssm_parameter",
+      scope: "account_region",
+      logical_id: parameters[0].logicalId,
+    },
+  ]);
+});
+
+test("F1b: declaring a fixed name refuses a type with no stated naming scope", () => {
+  assert.throws(
+    () =>
+      synth((stack) => {
+        const context = shopContext(stack);
+        const role = new apptheory.AppTheoryLambdaRole(stack, "Role", { assumedBy: handler(stack, "Owner") });
+        context.declareFixedName("opensearch_domain", "shop-lab-search", role);
+      }),
+    /no stated naming scope/,
+  );
+});
+
+test("F1c: the artifact covers every context-derived name AppTheory creates in the stack", () => {
+  // The audit: every construct that derives a name from the context and creates
+  // the resource locally must declare it. This stack exercises the constructs
+  // whose names come from the context, and pins the complete row set.
+  const { documents, template } = synthAssembly((stack) => {
+    const context = shopContext(stack, "Naming", {
+      loggingProfile: apptheory.AppTheoryLoggingProfile.STANDARD,
+    });
+    shopFunction(stack, "Worker", "worker", context);
+    new apptheory.AppTheoryBucket(stack, "Assets", { namingContext: context, logical: "site-assets" });
+    new apptheory.AppTheoryHttpApi(stack, "Api", {
+      namingContext: context,
+      logicalName: "api",
+      handler: handler(stack, "ApiHandler"),
+    });
+    new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+      namingContext: context,
+      readerPrincipalArn: "arn:aws:iam::123456789012:role/cloud-keeper",
+      rules: {},
+    });
+  });
+  assert.equal(documents.length, 1);
+  const document = documents[0];
+
+  const expected = [
+    ["api_http", "shop-lab-api", "not_unique"],
+    ["iam_role", "shop-lab-worker", "account"],
+    ["iam_role", "shop-lab-keeper-reader", "account"],
+    ["lambda_function", "shop-lab-worker", "account_region"],
+    ["log_group", "theorycloud_theorycloud_shop_lab_logs_runtime_worker", "account_region"],
+    ["log_group", "theorycloud_theorycloud_shop_lab_logs_access_api_api", "account_region"],
+    ["s3_bucket", "shop-lab-site-assets-998115851393-us-east-1-an", "account_region"],
+    ["ssm_parameter", "/theorycloud/visibility/shop/lab/manifest", "account_region"],
+  ];
+  assert.deepEqual(
+    document.entries.map((row) => [row.type, row.name, row.scope]).sort(),
+    expected.sort(),
+  );
+
+  // Each row is a resource the stack's own template holds.
+  const logicalIds = new Set(Object.keys(template.Resources));
+  for (const row of document.entries) assert.ok(logicalIds.has(row.logical_id), row.logical_id);
+});
+
+test("F1c: names built from a construct's own props stay outside the artifact and are not reserved", () => {
+  // AppTheoryApp names its function and tables from `appName`, not from the
+  // context (Factory scope decision for r1). Those names are deliberately not
+  // in the artifact, so this test pins the exclusion instead of implying it.
+  const { documents, template } = synthAssembly((stack) => {
+    new apptheory.AppTheoryApp(stack, "App", {
+      appName: "shop-lab-worker",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 204 });"),
+      handler: "index.handler",
+      runtime: lambda.Runtime.NODEJS_24_X,
+      namingContext: shopContext(stack),
+      enableDatabase: true,
+    });
+  });
+  const declaredNames = new Set(documents.flatMap((document) => document.entries.map((row) => row.name ?? "")));
+  const createdNames = new Set(
+    Object.values(template.Resources)
+      .map((resource) => resource.Properties?.FunctionName ?? resource.Properties?.TableName)
+      .filter((name) => name !== undefined),
+  );
+  assert.ok(createdNames.has("shop-lab-worker"));
+  assert.ok(createdNames.has("shop-lab-worker-table"));
+  for (const name of createdNames) assert.equal(declaredNames.has(name), false, name);
+});
+
+test("F1c: the ISR metadata table name AppTheory wires but does not create stays undeclared", () => {
+  const { documents, template } = synthAssembly((stack) => {
+    new apptheory.AppTheorySsrSite(stack, "Site", {
+      ssrFunction: handler(stack, "Ssr"),
+      namingContext: shopContext(stack),
+      logicalName: "site",
+      mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    });
+  });
+  // The construct consumes the entry and wires the name into the SSR function...
+  const functions = namedResourcesOfType(template, "AWS::Lambda::Function");
+  const wired = functions.some(
+    (fn) => fn.properties.Environment?.Variables?.APPTHEORY_CACHE_TABLE_NAME === "shop-lab-site-isr-metadata",
+  );
+  assert.ok(wired);
+  // ...but another stack owns the table, so this stack's artifact does not
+  // declare it (contract section 11.4: the owner declares its own resource).
+  assert.equal(namedResourcesOfType(template, "AWS::DynamoDB::Table").length, 0);
+  const rows = documents.flatMap((document) => document.entries);
+  assert.equal(rows.filter((row) => row.type === "dynamodb_table").length, 0);
+  assert.equal(rows.filter((row) => row.name === "shop-lab-site-isr-metadata").length, 0);
+});
+
+test("F2: a shared context attributes each entry to the stack that holds its logical id", () => {
+  const app = new cdk.App();
+  const owner = new cdk.Stack(app, "Owner");
+  const consumer = new cdk.Stack(app, "Consumer");
+  const context = new apptheory.AppTheoryNamingContext(owner, "Naming", {
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+  });
+  new apptheory.AppTheoryBucket(owner, "Assets", { namingContext: context, logical: "site-assets" });
+  new apptheory.AppTheoryFunction(consumer, "Worker", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 204 });"),
+    namingContext: context,
+    logicalName: "worker",
+  });
+
+  const assembly = app.synth();
+  const ownerArtifact = assembly.getStackByName("Owner");
+  const consumerArtifact = assembly.getStackByName("Consumer");
+  const ownerDocuments = metadataDocuments(ownerArtifact);
+  const consumerDocuments = metadataDocuments(consumerArtifact);
+
+  const consumerLogicalIds = new Set(Object.keys(consumerArtifact.template.Resources));
+  const ownerLogicalIds = new Set(Object.keys(ownerArtifact.template.Resources));
+
+  // The consumer stack has its own document, and it describes its own resources.
+  assert.equal(consumerDocuments.length, 1);
+  assert.ok(consumerDocuments[0].entries.length > 0);
+  for (const row of consumerDocuments[0].entries) {
+    assert.ok(consumerLogicalIds.has(row.logical_id), `${row.logical_id} is not in Consumer`);
+  }
+  assert.deepEqual(
+    consumerDocuments[0].entries.map((row) => row.type).sort(),
+    ["iam_role", "lambda_function", "log_group"],
+  );
+
+  // The owner stack's document holds only the owner's resources.
+  assert.equal(ownerDocuments.length, 1);
+  for (const row of ownerDocuments[0].entries) {
+    assert.ok(ownerLogicalIds.has(row.logical_id), `${row.logical_id} is not in Owner`);
+    assert.equal(consumerLogicalIds.has(row.logical_id), false, row.logical_id);
+  }
+  assert.deepEqual(ownerDocuments[0].entries.map((row) => row.type), ["s3_bucket"]);
+
+  // Neither document claims the other stack's resources.
+  const ownerRows = JSON.stringify(ownerDocuments[0].entries);
+  for (const logicalId of consumerLogicalIds) assert.equal(ownerRows.includes(logicalId), false, logicalId);
+});
+
+test("F2: a cross-stack collision in one context is still refused", () => {
+  assert.throws(() => {
+    const app = new cdk.App();
+    const owner = new cdk.Stack(app, "Owner");
+    const consumer = new cdk.Stack(app, "Consumer");
+    const context = new apptheory.AppTheoryNamingContext(owner, "Naming", {
+      app: "shop",
+      stage: "lab",
+      account: "998115851393",
+      region: "us-east-1",
+    });
+    new apptheory.AppTheoryBucket(owner, "OwnerBucket", { namingContext: context, logical: "shared" });
+    new apptheory.AppTheoryBucket(consumer, "ConsumerBucket", { namingContext: context, logical: "shared" });
+    app.synth();
+  }, /derive shop-lab-shared-998115851393-us-east-1-an in scope account_region/);
+});
+
 test("F3: the jsii scope primitive refuses inherited property names", () => {
   const naming = apptheory.AppTheoryResourceNaming;
   for (const inherited of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {

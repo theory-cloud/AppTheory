@@ -97,7 +97,9 @@ fails synthesis, because lab names are derived.
   profile), and a CloudFront logs bucket follow `logging.profile`. They consume no naming entry under either naming
   profile. Under `logging.profile: legacy` an access-log group the construct creates keeps today's
   CloudFormation-generated name; under `standard` it takes the log-source name. A `log_group` entry that names one is
-  an orphan.
+  an orphan. Taking no entry is not the same as staying out of the artifact: the `/aws/lambda/<fn>` group and the
+  standard-profile groups have names the context determines, so the artifact declares them; a legacy access-log group
+  and a CloudFront logs bucket have CloudFormation-generated names, so they are not declared.
 - **The orphan check is consumption-based.** `physicalName()` marks `{type}:{logical}` as used; a construct that
   consumes a suffixed key marks that exact key. An entry that no construct consumes, including an entry for a
   construct's own logging resource, fails synthesis. `AppTheoryNamingContext` runs the check at stack synthesis.
@@ -127,10 +129,25 @@ execution role.
 API and log-group names aside, these are the entries that must appear in `pins` (or, under `legacy`, `generated`) for
 a legacy stack. Access-log groups, the Lambda runtime group and CloudFront logs buckets never appear in either list.
 
-Every construct above that creates the resource also declares it through `declareName()`, so the derived-name artifact
-covers it (see [Cross-app uniqueness](#cross-app-uniqueness)). `AppTheorySsrSite`'s
-`dynamodb_table:{logical}-isr-metadata` entry is the exception: the construct only wires the name into the SSR
-function, so the stack that creates the table declares it.
+Every construct above declares each resource whose name it takes from the context, so the derived-name artifact covers
+it (see [Cross-app uniqueness](#cross-app-uniqueness)). Three things are deliberately outside the artifact, and none of
+them is reserved by the installer:
+
+- **A name AppTheory only wires for a resource another stack owns.** `AppTheorySsrSite`'s
+  `dynamodb_table:{logical}-isr-metadata` entry is the case in v0.1: the construct consumes the entry and passes the
+  name to the SSR function, but the stack that creates the table declares it.
+- **A name a construct builds from its own props instead of the context.** `AppTheoryApp` names its function from
+  `appName` and its tables `{appName}-table` and `{appName}-rate-limits`; those names never pass through the context, so
+  they are not in the artifact and are not reserved. The same holds for every physical-name prop listed under
+  [Constructs that accept no naming context](#constructs-that-accept-no-naming-context) and
+  [Names outside v0.1](#names-outside-v0.1).
+- **A name CloudFormation generates.** Under the legacy logging profile a construct access-log group keeps today's
+  generated name, and a `generated` entry means the same for a named type. Nothing exists to reserve.
+
+Consuming a name without declaring it is silent: an application that calls `physicalName()` itself and passes the
+result to a raw construct gets no warning, and the name does not appear in the artifact. The reservation index cannot
+see it, so declaring such a resource with `declareName()` (a derived name) or `declareFixedName()` (a fixed contract
+path) is the application's duty. AppTheory never infers a declaration from a string it merely handed over.
 
 ### Explicit name props
 
@@ -250,14 +267,21 @@ collide with each other.
 Every synth with a naming context writes the **derived-name artifact** the installer reserves: the complete set of
 `{name, type, scope, logical_id}` for each physically named resource the context's constructs declare, where
 `logical_id` is the CloudFormation logical id of the resource that carries the name. Constructs declare through
-`AppTheoryNamingContext.declareName(resourceType, logical, resource)`; an application that names its own resource with
-`physicalName()` declares it the same way once the resource exists.
+`AppTheoryNamingContext.declareName(resourceType, logical, resource)` when the name comes from the derivation table, and
+`AppTheoryNamingContext.declareFixedName(resourceType, name, resource)` when the name is a fixed contract path. An
+application that names its own resource declares it the same way once the resource exists; a name it never declares is
+absent from the artifact and produces no warning, because only the application knows it created the resource.
+
+Two names AppTheory creates fall outside the derivation table and go through `declareFixedName()`: the Lambda service
+log group `/aws/lambda/{function name}` that `AppTheoryFunction` creates under the legacy logging profile, and the
+visibility manifest parameter `/theorycloud/visibility/{app}/{stage}/manifest`. Both carry the type's section 11.1
+scope when they appear in the artifact (`log_group` and `ssm_parameter`: `account_region`).
 
 - **Location.** `cdk.out/<stack>.metadata.json`, in the cloud assembly the deploy already consumes. AppTheory writes it
   as cloud-assembly metadata under the type `apptheory:resource-naming/derived-names` rather than to a file of its own,
   so it travels with the assembly through `cdk synth`, `cdk deploy`, and CDK Pipelines, needs no filesystem writes
   during synthesis, and never touches a template (the synthesized `Resources` are byte-identical to a run without it).
-- **Format.** One document per naming context:
+- **Format.** One document per stack that holds declared resources, carrying that stack's rows:
 
   ```json
   {
@@ -273,6 +297,11 @@ Every synth with a naming context writes the **derived-name artifact** the insta
 
 - **Order.** Entries sort by `scope`, then `type`, then `name`, then `logical_id`, so the document is byte-identical
   whatever order the constructs were created in.
+- **Stack attribution.** Every row belongs to the stack whose template holds its `logical_id`, and it appears only in
+  that stack's `{stack}.metadata.json`. A naming context shared by several stacks therefore produces one document per
+  stack; no stack's document describes another stack's resource. The refusal above still spans the whole context,
+  because two stacks in one context that derive the same name in the same scope are one collision, not two independent
+  ones.
 - **Generated entries.** A `generated` entry means CloudFormation owns the name today, so nothing exists to reserve.
   Its row carries `"generated": true` and **no** `name`, and it takes no part in the check.
 - **Stacks without a naming context.** No check and no artifact: synthesis is byte-identical to before this contract.

@@ -10,6 +10,22 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 )
 
+func (a *jsiiProxy_AppTheoryNamingContext) validateDeclareFixedNameParameters(resourceType *string, name *string, resource constructs.IConstruct) error {
+	if resourceType == nil {
+		return fmt.Errorf("parameter resourceType is required, but nil was provided")
+	}
+
+	if name == nil {
+		return fmt.Errorf("parameter name is required, but nil was provided")
+	}
+
+	if resource == nil {
+		return fmt.Errorf("parameter resource is required, but nil was provided")
+	}
+
+	return nil
+}
+
 func (a *jsiiProxy_AppTheoryNamingContext) validateDeclareNameParameters(resourceType *string, logical *string, resource constructs.IConstruct) error {
 	if resourceType == nil {
 		return fmt.Errorf("parameter resourceType is required, but nil was provided")

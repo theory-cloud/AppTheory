@@ -218,16 +218,19 @@ export class AppTheoryNamingContext extends Construct {
           );
         }
 
-        const entries: AppTheoryDerivedNameInput[] = this.declared.map((entry) => ({
-          ...(entry.name !== undefined ? { name: entry.name } : {}),
-          type: entry.type,
-          logicalId: this.cloudFormationLogicalId(entry),
-          ...(entry.generated ? { generated: true } : {}),
+        const declarations = this.declared.map((entry) => ({
+          owner: Stack.of(entry.resource),
+          input: {
+            ...(entry.name !== undefined ? { name: entry.name } : {}),
+            type: entry.type,
+            logicalId: this.cloudFormationLogicalId(entry),
+            ...(entry.generated ? { generated: true } : {}),
+          } as AppTheoryDerivedNameInput,
         }));
 
         let artifact: AppTheoryDerivedName[] = [];
         try {
-          artifact = AppTheoryResourceNaming.synthCheck(entries);
+          artifact = AppTheoryResourceNaming.synthCheck(declarations.map((declaration) => declaration.input));
         } catch (error) {
           errors.push(
             `AppTheoryNamingContext ${String((error as Error).message)}; two different logical resources in one naming context cannot share a physical name in the same scope`,
@@ -235,13 +238,27 @@ export class AppTheoryNamingContext extends Construct {
         }
         if (errors.length > 0) return errors;
 
-        const document: AppTheoryDerivedNames = {
-          contract: RESOURCE_NAMING_CONTRACT,
-          schema: DERIVED_NAMES_SCHEMA,
-          context: this.values(),
-          entries: artifact,
-        };
-        this.node.addMetadata(DERIVED_NAMES_METADATA_KEY, JSON.parse(AppTheoryResourceNaming.derivedNamesJson(document)));
+        // Every entry is attributable to the stack whose template holds its
+        // logical id, so a context shared across stacks emits one document per
+        // stack in that stack's own `{stack}.metadata.json` (contract section
+        // 11.4). The refusal above still spans the whole context: two stacks in
+        // one context that derive the same name in one scope are one collision.
+        const byStack = new Map<Stack, AppTheoryDerivedName[]>();
+        declarations.forEach((declaration, index) => {
+          const rows = byStack.get(declaration.owner) ?? [];
+          rows.push(artifact[index] as AppTheoryDerivedName);
+          byStack.set(declaration.owner, rows);
+        });
+
+        for (const [owner, entries] of byStack) {
+          const document: AppTheoryDerivedNames = {
+            contract: RESOURCE_NAMING_CONTRACT,
+            schema: DERIVED_NAMES_SCHEMA,
+            context: this.values(),
+            entries,
+          };
+          owner.node.addMetadata(DERIVED_NAMES_METADATA_KEY, JSON.parse(AppTheoryResourceNaming.derivedNamesJson(document)));
+        }
         return [];
       },
     });
@@ -313,6 +330,37 @@ export class AppTheoryNamingContext extends Construct {
       generated: composed.generated === true,
       resource,
     });
+  }
+
+  /**
+   * Declare the CloudFormation resource that carries one name the contract fixes
+   * rather than derives (contract section 11.4).
+   *
+   * Two names AppTheory creates fall outside the derivation table: the Lambda
+   * service log group `/aws/lambda/{function name}`, and the visibility manifest
+   * parameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section
+   * 6). They are still names the context determines and resources the stack
+   * creates, so the artifact carries them; the reserved scope is the type's scope
+   * from contract section 11.1.
+   *
+   * An application that names its own resource with a fixed contract path
+   * declares it here too, so the artifact covers it.
+   */
+  public declareFixedName(resourceType: string, name: string, resource: IConstruct): void {
+    // A type outside contract section 2 has no stated scope, so it cannot be
+    // reserved: declare it and synthesis fails closed.
+    AppTheoryResourceNaming.namingScope(resourceType);
+    if (Token.isUnresolved(name)) {
+      throw new Error(
+        `AppTheoryNamingContext cannot declare ${resourceType} because the name is an unresolved token; a name the artifact reserves must be resolvable at synthesis`,
+      );
+    }
+    if (name.trim() === "" || name.trim() !== name) {
+      throw new Error(
+        `AppTheoryNamingContext cannot declare ${resourceType} because ${JSON.stringify(name)} is not a usable physical name`,
+      );
+    }
+    this.declared.push({ type: resourceType, logical: name, name, generated: false, resource });
   }
 
   /**

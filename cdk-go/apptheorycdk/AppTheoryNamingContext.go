@@ -35,6 +35,18 @@ type AppTheoryNamingContext interface {
 	Stage() *string
 	// Whether the standard logging profile is active.
 	StandardLogging() *bool
+	// Declare the CloudFormation resource that carries one name the contract fixes rather than derives (contract section 11.4).
+	//
+	// Two names AppTheory creates fall outside the derivation table: the Lambda
+	// service log group `/aws/lambda/{function name}`, and the visibility manifest
+	// parameter `/theorycloud/visibility/{app}/{stage}/manifest` (contract section
+	// 6). They are still names the context determines and resources the stack
+	// creates, so the artifact carries them; the reserved scope is the type's scope
+	// from contract section 11.1.
+	//
+	// An application that names its own resource with a fixed contract path
+	// declares it here too, so the artifact covers it.
+	DeclareFixedName(resourceType *string, name *string, resource constructs.IConstruct)
 	// Declare the CloudFormation resource that carries one composed name (contract section 11.4).
 	//
 	// Synthesis refuses two different logical resources in one naming context that
@@ -257,6 +269,17 @@ func AppTheoryNamingContext_IsConstruct(x interface{}) *bool {
 	)
 
 	return returns
+}
+
+func (a *jsiiProxy_AppTheoryNamingContext) DeclareFixedName(resourceType *string, name *string, resource constructs.IConstruct) {
+	if err := a.validateDeclareFixedNameParameters(resourceType, name, resource); err != nil {
+		panic(err)
+	}
+	_jsii_.InvokeVoid(
+		a,
+		"declareFixedName",
+		[]interface{}{resourceType, name, resource},
+	)
 }
 
 func (a *jsiiProxy_AppTheoryNamingContext) DeclareName(resourceType *string, logical *string, resource constructs.IConstruct) {
