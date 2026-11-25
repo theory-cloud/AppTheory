@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 6.151,
+      "durationSeconds": 4.225,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-24T22:08:38Z",
+      "finishedAt": "2026-11-24T23:34:32Z",
       "id": "py-build",
-      "inputsDigest": "sha256:e11f956e6f8978c06f5623ed0ffea6634e73128cbc6e761f9780d65afdd24b60",
+      "inputsDigest": "sha256:0bb344d4a812ba8b5e6209f231b13fc5734d1cce856405b5734a7f967eed59cc",
       "logDigest": "sha256:9a4caf59923c6ba78d5e15b49b52a010ba22c0b4b6351f4bac80f6f792bd0133",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261124T220831Z-90772.log",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261124T233428Z-3715.log",
       "reused": false,
-      "startedAt": "2026-11-24T22:08:31Z"
+      "startedAt": "2026-11-24T23:34:28Z"
     }
   ],
   "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,17 +36,17 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-24T22:08:38Z",
+  "recordedAt": "2026-11-24T23:34:32Z",
   "releaseOnly": {
-    "digest": "sha256:d02fc034e77e252e280198a904c6cbd94fd9221e15ff65bfe401a4bc96264a80",
+    "digest": "sha256:d4620d9c24cde58481e9fcf0d4ddd06b082cb768324165d3da3d756c79e964d4",
     "fileCount": 529,
-    "normalizedDigest": "sha256:5437076b62127e357b480533f5984b0e716b77212177f9dece067fb6a44218f9",
+    "normalizedDigest": "sha256:85d081f2f4c486aed843d6f43fb077dc3f96a5738372507516e9e21282995f93",
     "version": "7.5.0-rc.2"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:81e66eb28f59c2194f3aa6eac5db749aaa54528411c5e9d056b58930cb1a4cd7",
+    "digest": "sha256:4843268215a7e5090e304cc587ae84dd2debd7dbc282ca991ba5788367fb6b3c",
     "fileCount": 133,
     "paths": [
       "py/",
@@ -56,7 +56,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d981972373826f4180292002eddf338ecd37151ec198cc7411e6bd14b482657e",
+    "digest": "sha256:c9710c7d9bc55c9e82c9112764909996dac59e8ecdc3a99033cb3bd0dd43ae33",
     "fileCount": 2774
   },
   "verdict": "PASS"
