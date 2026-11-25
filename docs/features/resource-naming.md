@@ -254,34 +254,70 @@ it: `AppTheoryResourceNaming.namingScope`, `namingScope`, and `naming_scope` ref
 ### Synth check and the derived-name artifact
 
 At synthesis a naming context refuses two **different** logical resources that derive the same name in the same
-naming scope. The refusal names both CloudFormation logical ids, the name and the scope:
+naming scope. A resource is identified by its owning stack plus its CloudFormation logical id, because a logical id is
+unique only inside one template: two stacks of one context that both define a `Worker` construct would otherwise carry
+the same stack-local ids and read as one re-declared resource. The refusal names both resources, the name and the
+scope:
 
 ```
-LabSiteStatus and SiteStatus derive shop-lab-lab-site-status in scope account
+One/Worker11F36D0F and Two/Worker11F36D0F derive shop-lab-worker in scope account_region
 ```
 
 A Lambda function and its IAM role may share a name because their scopes differ, and two APIs may share one because
-AWS does not keep API names unique. The check runs inside one naming context, so two contexts in one stack never
+AWS does not keep API names unique. Declaring the same CloudFormation resource twice is one resource, not two: it is
+admitted and the artifact lists it once. The check runs inside one naming context, so two contexts in one stack never
 collide with each other.
 
 Every synth with a naming context writes the **derived-name artifact** the installer reserves: the complete set of
 `{name, type, scope, logical_id}` for each physically named resource the context's constructs declare, where
-`logical_id` is the CloudFormation logical id of the resource that carries the name. Constructs declare through
-`AppTheoryNamingContext.declareName(resourceType, logical, resource)` when the name comes from the derivation table, and
-`AppTheoryNamingContext.declareFixedName(resourceType, name, resource)` when the name is a fixed contract path. An
-application that names its own resource declares it the same way once the resource exists; a name it never declares is
-absent from the artifact and produces no warning, because only the application knows it created the resource.
+`logical_id` is the CloudFormation logical id of the resource that carries the name **in its own stack's template**.
+Constructs declare through `AppTheoryNamingContext.declareName(resourceType, logical, resource)` when the name comes
+from the derivation table, and `AppTheoryNamingContext.declareFixedName(resourceType, name, resource)` when the name is
+a fixed contract path. An application that names its own resource declares it the same way once the resource exists; a
+name it never declares is absent from the artifact and produces no warning, because only the application knows it
+created the resource.
+
+Two rules bound **where** a context may be used, and both refuse at synthesis rather than emit a document the installer
+would read wrong:
+
+- **One Stage.** A naming context and every stack that declares through it sit in the same CDK `Stage` (or all above
+  the stages, at the `App` root). Each Stage is its own cloud assembly and CDK validates one Stage at a time, so a
+  context above a Stage cannot compare that assembly's names and its document for it would be written too late to
+  reach the assembly. Sharing one context across two Stages would also mean two assemblies claiming one context. A
+  context created inside the Stage — in one of its stacks — works and emits that Stage's documents.
+- **One environment.** A stack that resolves to a concrete account or Region other than the context's fails synthesis.
+  The artifact claims the context's account and Region, and the reservation index keys a name by its scope in that
+  environment, so a stack in another environment would reserve names it cannot create. An env-agnostic stack (an
+  unresolved account or Region) is admitted: it deploys into the context's environment, which is what the artifact
+  claims.
 
 Two names AppTheory creates fall outside the derivation table and go through `declareFixedName()`: the Lambda service
 log group `/aws/lambda/{function name}` that `AppTheoryFunction` creates under the legacy logging profile, and the
 visibility manifest parameter `/theorycloud/visibility/{app}/{stage}/manifest`. Both carry the type's section 11.1
 scope when they appear in the artifact (`log_group` and `ssm_parameter`: `account_region`).
 
+A fixed name is still a physical name of its type, so it must satisfy that type's section 2 rule row — the same row the
+derivation uses, not a second table — or synthesis fails:
+
+| Rule | Applies to |
+|---|---|
+| charset and length of the type's row | every type |
+| start and end with a letter or digit | `s3_bucket`, `s3_vector_bucket`, `s3_vector_index` |
+| the row's path lead (`/` for `ssm_parameter`, `alias/` for `kms_alias`) | the path types that state one |
+| at most 15 levels, never beginning `aws` or `ssm` | `ssm_parameter` |
+| never in the `alias/aws/` namespace | `kms_alias` |
+| never ending in a hyphen and six characters | `secret` |
+| never beginning `aws/` | `log_group` |
+
+A `log_group` additionally accepts `/` in its charset, because its fixed names are absolute service paths: the Lambda
+group `/aws/lambda/{function name}` of section 3 is one, and section 3 reserves only the `aws/` prefix. A name outside
+these rules is refused instead of entering the artifact as a name the installer reserves and no deploy can create.
+
 - **Location.** `cdk.out/<stack>.metadata.json`, in the cloud assembly the deploy already consumes. AppTheory writes it
   as cloud-assembly metadata under the type `apptheory:resource-naming/derived-names` rather than to a file of its own,
   so it travels with the assembly through `cdk synth`, `cdk deploy`, and CDK Pipelines, needs no filesystem writes
   during synthesis, and never touches a template (the synthesized `Resources` are byte-identical to a run without it).
-- **Format.** One document per stack that holds declared resources, carrying that stack's rows:
+- **Format.** One document per stack construct, carrying that stack construct's rows:
 
   ```json
   {
@@ -297,11 +333,22 @@ scope when they appear in the artifact (`log_group` and `ssm_parameter`: `accoun
 
 - **Order.** Entries sort by `scope`, then `type`, then `name`, then `logical_id`, so the document is byte-identical
   whatever order the constructs were created in.
-- **Stack attribution.** Every row belongs to the stack whose template holds its `logical_id`, and it appears only in
-  that stack's `{stack}.metadata.json`. A naming context shared by several stacks therefore produces one document per
-  stack; no stack's document describes another stack's resource. The refusal above still spans the whole context,
-  because two stacks in one context that derive the same name in the same scope are one collision, not two independent
-  ones.
+- **Stack attribution.** A document is recorded under the **construct path of the stack that holds the rows**, and
+  every row belongs to the template that path names. A naming context shared by several stacks therefore produces one
+  document per stack, and no stack's document describes another stack's resource. The refusal above still spans the
+  whole context, because two stacks in one context that derive the same name in the same scope are one collision, not
+  two independent ones.
+- **Joining a row to its template.** The installer reads a document's construct path `P` (for example `/Shop/Lab`),
+  takes the `aws:cdk:templateFile` metadata entry CDK writes under that same path `P`, and looks the row's `logical_id`
+  up in that template. For an ordinary stack the file is `<stack>.template.json` and the path is that stack's. For a
+  `NestedStack` the path is the nested stack's construct path (for example `/Shop/Child`) and the file is
+  `<Parent><Child-hash>.nested.template.json`, so the rows describe the **nested** template and never the parent's; the
+  parent's own document keeps only the parent's rows. A nested template is deployed by its parent, so the rows still
+  belong to the assembly the installer is deploying.
+- **An empty document.** A context whose declarations all attribute to other stacks still leaves an explicit document
+  with an empty `entries` array on its own stack, because the contract requires every synth with a naming context to
+  emit the artifact and the installer must be able to tell "declares nothing" from "no naming context at all". A
+  context created above the stacks has no stack of its own; its documents are the ones its declarations produce.
 - **Generated entries.** A `generated` entry means CloudFormation owns the name today, so nothing exists to reserve.
   Its row carries `"generated": true` and **no** `name`, and it takes no part in the check.
 - **Stacks without a naming context.** No check and no artifact: synthesis is byte-identical to before this contract.
@@ -309,8 +356,11 @@ scope when they appear in the artifact (`log_group` and `ssm_parameter`: `accoun
 ## CDK
 
 `AppTheoryNamingContext` holds the bound values and fails synthesis on an unresolved account token, an invalid context,
-an invalid retention value, or a `pins`/`generated` entry that matches no resource in the stack. Constructs take it as
-an optional `namingContext` prop; **with no context every construct synthesizes exactly as before**.
+an invalid retention value, or a `pins`/`generated` entry that matches no resource in the stack. A declaration fails
+synthesis when its owning stack sits in another `Stage` than the context, when that stack resolves to a concrete
+account or Region the context does not claim, or when a fixed name breaks its type's section 2 rules; the message names
+the construct, the stack, its environment, the context's environment or Stage, and the rule. Constructs take it as an
+optional `namingContext` prop; **with no context every construct synthesizes exactly as before**.
 
 ```ts
 const context = new AppTheoryNamingContext(this, "Naming", {
