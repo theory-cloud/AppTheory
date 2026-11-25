@@ -242,3 +242,37 @@ test("the synth check refuses one name in one scope and keeps types apart", () =
     { type: "lambda_function", scope: "account_region", logical_id: "Worker", generated: true },
   ]);
 });
+
+test("the synth check keeps the same name apart across types and admits a re-declaration", () => {
+  // Same name, same scope, different types: each type is its own namespace, so
+  // one name may belong to a Lambda function and a DynamoDB table at once
+  // (contract section 11.2, SANITY-NAMING-R4-06).
+  const sharedAcrossTypes = synthCheck([
+    { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
+    { name: "shop-lab-worker", type: "dynamodb_table", logical_id: "WorkerStore" },
+  ]);
+  assert.deepEqual(
+    sharedAcrossTypes.map((row) => [row.type, row.scope]),
+    [
+      ["lambda_function", "account_region"],
+      ["dynamodb_table", "account_region"],
+    ],
+  );
+
+  // The same logical id declaring the same name twice is one resource, not a
+  // collision: the reference synth_check compares the held logical id
+  // (ADV-N3-R0-R1-04).
+  assert.doesNotThrow(() =>
+    synthCheck([
+      { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
+      { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
+    ]),
+  );
+  assert.deepEqual(
+    synthCheck([
+      { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
+      { name: "shop-lab-worker", type: "lambda_function", logical_id: "Worker" },
+    ]).map((row) => row.logical_id),
+    ["Worker", "Worker"],
+  );
+});

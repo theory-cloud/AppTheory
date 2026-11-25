@@ -423,6 +423,36 @@ func TestSynthCheckRefusesOneNameInOneScope(t *testing.T) {
 	}
 }
 
+func TestSynthCheckKeepsTypesApartAndAdmitsARedeclaration(t *testing.T) {
+	// Same name, same scope, different types: each type is its own namespace, so
+	// one name may belong to a Lambda function and a DynamoDB table at once
+	// (contract section 11.2, SANITY-NAMING-R4-06).
+	shared, err := SynthCheck([]NameEntry{
+		{Name: "shop-lab-worker", Type: "lambda_function", LogicalID: "Worker"},
+		{Name: "shop-lab-worker", Type: "dynamodb_table", LogicalID: "WorkerStore"},
+	})
+	if err != nil {
+		t.Fatalf("one name may span two types: %v", err)
+	}
+	if len(shared) != 2 || shared[0].Scope != ScopeAccountRegion || shared[1].Scope != ScopeAccountRegion {
+		t.Fatalf("unexpected artifact %+v", shared)
+	}
+
+	// The same logical id declaring the same name twice is one resource, not a
+	// collision: the reference synth_check compares the held logical id
+	// (ADV-N3-R0-R1-04).
+	repeated, err := SynthCheck([]NameEntry{
+		{Name: "shop-lab-worker", Type: "lambda_function", LogicalID: "Worker"},
+		{Name: "shop-lab-worker", Type: "lambda_function", LogicalID: "Worker"},
+	})
+	if err != nil {
+		t.Fatalf("a re-declared logical id is not a collision: %v", err)
+	}
+	if len(repeated) != 2 || repeated[0].LogicalID != "Worker" || repeated[1].LogicalID != "Worker" {
+		t.Fatalf("unexpected artifact %+v", repeated)
+	}
+}
+
 func TestNamingScopeRefusesInheritedStyleNames(t *testing.T) {
 	// Go maps have no prototype chain, so the equivalent surface is parity: the
 	// names JavaScript inherits must be refused here too (r4, SANITY-AT-N3-03).

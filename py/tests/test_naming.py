@@ -240,6 +240,31 @@ class VisibilityTests(unittest.TestCase):
             [{"type": "lambda_function", "scope": "account_region", "logical_id": "Worker", "generated": True}],
         )
 
+    def test_synth_check_keeps_types_apart_and_admits_a_redeclaration(self) -> None:
+        # Same name, same scope, different types: each type is its own
+        # namespace, so one name may belong to a Lambda function and a DynamoDB
+        # table at once (contract section 11.2, SANITY-NAMING-R4-06).
+        shared = synth_check(
+            [
+                {"name": "shop-lab-worker", "type": "lambda_function", "logical_id": "Worker"},
+                {"name": "shop-lab-worker", "type": "dynamodb_table", "logical_id": "WorkerStore"},
+            ]
+        )
+        self.assertEqual(
+            [(row["type"], row["scope"]) for row in shared],
+            [("lambda_function", "account_region"), ("dynamodb_table", "account_region")],
+        )
+
+        # The same logical id declaring the same name twice is one resource, not
+        # a collision: the reference synth_check compares the held logical id
+        # (ADV-N3-R0-R1-04).
+        repeated = synth_check(
+            [
+                {"name": "shop-lab-worker", "type": "lambda_function", "logical_id": "Worker"},
+                {"name": "shop-lab-worker", "type": "lambda_function", "logical_id": "Worker"},
+            ]
+        )
+        self.assertEqual([row["logical_id"] for row in repeated], ["Worker", "Worker"])
 
     def test_inherited_property_names_are_unknown_types(self) -> None:
         # Python has no prototype chain, so the equivalent surface is parity: the
