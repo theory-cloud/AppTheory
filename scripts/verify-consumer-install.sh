@@ -11,9 +11,12 @@
 #   py   the built Python distribution, installed into an empty virtual
 #        environment, then exercised through one real `handle_lambda` call path.
 #   cdk  the packed jsii CDK construct library and the packed TypeScript runtime
-#        it deploys, installed into an empty package, then asked to select
-#        `NODEJS_26_X` and `PYTHON_3_15`, resolve both bundling images, and
-#        synthesize a stack that declares them.
+#        it deploys, installed into an empty package, then asked to select the
+#        newest Lambda runtimes, resolve both bundling images, and synthesize a
+#        stack that declares them; and then to bundle a real asset per line with
+#        the scaffold bundlers and load and invoke the handler that landed in the
+#        emitted asset directory under the interpreter for that line, so the
+#        proof is about a runnable bundle rather than about a selector.
 #
 # Every mode installs into a directory that carries no AppTheory sources, no
 # tsconfig, no workspace and no link back to this checkout, so the install has to
@@ -247,25 +250,27 @@ JSON
 }
 
 # ---------------------------------------------------------------------------
-# Mode: py — built Python distribution into an empty virtual environment.
+# Shared artifact production: build the Python distribution into a directory and
+# print the wheel path. Both the `py` mode and the `cdk` mode install it, because
+# the CDK bundling proof has to bundle a real runtime, not a stub.
 # ---------------------------------------------------------------------------
-install_py() {
-  assert_tabletheory_pin_is_immutable "${tabletheory_py_url}"
+build_py_wheel() {
+  local artifacts_dir="$1"
+  local build_venv="${work_dir}/build-venv"
 
   if [[ ! -f "py/requirements-build.txt" ]]; then
-    echo "consumer-install(py): FAIL (missing py/requirements-build.txt)" >&2
+    echo "consumer-install: FAIL (missing py/requirements-build.txt)" >&2
     exit 1
   fi
 
-  local build_venv="${work_dir}/build-venv"
-  local artifacts_dir="${work_dir}/artifacts-py"
-  local consumer_dir="${work_dir}/consumer-py"
   mkdir -p "${artifacts_dir}"
-
-  echo "consumer-install(py): building the wheel from a clean copy of py/"
-  python3 -m venv "${build_venv}"
-  "${build_venv}/bin/python" -m pip install --quiet --upgrade pip >/dev/null
-  "${build_venv}/bin/python" -m pip install --quiet --requirement py/requirements-build.txt >/dev/null
+  echo "consumer-install: building the wheel from a clean copy of py/" >&2
+  if [[ ! -x "${build_venv}/bin/python" ]]; then
+    python3 -m venv "${build_venv}"
+    "${build_venv}/bin/python" -m pip install --quiet --upgrade pip >/dev/null
+    "${build_venv}/bin/python" -m pip install --quiet --requirement py/requirements-build.txt >/dev/null
+  fi
+  rm -rf "${work_dir}/py"
   cp -a py "${work_dir}/py"
   rm -rf "${work_dir}/py/.venv"
   "${build_venv}/bin/python" -m build --no-isolation --wheel "${work_dir}/py" --outdir "${artifacts_dir}" >/dev/null
@@ -273,9 +278,23 @@ install_py() {
   local wheel
   wheel="$(find "${artifacts_dir}" -maxdepth 1 -name 'apptheory-*.whl' | head -n 1)"
   if [[ -z "${wheel}" ]]; then
-    echo "consumer-install(py): FAIL (the build produced no apptheory wheel)" >&2
+    echo "consumer-install: FAIL (the build produced no apptheory wheel)" >&2
     exit 1
   fi
+  echo "${wheel}"
+}
+
+# ---------------------------------------------------------------------------
+# Mode: py — built Python distribution into an empty virtual environment.
+# ---------------------------------------------------------------------------
+install_py() {
+  assert_tabletheory_pin_is_immutable "${tabletheory_py_url}"
+
+  local artifacts_dir="${work_dir}/artifacts-py"
+  local consumer_dir="${work_dir}/consumer-py"
+
+  local wheel
+  wheel="$(build_py_wheel "${artifacts_dir}")"
 
   # An empty consumer environment: no AppTheory sources, no requirements file.
   python3 -m venv "${consumer_dir}"
@@ -397,6 +416,22 @@ JSON
   echo "consumer-install(cdk): node $(node --version), aws-cdk-lib ${aws_cdk_lib}, constructs ${constructs}"
   echo "consumer-install(cdk): artifacts ${expected_tgz} + $(basename "${runtime_tarball}"), tabletheory-ts ${installed_tabletheory}"
   (cd "${consumer_dir}" && node consumer.cjs)
+
+  # Selecting and synthesizing a runtime does not show that a bundled asset runs.
+  # The scaffold bundlers are the supported asset path, so the proof runs them:
+  # the scaffold sources are copied in beside the fixture, one asset is built per
+  # line through `AppTheoryFunction`, and each emitted asset is loaded and
+  # invoked under the interpreter for its line.
+  local python_wheel
+  python_wheel="$(build_py_wheel "${work_dir}/artifacts-cdk")"
+  assert_tabletheory_pin_is_immutable "${tabletheory_py_url}"
+
+  cp templates/apptheory-init/ts/cdk/bundle.cjs "${consumer_dir}/bundle-ts.cjs"
+  cp templates/apptheory-init/py/cdk/bundle.cjs "${consumer_dir}/bundle-py.cjs"
+  cp scripts/fixtures/consumer-install/cdk/bundling.cjs "${consumer_dir}/bundling.cjs"
+
+  echo "consumer-install(cdk): bundling assets with the scaffold bundlers on node $(node --version) and python $(python3 --version 2>&1)"
+  (cd "${consumer_dir}" && node bundling.cjs "${runtime_tarball}" "${python_wheel}")
 
   echo "consumer-install(cdk): PASS (${expected_tgz} on node $(node --version))"
 }

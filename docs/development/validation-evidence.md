@@ -231,7 +231,7 @@ groups (a command that writes the repository while running Docker holds both).
 | `py` | `repo-write` | `deterministic-builds` | `py/`, Python build script |
 | `contract-tests` | `cpu`, `repo-write` | — | fixtures, API snapshots, runtime surfaces |
 | `cdk-go-drift` | `repo-write` | — | `cdk/`, `cdk-go/`, generation scripts |
-| `consumer-install` | `cpu`, `network`, `repo-write` | — | `ts/`, `py/`, `cdk/`, consumer fixtures and gate script |
+| `consumer-install` | `cpu`, `network`, `repo-write` | — | `ts/`, `py/`, `cdk/`, `templates/`, consumer fixtures and gate script |
 | `deterministic-builds` | `cpu`, `repo-write` | — | packaging inputs and scripts |
 | `examples-local` | `docker`, `repo-write` | — | examples, local harness, synth proof |
 | `security-refresh` | `network` | — | dependency manifests and scan script |
