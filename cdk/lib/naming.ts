@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { LAMBDA_LOG_GROUP_LEAD, LOGICAL_SEGMENT_PATTERN } from "./private/log-source-grammar";
+
 /**
  * The resource-naming contract this module implements.
  */
@@ -334,7 +336,7 @@ export interface AppTheoryVisibilityManifest {
   readonly future: AppTheoryVisibilityRules;
 }
 
-const SEGMENT_PATTERN = "[a-z0-9]+(?:-[a-z0-9]+)*";
+const SEGMENT_PATTERN = LOGICAL_SEGMENT_PATTERN;
 const LOGICAL_RE = new RegExp(`^${SEGMENT_PATTERN}(?:/${SEGMENT_PATTERN})*$`);
 const APP_RE = new RegExp(`^${SEGMENT_PATTERN}$`);
 const STAGE_RE = /^[a-z][a-z0-9]{0,7}$/;
@@ -424,11 +426,6 @@ const S3_TYPES = new Set(["s3_bucket", "s3_vector_bucket", "s3_vector_index"]);
 const FIXED_NAME_CHARSETS = new Map([["log_group", "[A-Za-z0-9_/-]"]]);
 
 /**
- * The Lambda service log-group path lead (contract section 3).
- */
-const LAMBDA_LOG_GROUP_LEAD = "/aws/lambda/";
-
-/**
  * The KMS alias path lead (contract section 2).
  */
 const KMS_ALIAS_LEAD = "alias/";
@@ -451,6 +448,11 @@ const SSM_PATH_RE = /^\/[^/]+(?:\/[^/]+)*$/;
  *
  * Any other `/`-bearing name is refused: `arbitrary/path` is neither shape
  * (SANITY-AT-N3-08).
+ *
+ * The log-source branch here is a shape test only, not an identity test: it
+ * cannot tell whose context a name belongs to. `AppTheoryNamingContext`
+ * narrows it to the context's own `theorycloud_{namespace}_{app}_{stage}_`
+ * prefix and remainder grammar when it declares a fixed name.
  */
 function isFixedLogGroupShape(name: string): boolean {
   if (!name.includes("/")) return true;
@@ -664,6 +666,12 @@ export class AppTheoryResourceNaming {
    * segments with `_`) or the Lambda service path `/aws/lambda/{function name}`,
    * whose function name satisfies the `lambda_function` row. Any other
    * `/`-bearing log group is refused (SANITY-AT-N3-08).
+   *
+   * The check is **structural**: it holds no context values, so it cannot tell
+   * whether a log-source-shaped name is this naming context's own source. The
+   * context completes that rule in `AppTheoryNamingContext.declareFixedName`,
+   * which owns the bound `theorycloud_{namespace}_{app}_{stage}_` prefix
+   * (SANITY-AT-N3-08, round 4).
    */
   public static validatePhysicalName(resourceType: string, name: string): void {
     const rule = namingRule(resourceType);

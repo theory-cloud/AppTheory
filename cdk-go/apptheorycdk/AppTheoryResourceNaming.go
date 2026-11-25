@@ -310,6 +310,12 @@ func AppTheoryResourceNaming_ValidateContext(values *AppTheoryNamingContextValue
 // segments with `_`) or the Lambda service path `/aws/lambda/{function name}`,
 // whose function name satisfies the `lambda_function` row. Any other
 // `/`-bearing log group is refused (SANITY-AT-N3-08).
+//
+// The check is **structural**: it holds no context values, so it cannot tell
+// whether a log-source-shaped name is this naming context's own source. The
+// context completes that rule in `AppTheoryNamingContext.declareFixedName`,
+// which owns the bound `theorycloud_{namespace}_{app}_{stage}_` prefix
+// (SANITY-AT-N3-08, round 4).
 func AppTheoryResourceNaming_ValidatePhysicalName(resourceType *string, name *string) {
 	_init_.Initialize()
 

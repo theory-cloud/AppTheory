@@ -14,6 +14,7 @@ import {
   DERIVED_NAMES_SCHEMA,
   RESOURCE_NAMING_CONTRACT,
 } from "./naming";
+import { LAMBDA_LOG_GROUP_LEAD, LOG_SOURCE_REMAINDER_RE } from "./private/log-source-grammar";
 
 /**
  * Accepted CloudWatch Logs `RetentionInDays` values. AWS rejects any other
@@ -51,11 +52,20 @@ export interface AppTheoryNamingContextProps {
   /**
    * Twelve-digit account id from stage config. An unresolved token fails
    * synthesis.
+   *
+   * This is the account the derived-name artifact claims. AppTheory does not
+   * compare it with the account of the stack that declares a resource;
+   * TheoryCloud.ai's installer validates the artifact's account against the
+   * stack it deploys.
    */
   readonly account: string;
 
   /**
    * Full Region code, for example `us-east-1`.
+   *
+   * This is the Region the derived-name artifact claims. AppTheory does not
+   * compare it with the Region of the stack that declares a resource;
+   * TheoryCloud.ai's installer validates it against the stack it deploys.
    */
   readonly region: string;
 
@@ -128,12 +138,14 @@ export class AppTheoryNamingContext extends Construct {
   public readonly stage: string;
 
   /**
-   * Twelve-digit account id.
+   * Twelve-digit account id. The derived-name artifact claims this account; it
+   * is not compared with any declaring stack's account.
    */
   public readonly account: string;
 
   /**
-   * Full Region code.
+   * Full Region code. The derived-name artifact claims this Region; it is not
+   * compared with any declaring stack's Region.
    */
   public readonly region: string;
 
@@ -357,7 +369,6 @@ export class AppTheoryNamingContext extends Construct {
    */
   public declareName(resourceType: string, logical: string, resource: IConstruct): void {
     this.assertSameStage(resourceType, resource);
-    this.assertSameEnvironment(resourceType, resource);
     if (resourceType === "log_group") {
       const name = AppTheoryResourceNaming.logGroupName(this.values(), logical);
       this.declared.push({ type: resourceType, logical, name, generated: false, resource });
@@ -393,6 +404,12 @@ export class AppTheoryNamingContext extends Construct {
    * the secret suffix rule). A name outside them fails synthesis instead of
    * entering the artifact as a name the installer can never create
    * (SANITY-AT-N3-08).
+   *
+   * A fixed `log_group` name is narrowed further, because a log-group name is
+   * either this context's own log source or the Lambda service path and nothing
+   * else: the structural check in `validatePhysicalName` cannot know the bound
+   * prefix, so the context completes it here (see
+   * `assertFixedLogGroupName`).
    */
   public declareFixedName(resourceType: string, name: string, resource: IConstruct): void {
     // A type outside contract section 2 has no stated scope, so it cannot be
@@ -405,7 +422,9 @@ export class AppTheoryNamingContext extends Construct {
     }
     AppTheoryResourceNaming.validatePhysicalName(resourceType, name);
     this.assertSameStage(resourceType, resource);
-    this.assertSameEnvironment(resourceType, resource);
+    if (resourceType === "log_group") {
+      this.assertFixedLogGroupName(name);
+    }
     this.declared.push({ type: resourceType, logical: name, name, generated: false, resource });
   }
 
@@ -450,58 +469,31 @@ export class AppTheoryNamingContext extends Construct {
   }
 
   /**
-   * Refuse a declaration whose owning stack resolves to an environment the
-   * context does not claim (SANITY-AT-N3-06).
+   * Admit only the two fixed log-group shapes contract section 3 states for a
+   * log group this context owns (SANITY-AT-N3-08, round 4).
    *
-   * The derived-name artifact claims the context's account and region, and the
-   * reservation index keys a name by its scope in that environment, so a stack
-   * in another account or Region would reserve names it cannot create while the
-   * check refused or admitted them against the wrong environment.
-   *
-   * The comparison runs on the value **after** `Stack.resolve`, because a
-   * stack's account or Region is not always a literal: `env: { region:
-   * Lazy.string(...) }` and any other token leave a placeholder on
-   * `Stack.region` that `Stack.resolve` turns into the concrete literal the
-   * stack will deploy into. Comparing the raw value would admit a token that
-   * resolves to another environment and let its rows claim the context's instead
-   * (SANITY-AT-N3-06, round 2), so:
-   *
-   * - a value that resolves to a concrete literal must equal the context's;
-   * - a value that is still unresolved after `Stack.resolve` — an `Aws` pseudo
-   *   parameter such as `{Ref: AWS::AccountId}`, or a value only known at deploy
-   *   time — is admitted: the stack is genuinely environment-agnostic and
-   *   deploys into the context's environment, which is what the artifact claims.
+   * A log group is either a log source of this context —
+   * `theorycloud_{namespace}_{app}_{stage}_{logical}`, built from this
+   * context's own namespace, app and stage — or the Lambda service path
+   * `/aws/lambda/{function name}`. `validatePhysicalName` already refused every
+   * other `/`-bearing shape, but it is structural: it holds no context values,
+   * so it admits any `/`-free name, including one that is no log source at all
+   * (`orders`) or one shaped for another context
+   * (`theorycloud_other_app_lab_x`). Both would enter the artifact as names the
+   * installer reserves and this app's logging never writes, so the context
+   * completes the rule where the bound prefix is known.
    */
-  private assertSameEnvironment(resourceType: string, resource: IConstruct): void {
-    const owner = Stack.of(resource);
-    const account = AppTheoryNamingContext.resolvedEnvironmentValue(owner, owner.account);
-    const region = AppTheoryNamingContext.resolvedEnvironmentValue(owner, owner.region);
-    const mismatches: string[] = [];
-    if (account !== undefined && account !== this.account) mismatches.push("account");
-    if (region !== undefined && region !== this.region) mismatches.push("region");
-    if (mismatches.length === 0) return;
-    const described = (value: string | undefined): string => value ?? "unresolved";
+  private assertFixedLogGroupName(name: string): void {
+    // The Lambda service path is the one shape that carries a `/`: its function
+    // name was already checked against the lambda_function row.
+    if (name.startsWith(LAMBDA_LOG_GROUP_LEAD)) return;
+    const prefix = this.logSourcePrefix();
+    const remainder = name.startsWith(prefix) ? name.slice(prefix.length) : undefined;
+    if (remainder !== undefined && LOG_SOURCE_REMAINDER_RE.test(remainder)) return;
+    const quoted = JSON.stringify(name);
     throw new Error(
-      `AppTheoryNamingContext cannot declare ${resourceType} in ${owner.node.path} because the stack resolves to account ${described(account)} and region ${described(region)}, while the naming context claims account ${this.account} and region ${this.region} (app ${this.app}, stage ${this.stage}); the derived-name artifact claims the context's environment, so every stack that declares through it must resolve to that environment or to no environment at all`,
+      `AppTheoryNamingContext cannot declare log_group ${quoted} because a fixed log-group name is either this context's section 3 log source, ${JSON.stringify(prefix)} followed by "logs" and the logical source's segments joined with "_", or the Lambda service path ${JSON.stringify(LAMBDA_LOG_GROUP_LEAD)} followed by a name that satisfies the lambda_function row (app ${this.app}, stage ${this.stage}, namespace ${this.namespace}); got ${quoted}`,
     );
-  }
-
-  /**
-   * The concrete literal a stack's account or Region resolves to, or `undefined`
-   * when the value stays environment-dependent at synthesis.
-   *
-   * `Stack.resolve` turns a `Lazy` or any other token into the literal it
-   * produces. A pseudo parameter or a reference resolved in a stack without a
-   * concrete environment resolves to a CloudFormation intrinsic object instead
-   * of a string, which is why the result is typed rather than passed to
-   * `Token.isUnresolved` alone: an intrinsic is not a literal and the stack that
-   * carries it deploys wherever it is deployed.
-   */
-  private static resolvedEnvironmentValue(owner: Stack, value: string): string | undefined {
-    const resolved: unknown = owner.resolve(value);
-    if (typeof resolved === "string") return Token.isUnresolved(resolved) ? undefined : resolved;
-    if (typeof resolved === "number") return String(resolved);
-    return undefined;
   }
 
   /**

@@ -52,9 +52,12 @@ function resourcesOfType(template, type) {
   return Object.values(template.Resources ?? {}).filter((resource) => resource.Type === type);
 }
 
-// The two environments the suite synthesizes into. A naming context and every
-// stack that declares through it must resolve to one environment (SANITY-AT-N3-06),
-// so a legacy-profile test builds its stack in the live account too.
+// The two environments the suite synthesizes into: the lab and live stage
+// configurations. A naming context claims one of them and the derived-name
+// artifact carries the context's account and Region; nothing compares them with
+// the environment of the stack that declares through the context (operator
+// ruling 2026-11-25), so a legacy-profile test still builds its stack in the
+// live account because that is the stage config it deploys from.
 const LAB_ENV = { account: "998115851393", region: "us-east-1" };
 const LIVE_ENV = { account: "784055308075", region: "us-east-1" };
 
@@ -2066,12 +2069,14 @@ test("F3: the jsii scope primitive refuses inherited property names", () => {
   }
 });
 
-// ---- r4 rework r2: identity, Stage, environment, empty document, fixed names --
+// ---- r4 rework r2: identity, Stage, empty document, fixed names --------------
 //
 // Each test below pins one defect the round-2 gate found. They are written to
 // fail on the round-1 tree and pass here:
-// SANITY-AT-N3-05 (G1), SANITY-AT-N3-02 (G2), SANITY-AT-N3-06 (G3),
-// SANITY-AT-N3-07 (G4) and SANITY-AT-N3-08 / ADV-N3-R1-01 (G5).
+// SANITY-AT-N3-05 (G1), SANITY-AT-N3-02 (G2), SANITY-AT-N3-07 (G4) and
+// SANITY-AT-N3-08 / ADV-N3-R1-01 (G5). The G3 environment cases are gone: the
+// operator ruled on 2026-11-25 that AppTheory does not compare a stack's
+// environment with the naming context's (see the round-4 section below).
 
 function multiStack(build) {
   const app = new cdk.App();
@@ -2247,80 +2252,6 @@ test("G2: a nested-stack row joins to the nested template, not the parent's", ()
   for (const row of documents["/Parent"].entries) assert.ok(parentLogicalIds.has(row.logical_id));
 });
 
-test("G3: a stack resolving to another region is refused", () => {
-  assert.throws(
-    () =>
-      multiStack((app) => {
-        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
-        const away = new cdk.Stack(app, "Away", { env: { account: LAB_ENV.account, region: "eu-west-1" } });
-        const context = shopContext(home);
-        shopFunction(away, "Worker", "worker", context);
-        app.synth();
-      }),
-    (error) => {
-      const message = String(error.message);
-      assert.match(message, /cannot declare lambda_function in Away/);
-      assert.match(message, /region eu-west-1/);
-      assert.match(message, /region us-east-1/);
-      assert.match(message, /app shop, stage lab/);
-      return true;
-    },
-  );
-});
-
-test("G3: a stack resolving to another account is refused", () => {
-  assert.throws(
-    () =>
-      multiStack((app) => {
-        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
-        const away = new cdk.Stack(app, "Away", { env: { account: "111111111111", region: LAB_ENV.region } });
-        const context = shopContext(home);
-        shopFunction(away, "Worker", "worker", context);
-        app.synth();
-      }),
-    (error) => {
-      const message = String(error.message);
-      assert.match(message, /cannot declare lambda_function in Away/);
-      assert.match(message, /account 111111111111/);
-      assert.match(message, /account 998115851393/);
-      return true;
-    },
-  );
-});
-
-test("G3: a stack resolving to the context's environment is admitted", () => {
-  const app = multiStack((scope) => {
-    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
-    const twin = new cdk.Stack(scope, "Twin", { env: { account: LAB_ENV.account, region: LAB_ENV.region } });
-    const context = shopContext(home);
-    shopFunction(twin, "Worker", "worker", context);
-  });
-  const assembly = app.synth();
-  const twin = metadataDocuments(assembly.getStackByName("Twin"));
-  assert.equal(twin.length, 1);
-  assert.deepEqual(twin[0].entries.map((row) => row.type).sort(), ["iam_role", "lambda_function", "log_group"]);
-});
-
-test("G3: an env-agnostic stack is admitted and the artifact claims the context's environment", () => {
-  const app = multiStack((scope) => {
-    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
-    const agnostic = new cdk.Stack(scope, "Agnostic");
-    const context = shopContext(home);
-    shopFunction(agnostic, "Worker", "worker", context);
-  });
-  const assembly = app.synth();
-  const documents = metadataDocuments(assembly.getStackByName("Agnostic"));
-  assert.equal(documents.length, 1);
-  assert.deepEqual(documents[0].context, {
-    namespace: "theorycloud",
-    app: "shop",
-    stage: "lab",
-    account: "998115851393",
-    region: "us-east-1",
-  });
-  assert.equal(documents[0].entries.length, 3);
-});
-
 test("G4: a context that declares nothing still emits the artifact, and no context emits none", () => {
   // Scenario 4: every synth with a naming context emits the artifact, so a
   // context whose declarations all attribute to other stacks still leaves an
@@ -2461,109 +2392,13 @@ test("G5: a fixed name naming a type the contract does not state is still refuse
   );
 });
 
-// ---- r4 rework r3: the resolved environment and the section 2 rows ----------
+// ---- r4 rework r3: the section 2 rows --------------------------------------
 //
-// Each test below pins one defect the round-3 gate found. They are written to
-// fail on the round-2 tree and pass here: SANITY-AT-N3-06 (H1, the environment
-// check compared only non-token values) and SANITY-AT-N3-08 / ADV-N3-R2-01 (H2,
-// the fixed-name check enforced only some of the section 2 rows).
-
-test("H1: a stack whose account token resolves to another account is refused", () => {
-  // `Away` claims no literal account: `Stack.account` is a token whose resolved
-  // value is 111122223333. Comparing the unresolved token admitted the stack and
-  // its rows claimed the context's account (SANITY-AT-N3-06).
-  assert.throws(
-    () =>
-      multiStack((app) => {
-        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
-        const away = new cdk.Stack(app, "Away", {
-          env: { account: cdk.Lazy.string({ produce: () => "111122223333" }), region: LAB_ENV.region },
-        });
-        const context = shopContext(home);
-        shopFunction(away, "Worker", "worker", context);
-        app.synth();
-      }),
-    (error) => {
-      const message = String(error.message);
-      assert.match(message, /cannot declare lambda_function in Away/);
-      assert.match(message, /account 111122223333/);
-      assert.match(message, /account 998115851393/);
-      return true;
-    },
-  );
-});
-
-test("H1: a stack whose region token resolves to another region is refused", () => {
-  // The observed case: a token Region resolving to us-west-2 synthesized with
-  // rows claiming us-east-1 and names the installer would reserve in the wrong
-  // Region.
-  assert.throws(
-    () =>
-      multiStack((app) => {
-        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
-        const away = new cdk.Stack(app, "Away", {
-          env: { account: LAB_ENV.account, region: cdk.Lazy.string({ produce: () => "us-west-2" }) },
-        });
-        const context = shopContext(home);
-        shopFunction(away, "Worker", "worker", context);
-        app.synth();
-      }),
-    (error) => {
-      const message = String(error.message);
-      assert.match(message, /cannot declare lambda_function in Away/);
-      assert.match(message, /region us-west-2/);
-      assert.match(message, /region us-east-1/);
-      assert.match(message, /app shop, stage lab/);
-      return true;
-    },
-  );
-});
-
-test("H1: a stack whose tokens resolve to the context's own environment is admitted", () => {
-  // The rule is the resolved value, not "any token is refused".
-  const app = multiStack((scope) => {
-    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
-    const twin = new cdk.Stack(scope, "Twin", {
-      env: {
-        account: cdk.Lazy.string({ produce: () => LAB_ENV.account }),
-        region: cdk.Lazy.string({ produce: () => LAB_ENV.region }),
-      },
-    });
-    const context = shopContext(home);
-    shopFunction(twin, "Worker", "worker", context);
-  });
-  const documents = metadataDocuments(app.synth().getStackByName("Twin"));
-  assert.equal(documents.length, 1);
-  assert.deepEqual(documents[0].entries.map((row) => row.type).sort(), [
-    "iam_role",
-    "lambda_function",
-    "log_group",
-  ]);
-});
-
-test("H1: a stack whose environment never resolves is admitted and the artifact claims the context's environment", () => {
-  // `Aws.ACCOUNT_ID` and `Aws.REGION` resolve to CloudFormation intrinsics, not
-  // literals: the stack deploys into whatever environment it is deployed into,
-  // so it is genuinely env-agnostic and stays admitted.
-  const app = multiStack((scope) => {
-    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
-    const agnostic = new cdk.Stack(scope, "Agnostic", {
-      env: { account: cdk.Aws.ACCOUNT_ID, region: cdk.Aws.REGION },
-    });
-    const context = shopContext(home);
-    shopFunction(agnostic, "Worker", "worker", context);
-  });
-  const documents = metadataDocuments(app.synth().getStackByName("Agnostic"));
-  assert.equal(documents.length, 1);
-  assert.equal(documents[0].entries.length, 3);
-  assert.deepEqual(documents[0].context, {
-    namespace: "theorycloud",
-    app: "shop",
-    stage: "lab",
-    account: "998115851393",
-    region: "us-east-1",
-  });
-});
+// Each test below pins one defect the round-3 gate found, and they fail on the
+// round-2 tree: SANITY-AT-N3-08 / ADV-N3-R2-01 (H2, the fixed-name check
+// enforced only some of the section 2 rows). Round 3's H1 environment check was
+// removed by the operator ruling of 2026-11-25; the round-4 section below pins
+// what replaced it.
 
 test("H2: a fixed dynamodb_table name under the section 2 minimum length fails synthesis", () => {
   // Section 2 states the plain-name limit as 3–255. Only the upper bound was
@@ -2710,3 +2545,176 @@ test("H2: the fixed names section 3 and section 6 state stay admitted", () => {
   // other section 3 shape and is declared by the standard-profile tests.
   assert.equal(documents[0].entries.filter((row) => row.type === "log_group").length, 1);
 });
+
+// ---- r4 rework r4: no environment comparison; the fixed log-group shape ----
+//
+// Each test below pins one defect the round-4 gate found, or the operator ruling
+// of 2026-11-25 that replaced round 3's environment refusal: the derived-name
+// artifact's account and Region are the naming context's, AppTheory does not
+// compare them with the owning stack's environment, and TheoryCloud.ai's
+// installer validates them against the stack it deploys.
+
+test("J1: a Lazy Region produced after the construct is created is never resolved early", () => {
+  // SANITY-AT-N3-09: the round-3 environment check resolved the owning stack's
+  // account and Region while the declaration was made, which runs a Lazy
+  // producer at declare time. A producer that depends on a value only known once
+  // the constructs exist therefore failed synthesis for no naming reason at all.
+  // The naming code must not evaluate a Lazy producer any more.
+  const holder = { region: undefined };
+  let producedByDeclaration = 0;
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack", {
+    env: {
+      account: LAB_ENV.account,
+      region: cdk.Lazy.string({
+        produce: () => {
+          producedByDeclaration += 1;
+          if (holder.region === undefined) {
+            throw new Error("the region is not known until after the constructs exist");
+          }
+          return holder.region;
+        },
+      }),
+    },
+  });
+  const context = shopContext(stack);
+  shopFunction(stack, "Worker", "worker", context);
+  assert.equal(producedByDeclaration, 0, "the naming code resolved the stack's Lazy Region at declare time");
+
+  // Only now is the Region known; still before synthesis.
+  holder.region = LAB_ENV.region;
+  const documents = metadataDocuments(app.synth().getStackByName("Stack"));
+  assert.equal(documents.length, 1);
+  assert.equal(documents[0].context.region, LAB_ENV.region);
+  assert.deepEqual(documents[0].entries.map((row) => row.type).sort(), [
+    "iam_role",
+    "lambda_function",
+    "log_group",
+  ]);
+});
+
+test("J1: a stack in another account and Region synthesizes and the artifact claims the context's environment", () => {
+  // Operator ruling 2026-11-25: no comparison. A stack built from another
+  // stage's configuration still declares through the context; it synthesizes,
+  // its rows are the context's names, and the document carries the context's
+  // account and Region. TheoryCloud.ai's installer is what refuses a deploy
+  // whose stack does not match them.
+  const app = multiStack((scope) => {
+    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
+    const away = new cdk.Stack(scope, "Away", { env: { account: "111122223333", region: "eu-west-1" } });
+    const context = shopContext(home);
+    shopFunction(away, "Worker", "worker", context);
+  });
+  const documents = metadataDocuments(app.synth().getStackByName("Away"));
+  assert.equal(documents.length, 1);
+  assert.deepEqual(documents[0].context, {
+    namespace: "theorycloud",
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+  });
+  assert.deepEqual(
+    documents[0].entries.map((row) => [row.type, row.name]).sort(),
+    [
+      ["iam_role", "shop-lab-worker"],
+      ["lambda_function", "shop-lab-worker"],
+      ["log_group", "/aws/lambda/shop-lab-worker"],
+    ],
+  );
+});
+
+test("J2: a fixed log_group name that is neither this context's log source nor the Lambda service path fails synthesis", () => {
+  // SANITY-AT-N3-08: validatePhysicalName is structural, so it admitted every
+  // slash-free name as a log source. A fixed name must be a log source of THIS
+  // context -- its own prefix, then the section 3 remainder grammar -- or the
+  // Lambda service path. A bare word is no log source, a foreign context's
+  // prefix is another app's, and a remainder outside the section 3 grammar is
+  // not the source either.
+  const cases = [
+    "orders",
+    "theorycloud_other_app_lab_x",
+    "theorycloud_theorycloud_shop_live_logs_runtime_worker",
+    "theorycloud_theorycloud_shop_lab_orders",
+    "theorycloud_theorycloud_shop_lab_logs_runtime_",
+    "theorycloud_theorycloud_shop_lab_logs__runtime",
+    "theorycloud_theorycloud_shop_lab_logs_Runtime",
+  ];
+  for (const name of cases) {
+    assert.throws(
+      () =>
+        synth((stack) => {
+          const context = shopContext(stack);
+          const group = new cdk.CfnResource(stack, "Fixed", {
+            type: "AWS::Logs::LogGroup",
+            properties: { LogGroupName: name },
+          });
+          context.declareFixedName("log_group", name, group);
+        }),
+      (error) => {
+        const message = String(error.message);
+        assert.match(message, /cannot declare log_group/);
+        assert.match(message, /is either this context's section 3 log source/);
+        assert.match(message, /"theorycloud_theorycloud_shop_lab_"/);
+        assert.match(message, /app shop, stage lab, namespace theorycloud/);
+        return true;
+      },
+      name,
+    );
+  }
+});
+
+test("J2: this context's log source and the Lambda service path are admitted and reach the artifact", () => {
+  // The two shapes a fixed log_group may take, through the context that owns the
+  // prefix: the section 3 name of this context's own source, and the Lambda
+  // service path with a function name that satisfies the lambda_function row.
+  const sourceName = "theorycloud_theorycloud_shop_lab_logs_runtime_api";
+  const serviceName = "/aws/lambda/shop-lab-api";
+  const { documents } = synthAssembly((stack) => {
+    const context = shopContext(stack);
+    assert.equal(context.logGroupName("logs/runtime/api"), sourceName);
+    for (const [id, name] of [
+      ["Source", sourceName],
+      ["Service", serviceName],
+    ]) {
+      const group = new cdk.CfnResource(stack, id, {
+        type: "AWS::Logs::LogGroup",
+        properties: { LogGroupName: name },
+      });
+      context.declareFixedName("log_group", name, group);
+    }
+  });
+  assert.equal(documents.length, 1);
+  assert.deepEqual(
+    documents[0].entries
+      .filter((row) => row.type === "log_group")
+      .map((row) => [row.name, row.scope])
+      .sort(),
+    [
+      ["/aws/lambda/shop-lab-api", "account_region"],
+      [sourceName, "account_region"],
+    ],
+  );
+});
+
+test("J2: the fixed log-group names AppTheory's own constructs declare still reach the artifact", () => {
+  // The lambda_function row of the service path, and the standard profile's
+  // logs/runtime/{logical} source: the narrowing refuses foreign names, it does
+  // not push AppTheory's own declarations out of the artifact.
+  const { documents } = synthAssembly((stack) => {
+    const context = shopContext(stack, "Naming", {
+      loggingProfile: apptheory.AppTheoryLoggingProfile.STANDARD,
+    });
+    shopFunction(stack, "Worker", "worker", context);
+  });
+  const groups = documents[0].entries.filter((row) => row.type === "log_group");
+  assert.deepEqual(
+    groups.map((row) => row.name).sort(),
+    ["theorycloud_theorycloud_shop_lab_logs_runtime_worker"],
+  );
+  assert.deepEqual(
+    groups.map((row) => row.scope),
+    ["account_region"],
+  );
+});
+

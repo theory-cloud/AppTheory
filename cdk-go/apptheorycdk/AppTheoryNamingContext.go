@@ -12,6 +12,9 @@ import (
 type AppTheoryNamingContext interface {
 	constructs.Construct
 	// Twelve-digit account id.
+	//
+	// The derived-name artifact claims this account; it
+	// is not compared with any declaring stack's account.
 	Account() *string
 	// App instance id.
 	App() *string
@@ -28,6 +31,9 @@ type AppTheoryNamingContext interface {
 	// Physical pins keyed `{type}:{logical}`.
 	Pins() *map[string]*string
 	// Full Region code.
+	//
+	// The derived-name artifact claims this Region; it is not
+	// compared with any declaring stack's Region.
 	Region() *string
 	// Retention in days for standard-profile log groups.
 	RetentionDays() *float64
@@ -53,6 +59,12 @@ type AppTheoryNamingContext interface {
 	// the secret suffix rule). A name outside them fails synthesis instead of
 	// entering the artifact as a name the installer can never create
 	// (SANITY-AT-N3-08).
+	//
+	// A fixed `log_group` name is narrowed further, because a log-group name is
+	// either this context's own log source or the Lambda service path and nothing
+	// else: the structural check in `validatePhysicalName` cannot know the bound
+	// prefix, so the context completes it here (see
+	// `assertFixedLogGroupName`).
 	DeclareFixedName(resourceType *string, name *string, resource constructs.IConstruct)
 	// Declare the CloudFormation resource that carries one composed name (contract section 11.4).
 	//

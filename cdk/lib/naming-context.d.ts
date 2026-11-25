@@ -24,10 +24,19 @@ export interface AppTheoryNamingContextProps {
     /**
      * Twelve-digit account id from stage config. An unresolved token fails
      * synthesis.
+     *
+     * This is the account the derived-name artifact claims. AppTheory does not
+     * compare it with the account of the stack that declares a resource;
+     * TheoryCloud.ai's installer validates the artifact's account against the
+     * stack it deploys.
      */
     readonly account: string;
     /**
      * Full Region code, for example `us-east-1`.
+     *
+     * This is the Region the derived-name artifact claims. AppTheory does not
+     * compare it with the Region of the stack that declares a resource;
+     * TheoryCloud.ai's installer validates it against the stack it deploys.
      */
     readonly region: string;
     /**
@@ -81,11 +90,13 @@ export declare class AppTheoryNamingContext extends Construct {
      */
     readonly stage: string;
     /**
-     * Twelve-digit account id.
+     * Twelve-digit account id. The derived-name artifact claims this account; it
+     * is not compared with any declaring stack's account.
      */
     readonly account: string;
     /**
-     * Full Region code.
+     * Full Region code. The derived-name artifact claims this Region; it is not
+     * compared with any declaring stack's Region.
      */
     readonly region: string;
     /**
@@ -173,6 +184,12 @@ export declare class AppTheoryNamingContext extends Construct {
      * the secret suffix rule). A name outside them fails synthesis instead of
      * entering the artifact as a name the installer can never create
      * (SANITY-AT-N3-08).
+     *
+     * A fixed `log_group` name is narrowed further, because a log-group name is
+     * either this context's own log source or the Lambda service path and nothing
+     * else: the structural check in `validatePhysicalName` cannot know the bound
+     * prefix, so the context completes it here (see
+     * `assertFixedLogGroupName`).
      */
     declareFixedName(resourceType: string, name: string, resource: IConstruct): void;
     /**
@@ -193,41 +210,21 @@ export declare class AppTheoryNamingContext extends Construct {
      */
     private assertSameStage;
     /**
-     * Refuse a declaration whose owning stack resolves to an environment the
-     * context does not claim (SANITY-AT-N3-06).
+     * Admit only the two fixed log-group shapes contract section 3 states for a
+     * log group this context owns (SANITY-AT-N3-08, round 4).
      *
-     * The derived-name artifact claims the context's account and region, and the
-     * reservation index keys a name by its scope in that environment, so a stack
-     * in another account or Region would reserve names it cannot create while the
-     * check refused or admitted them against the wrong environment.
-     *
-     * The comparison runs on the value **after** `Stack.resolve`, because a
-     * stack's account or Region is not always a literal: `env: { region:
-     * Lazy.string(...) }` and any other token leave a placeholder on
-     * `Stack.region` that `Stack.resolve` turns into the concrete literal the
-     * stack will deploy into. Comparing the raw value would admit a token that
-     * resolves to another environment and let its rows claim the context's instead
-     * (SANITY-AT-N3-06, round 2), so:
-     *
-     * - a value that resolves to a concrete literal must equal the context's;
-     * - a value that is still unresolved after `Stack.resolve` — an `Aws` pseudo
-     *   parameter such as `{Ref: AWS::AccountId}`, or a value only known at deploy
-     *   time — is admitted: the stack is genuinely environment-agnostic and
-     *   deploys into the context's environment, which is what the artifact claims.
+     * A log group is either a log source of this context —
+     * `theorycloud_{namespace}_{app}_{stage}_{logical}`, built from this
+     * context's own namespace, app and stage — or the Lambda service path
+     * `/aws/lambda/{function name}`. `validatePhysicalName` already refused every
+     * other `/`-bearing shape, but it is structural: it holds no context values,
+     * so it admits any `/`-free name, including one that is no log source at all
+     * (`orders`) or one shaped for another context
+     * (`theorycloud_other_app_lab_x`). Both would enter the artifact as names the
+     * installer reserves and this app's logging never writes, so the context
+     * completes the rule where the bound prefix is known.
      */
-    private assertSameEnvironment;
-    /**
-     * The concrete literal a stack's account or Region resolves to, or `undefined`
-     * when the value stays environment-dependent at synthesis.
-     *
-     * `Stack.resolve` turns a `Lazy` or any other token into the literal it
-     * produces. A pseudo parameter or a reference resolved in a stack without a
-     * concrete environment resolves to a CloudFormation intrinsic object instead
-     * of a string, which is why the result is typed rather than passed to
-     * `Token.isUnresolved` alone: an intrinsic is not a literal and the stack that
-     * carries it deploys wherever it is deployed.
-     */
-    private static resolvedEnvironmentValue;
+    private assertFixedLogGroupName;
     /**
      * The nearest stack above the context, if it has one. A context created above
      * the stacks has none: its artifact then appears on the stacks its
