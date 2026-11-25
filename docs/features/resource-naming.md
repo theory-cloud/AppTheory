@@ -277,31 +277,21 @@ a fixed contract path. An application that names its own resource declares it th
 name it never declares is absent from the artifact and produces no warning, because only the application knows it
 created the resource.
 
-Two rules bound **where** a context may be used, and both refuse at synthesis rather than emit a document the installer
-would read wrong:
+Two rules bound **where** a context may be used, and the first refuses at synthesis rather than emit a document the
+installer would read wrong:
 
 - **One Stage.** A naming context and every stack that declares through it sit in the same CDK `Stage` (or all above
   the stages, at the `App` root). Each Stage is its own cloud assembly and CDK validates one Stage at a time, so a
   context above a Stage cannot compare that assembly's names and its document for it would be written too late to
   reach the assembly. Sharing one context across two Stages would also mean two assemblies claiming one context. A
   context created inside the Stage — in one of its stacks — works and emits that Stage's documents.
-- **One environment.** A stack that resolves to a concrete account or Region other than the context's fails synthesis.
-  The artifact claims the context's account and Region, and the reservation index keys a name by its scope in that
-  environment, so a stack in another environment would reserve names it cannot create.
-
-  The comparison reads the value **after** `Stack.resolve`, not the raw `Stack.account` / `Stack.region`:
-
-  | The stack's account or Region | Result |
-  |---|---|
-  | a concrete literal equal to the context's | admitted |
-  | a concrete literal that differs from the context's | refused |
-  | a `Lazy` or other token that resolves to a concrete literal | compared as that literal (refused when it differs) |
-  | a value that stays unresolved after `Stack.resolve` (`Aws.ACCOUNT_ID` → `{Ref: AWS::AccountId}`, a deploy-time reference) | admitted |
-
-  Reading the raw value is what a round-2 review caught: `env: { region: Lazy.string({ produce: () => "us-west-2" }) }`
-  left a token on `Stack.region`, so the check skipped it and the stack synthesized with rows claiming the context's
-  `us-east-1`. An env-agnostic stack — one whose account or Region never becomes a literal — is still admitted: it
-  deploys into the context's environment, which is what the artifact claims.
+- **One environment, owned by the context and checked by the installer.** The artifact's `account` and `Region` are the
+  naming context's. AppTheory does not compare them with the owning stack's environment: a stack whose account or
+  Region differs from the context's, is a token, or is left unset synthesizes as it always did, and every row still
+  describes the context. **TheoryCloud.ai's installer validates the artifact's account and Region against the stack it
+  deploys**, and refuses a deploy whose environment is not the one the names were derived for. Nothing in the naming
+  code resolves a `Lazy` or any other token of a stack's environment, so a producer that is only valid later in
+  synthesis is never evaluated early (SANITY-AT-N3-09; operator ruling 2026-11-25).
 
 Two names AppTheory creates fall outside the derivation table and go through `declareFixedName()`: the Lambda service
 log group `/aws/lambda/{function name}` that `AppTheoryFunction` creates under the legacy logging profile, and the
@@ -331,6 +321,22 @@ and the **Lambda service path** `/aws/lambda/{function name}`, whose function na
 Every other `/`-bearing log group — `arbitrary/path`, `/aws/lambda/`, `/aws/lambda/worker/suffix` — is refused, because
 it is neither shape, and a path that is not a log group (`/theorycloud/visibility/...`) is an `ssm_parameter`, not a
 `log_group`.
+
+`AppTheoryResourceNaming.validatePhysicalName` is **structural** — it holds no context values — so it cannot tell
+whether a slash-free log-group name is a log source at all, let alone this context's. A fixed log-group name is
+therefore narrowed once more where the bound prefix is known: `AppTheoryNamingContext.declareFixedName` admits exactly
+one of
+
+- **this context's own log source**, `theorycloud_{namespace}_{app}_{stage}_` built from the context's own namespace,
+  app and stage, followed by `logs` and the logical source's segments joined with `_` (so
+  `theorycloud_theorycloud_shop_lab_logs_runtime_api` for `shop`/`lab`); or
+- **the Lambda service path** `/aws/lambda/{function name}`, with a function name that satisfies the `lambda_function`
+  row.
+
+Anything else fails synthesis: `orders` is no log source, `theorycloud_other_app_lab_x` is another context's, and a
+remainder outside the section 3 grammar (`…_logs__runtime`, `…_logs_Runtime`, `…_lab_orders`) is not the source either
+(SANITY-AT-N3-08). AppTheory's own two fixed log-group names — the `/aws/lambda/{fn}` group of the legacy logging
+profile and the `logs/runtime/{logical}` group of the standard profile — satisfy the rule and still reach the artifact.
 
 Every rule above is the row's own limit: a row that states no lower length limit has none, so a one-character
 `iam_role` name is admitted and a one-character `dynamodb_table` name is not. A name outside these rules is refused
@@ -380,10 +386,12 @@ instead of entering the artifact as a name the installer reserves and no deploy 
 
 `AppTheoryNamingContext` holds the bound values and fails synthesis on an unresolved account token, an invalid context,
 an invalid retention value, or a `pins`/`generated` entry that matches no resource in the stack. A declaration fails
-synthesis when its owning stack sits in another `Stage` than the context, when that stack resolves to a concrete
-account or Region the context does not claim, or when a fixed name breaks its type's section 2 rules; the message names
-the construct, the stack, its environment, the context's environment or Stage, and the rule. Constructs take it as an
-optional `namingContext` prop; **with no context every construct synthesizes exactly as before**.
+synthesis when its owning stack sits in another `Stage` than the context, or when a fixed name breaks its type's
+section 2 rules or is a log-group name that is neither this context's log source nor the Lambda service path; the
+message names the construct, the stack, the Stage and the rule. It does **not** compare the owning stack's account or
+Region with the context's — the artifact's account and Region are the context's, and TheoryCloud.ai's installer
+validates them against the stack it deploys. Constructs take it as an optional `namingContext` prop; **with no context
+every construct synthesizes exactly as before**.
 
 ```ts
 const context = new AppTheoryNamingContext(this, "Naming", {
