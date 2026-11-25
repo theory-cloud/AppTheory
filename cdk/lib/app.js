@@ -44,7 +44,7 @@ const function_1 = require("./function");
 const http_api_1 = require("./http-api");
 const secure_defaults_1 = require("./private/secure-defaults");
 class AppTheoryApp extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApp", version: "7.5.0-rc.3" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApp", version: "7.5.0" };
     api;
     fn;
     databaseTable;
