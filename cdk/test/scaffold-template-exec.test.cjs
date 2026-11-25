@@ -94,6 +94,12 @@ function captureTryBundle(renderedSource, filename) {
       case "@theory-cloud/apptheory-cdk":
         return apptheoryCdk;
       default:
+        // A template requires its sibling bundling module from the scaffolded
+        // project, so a relative id resolves against the rendered template
+        // rather than against this test file.
+        if (id.startsWith("./") || id.startsWith("../")) {
+          return require(path.resolve(path.dirname(filename), id));
+        }
         return require(id);
     }
   };
@@ -144,6 +150,14 @@ function scaffoldProject(rootDir, template) {
   const cdkDir = path.join(rootDir, "cdk");
   fs.mkdirSync(cdkDir, { recursive: true });
   fs.writeFileSync(path.join(cdkDir, "app.cjs"), renderTemplate(template.file));
+  // Sibling modules the template requires ship with the scaffold unmoved and
+  // unrendered, so the generated project carries them next to its CDK app.
+  const templateDir = path.dirname(path.join(REPO_ROOT, template.file));
+  for (const entry of fs.readdirSync(templateDir, { withFileTypes: true })) {
+    if (entry.isFile() && !entry.name.endsWith(".tmpl")) {
+      fs.copyFileSync(path.join(templateDir, entry.name), path.join(cdkDir, entry.name));
+    }
+  }
   fs.writeFileSync(path.join(rootDir, "requirements.txt"), "apptheory\n");
   for (const name of template.copies) {
     fs.writeFileSync(path.join(rootDir, name), `# ${name}\n`);
