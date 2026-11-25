@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.5.0-rc.3](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc.2...v7.5.0-rc.3) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** adopt TableTheory 6.5.3 ([eac04e9](https://github.com/theory-cloud/AppTheory/commit/eac04e95df87e485118fb19555d7282fc3915877))
+* **deps:** adopt TableTheory 6.5.3 ([dd246f8](https://github.com/theory-cloud/AppTheory/commit/dd246f8cf232d397e6b15d1f44315e617574ae50))
+* **deps:** adopt the consolidated Dependabot dependency bumps ([#1310](https://github.com/theory-cloud/AppTheory/issues/1310), [#1333](https://github.com/theory-cloud/AppTheory/issues/1333), [#1335](https://github.com/theory-cloud/AppTheory/issues/1335), [#1336](https://github.com/theory-cloud/AppTheory/issues/1336)) ([0d0ab5f](https://github.com/theory-cloud/AppTheory/commit/0d0ab5fcd30a9fe57bac5930eafbf256bee987a3))
+* **deps:** consolidate open Dependabot bumps ([#1310](https://github.com/theory-cloud/AppTheory/issues/1310), [#1333](https://github.com/theory-cloud/AppTheory/issues/1333), [#1335](https://github.com/theory-cloud/AppTheory/issues/1335), [#1336](https://github.com/theory-cloud/AppTheory/issues/1336)) ([b7e2960](https://github.com/theory-cloud/AppTheory/commit/b7e2960a94ae68243f624fcede98cee6896de7a2))
+* **release:** backmerge published 7.5.0-rc.2 into staging ([b58cee1](https://github.com/theory-cloud/AppTheory/commit/b58cee1bf905f116bff918132b0e5e2bcc3adce5))
+* **release:** backmerge published 7.5.0-rc.2 into staging ([146b65b](https://github.com/theory-cloud/AppTheory/commit/146b65b2224632c5f3b0bb63be46e9e6088f7a6c))
+* **release:** promote Dependabot consolidation and TableTheory 6.5.3 for the next RC ([abab6ee](https://github.com/theory-cloud/AppTheory/commit/abab6eec6e280f15be3516b3c6ff3e10962ba23a))
+
 ## [7.5.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v7.5.0-rc.1...v7.5.0-rc.2) (2026-11-21)
 
 
