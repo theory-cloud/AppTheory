@@ -9,6 +9,10 @@ const { pathToFileURL } = require("node:url");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
+const cdk = require("aws-cdk-lib");
+const lambda = require("aws-cdk-lib/aws-lambda");
+const apptheory = require("../lib");
+
 // The apptheory-init scaffold ships one bundling module per language, and both
 // the CDK app and the bundling image run it. These tests prove what it stages:
 // the handler sources, the project manifest and the project's complete
@@ -84,14 +88,14 @@ function assetInterpreters() {
   return [process.execPath, ...extra];
 }
 
-// Load the staged asset's handler from inside the asset directory and return
-// what it resolved, under every interpreter the run proves.
-function loadFromAsset(outputDir, handlerFile = "handler.mjs") {
+// Load the staged asset's handler from inside the asset directory, invoke it and
+// return what it resolved, under every interpreter the run proves.
+function invokeFromAsset(outputDir, expected, handlerFile = "handler.mjs") {
   const script = `
     import assert from "node:assert/strict";
     const { handler } = await import(${JSON.stringify(pathToFileURL(path.join(outputDir, handlerFile)).href)});
     const result = handler();
-    assert.deepEqual(result, { a: 1, b: 2, c: 2 }, "the asset resolved " + JSON.stringify(result));
+    assert.deepEqual(result, ${JSON.stringify(expected)}, "the asset resolved " + JSON.stringify(result));
     process.stdout.write(JSON.stringify(result));
   `;
   const results = [];
@@ -108,6 +112,12 @@ function loadFromAsset(outputDir, handlerFile = "handler.mjs") {
     results.push({ interpreter, resolved: JSON.parse(loaded.stdout) });
   }
   return results;
+}
+
+// The resolution layout the closed finding pinned: one dependency keeps a
+// nested copy, two dependents share the root copy.
+function loadFromAsset(outputDir, handlerFile = "handler.mjs") {
+  return invokeFromAsset(outputDir, { a: 1, b: 2, c: 2 }, handlerFile);
 }
 
 // Sanity's resolution layout, as a generated app leaves it: one dependency keeps
@@ -557,6 +567,157 @@ test("the TypeScript bundler nests a linked checkout's copy where the project's 
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+// The two shapes npm leaves when a declared dependency lives *inside* the
+// project, recorded from real `npm install` runs (npm 11.19.0): a workspace
+// package and a `file:` dependency are symlinked into `node_modules/<name>`
+// rather than copied, and every dependent imports them by that name. Staging the
+// directory the link points at instead — `pkgs/<name>` — is what made the
+// fail-closed re-resolution check refuse to synth these projects at all.
+function writeInProjectLinkLayout(root, { workspace }) {
+  const target = path.join(root, "pkgs", "inproj-target");
+  writePackage(target, { name: "inproj-target", version: "1.0.0", type: "module", main: "index.cjs" });
+  fs.writeFileSync(path.join(target, "index.cjs"), "module.exports = { self: 'inproj-target@1.0.0' };\n");
+  fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+
+  if (workspace) {
+    writePackage(root, {
+      name: "project",
+      version: "0.0.0",
+      private: true,
+      type: "module",
+      workspaces: ["pkgs/*"],
+      dependencies: { "inproj-target": "*", leafdep: "*" },
+    });
+    fs.writeFileSync(
+      path.join(root, "src", "handler.mjs"),
+      [
+        'import target from "inproj-target";',
+        'import leaf from "leafdep";',
+        "",
+        "export const handler = () => ({ t: target.self, l: leaf });",
+        "",
+      ].join("\n"),
+    );
+    const leaf = path.join(root, "pkgs", "leafdep");
+    writePackage(leaf, { name: "leafdep", version: "2.0.0", type: "module", main: "index.cjs" });
+    fs.writeFileSync(path.join(leaf, "index.cjs"), "module.exports = { self: 'leafdep@2.0.0' };\n");
+    fs.symlinkSync("../pkgs/inproj-target", path.join(root, "node_modules", "inproj-target"));
+    fs.symlinkSync("../pkgs/leafdep", path.join(root, "node_modules", "leafdep"));
+    return { names: ["inproj-target", "leafdep"], expected: { t: "inproj-target@1.0.0", l: { self: "leafdep@2.0.0" } } };
+  }
+
+  writePackage(root, {
+    name: "project",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    dependencies: { mylocal: "file:./pkgs/inproj-target" },
+  });
+  fs.writeFileSync(
+    path.join(root, "src", "handler.mjs"),
+    [
+      'import target from "mylocal";',
+      "",
+      "export const handler = () => ({ t: target.self });",
+      "",
+    ].join("\n"),
+  );
+  fs.symlinkSync("../pkgs/inproj-target", path.join(root, "node_modules", "mylocal"));
+  return { names: ["mylocal"], expected: { t: "inproj-target@1.0.0" } };
+}
+
+// Synth one project through the construct with the scaffold's own bundling
+// props and return the asset directory the CDK emitted for it: the artifact a
+// deployment uploads, produced by the same local bundling path the app uses.
+function synthNodeAsset(projectRoot, workspace, id) {
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  const runtimeName = `NODEJS_${nodeMajor}_X`;
+  const runtime = lambda.Runtime[runtimeName];
+  assert.ok(runtime, `aws-cdk-lib has no ${runtimeName} for Node ${process.versions.node}`);
+  const outdir = path.join(workspace, `cdk.out-${id}`);
+  const app = new cdk.App({ outdir });
+  const stack = new cdk.Stack(app, "LinkedLayoutStack");
+  new apptheory.AppTheoryFunction(stack, "Handler", {
+    runtime,
+    handler: "handler.handler",
+    code: lambda.Code.fromAsset(projectRoot, {
+      bundling: tsBundle().assetBundling(runtime, projectRoot),
+    }),
+  });
+  app.synth();
+  const assets = fs
+    .readdirSync(outdir)
+    .filter((entry) => entry.startsWith("asset."))
+    .map((entry) => path.join(outdir, entry))
+    .filter((dir) => fs.existsSync(path.join(dir, "handler.mjs")));
+  assert.equal(
+    assets.length,
+    1,
+    `the synth emitted ${assets.length} handler assets: ${JSON.stringify(fs.readdirSync(outdir))}`,
+  );
+  return assets[0];
+}
+
+// Both link families the reviewers reproduced with real `npm install`: the asset
+// must carry each package under the name its dependents import, and the handler
+// must load and run from the emitted asset — not from the project.
+for (const layout of [
+  { id: "workspace-links", label: "an npm workspace package", workspace: true },
+  { id: "inproject-file-links", label: "an in-project file: dependency", workspace: false },
+]) {
+  test(`the CDK emits ${layout.label} at the name it is imported by, and the asset loads`, () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `apptheory-bundle-${layout.id}-`));
+    const root = path.join(workspace, "project");
+    try {
+      const built = writeInProjectLinkLayout(root, { workspace: layout.workspace });
+
+      // The link name is the slot; the directory behind it is only the source.
+      const closure = tsBundle().productionClosure(root);
+      assert.deepEqual(
+        [...closure.keys()].sort(),
+        built.names.map((name) => `node_modules/${name}`).sort(),
+        `staged ${JSON.stringify([...closure.keys()])}`,
+      );
+      assert.equal(
+        closure.get(`node_modules/${built.names[0]}`),
+        fs.realpathSync(path.join(root, "pkgs", "inproj-target")),
+        "the link's target is what the asset is built from",
+      );
+
+      const asset = synthNodeAsset(root, workspace, layout.id);
+      assert.deepEqual(
+        fs.readdirSync(asset).sort(),
+        ["handler.mjs", "node_modules", "package.json"],
+        `the emitted asset carries ${JSON.stringify(fs.readdirSync(asset))}`,
+      );
+      assert.equal(
+        fs.existsSync(path.join(asset, "pkgs")),
+        false,
+        "the directory the link points at must not be staged",
+      );
+      for (const name of built.names) {
+        const staged = path.join(asset, "node_modules", name);
+        assert.equal(
+          fs.lstatSync(staged).isSymbolicLink(),
+          false,
+          `${name} must be a real directory inside the asset`,
+        );
+        // Node's own resolution, asked from the asset root, finds the same copy.
+        assert.deepEqual(resolveInAsset(asset, "", name).resolved, `node_modules/${name}`);
+      }
+
+      const invoked = invokeFromAsset(asset, built.expected);
+      assert.deepEqual(
+        invoked.map((entry) => entry.resolved),
+        invoked.map(() => built.expected),
+      );
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
 
 test("the staged-resolution walk follows Node's own walk from a directory", () => {
   // The bundler only reuses a staged copy when this walk finds exactly that
