@@ -27,6 +27,13 @@
 // layout and refusing to emit an asset whose resolution differs from the
 // project's.
 //
+// Installed path means the slot a dependent reaches, which is not always the
+// directory that slot points at: `npm install` links a workspace package and a
+// `file:` dependency into `node_modules/<name>` instead of copying them, and
+// dependents import through that name. Such a package is staged under the link
+// name — the slot it is reached through — never under the real directory behind
+// it, which nothing in the project imports from.
+//
 // The file is plain CommonJS with no dependencies, because it runs twice: from
 // the CDK app during local bundling, and inside the Node bundling image where
 // the CDK mounts the project at /asset-input and collects the asset from
@@ -72,12 +79,17 @@ function readManifest(dir) {
 // `fromDir` upwards that carries it. `fromDir` is the real directory of the
 // package that declared the dependency, so a linked package resolves through its
 // own install rather than through the project's.
-function resolvePackageDir(fromDir, name) {
+//
+// Returns the slot the dependency is reached through — `levels` directories
+// above `fromDir` — together with the directory that slot resolves to, which is
+// what is read and copied. The two differ whenever the slot is a symlink, which
+// is how npm installs a workspace package or a `file:` dependency.
+function resolvePackage(fromDir, name) {
   let dir = path.resolve(fromDir);
-  for (;;) {
+  for (let levels = 0; ; levels += 1) {
     const candidate = path.join(dir, "node_modules", name);
     if (fs.existsSync(path.join(candidate, "package.json"))) {
-      return fs.realpathSync(candidate);
+      return { placement: candidate, source: fs.realpathSync(candidate), levels };
     }
     const parent = path.dirname(dir);
     if (parent === dir) {
@@ -125,24 +137,53 @@ function declaredDependencies(manifest) {
   return { required, optional };
 }
 
+// The staged path `levels` directories above a staged path, clamped at the asset
+// root. A copy the project resolves above its own root is represented by a slot
+// of the asset root, which is the directory every dependent that resolved it
+// walks to.
+function slotAbove(destination, levels) {
+  let staged = destination;
+  for (let level = 0; level < levels; level += 1) {
+    if (staged === "") {
+      return "";
+    }
+    const parent = path.dirname(staged);
+    staged = parent === "." ? "" : parent;
+  }
+  return staged;
+}
+
 // Where one package must sit inside the asset so that Node's own walk finds it
 // there from every dependent that resolved it.
 //
-// A package installed inside the project keeps its installed path, which makes
-// the asset mirror the tree the project resolved in: each dependent walks its
-// own `node_modules`, then each ancestor's, then the project's, and lands on the
-// same copy it landed on before. Nothing is hoisted to a free `node_modules`
-// slot, because a slot that is free today is exactly the slot another dependent
-// resolves through.
+// A package installed inside the project is staged at the slot its dependents
+// reached, projected into the asset by walking the dependent's staged path up
+// the same number of levels. For a plain install that is the installed path
+// itself, which makes the asset mirror the tree the project resolved in: each
+// dependent walks its own `node_modules`, then each ancestor's, then the
+// project's, and lands on the same copy it landed on before. Nothing is hoisted
+// to a free `node_modules` slot, because a slot that is free today is exactly
+// the slot another dependent resolves through.
+//
+// The slot, not the directory behind it, is what an install contributes: a
+// workspace package and a `file:` dependency are symlinks named by the dependent
+// that imports them, so the asset carries them under that name. Staging the
+// real directory would put the package where nothing imports it from, and the
+// re-resolution check would refuse the asset.
 //
 // A package installed outside the project — inside a linked checkout, or hoisted
 // above the project root — is anchored under the placed package that contains
 // it when there is one, so a linked tree keeps its own layout; otherwise it is
 // a hoist shared above the project, which the asset represents at its root.
-function installedDestination(root, source, name, placedAt) {
-  const relative = path.relative(root, source);
-  if (source !== root && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
-    return relative;
+function installedDestination(root, destination, levels, placement, source, name, placedAt) {
+  const installed = path.relative(root, placement);
+  if (
+    source !== root &&
+    installed !== "" &&
+    !installed.startsWith("..") &&
+    !path.isAbsolute(installed)
+  ) {
+    return path.join(slotAbove(destination, levels), "node_modules", name);
   }
   for (let dir = path.dirname(source); ; dir = path.dirname(dir)) {
     const anchor = placedAt.get(dir);
@@ -207,15 +248,16 @@ function productionClosure(projectRoot) {
     const { required, optional } = declaredDependencies(parentManifest);
 
     for (const name of [...required, ...optional]) {
-      const source = resolvePackageDir(dir, name);
-      if (source === null) {
+      const resolved = resolvePackage(dir, name);
+      if (resolved === null) {
         if (optional.includes(name)) {
           continue;
         }
         throw new Error(`bundling: ${dir} declares ${name} but it is not installed; run npm install`);
       }
+      const { placement, source, levels } = resolved;
 
-      let target = installedDestination(root, source, name, placedAt);
+      let target = installedDestination(root, destination, levels, placement, source, name, placedAt);
       if (closure.has(target) && closure.get(target) !== source) {
         target = path.join(destination, "node_modules", name);
         const nested = closure.get(target);
