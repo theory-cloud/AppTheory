@@ -255,6 +255,22 @@ jobs:
       - name: Verify CDK dependency engines admit the Node floor
         run: bash scripts/verify-cdk-engines-floor.sh
 
+  consumer-install:
+    name: Consumer install (packed artifacts)
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Both records are verified: the approved producing host proves the
+      # current lines, and the newest supported lines prove that the packed
+      # TypeScript and CDK artifacts and the built Python distribution install
+      # and run for a consumer outside this repository under them. Neither is
+      # executed here; each was produced once under its own environment.
+      - name: Verify the recorded clean-consumer installs on the approved producing host
+        run: bash scripts/evidence/verify-gate.sh --gate consumer-install --profile default
+      - name: Verify the recorded clean-consumer installs on the newest supported lines
+        run: bash scripts/evidence/verify-gate.sh --gate consumer-install --profile node26-py3.15
+
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'

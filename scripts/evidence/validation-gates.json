@@ -536,6 +536,49 @@
         }
       ]
     },
+    "consumer-install": {
+      "kind": "source",
+      "environment": ["node", "python"],
+      "profiles": ["default", "node26-py3.15"],
+      "description": "Packed TypeScript and CDK artifacts plus the built Python distribution installed into empty consumers and exercised",
+      "resources": ["cpu", "network", "repo-write"],
+      "paths": [
+        "VERSION",
+        "ts/",
+        "py/",
+        "cdk/",
+        "scripts/read-version.sh",
+        "scripts/verify-consumer-install.sh",
+        "scripts/fixtures/consumer-install/",
+        "scripts/lib/"
+      ],
+      "commands": [
+        {
+          "id": "consumer-install-ts",
+          "argv": [
+            "bash",
+            "scripts/verify-consumer-install.sh",
+            "ts"
+          ]
+        },
+        {
+          "id": "consumer-install-py",
+          "argv": [
+            "bash",
+            "scripts/verify-consumer-install.sh",
+            "py"
+          ]
+        },
+        {
+          "id": "consumer-install-cdk",
+          "argv": [
+            "bash",
+            "scripts/verify-consumer-install.sh",
+            "cdk"
+          ]
+        }
+      ]
+    },
     "examples-local": {
       "kind": "source",
       "environment": ["go", "node", "python", "platform"],

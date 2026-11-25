@@ -28,6 +28,7 @@ const evidenceRegistryFixture = `{
     "py": {"kind": "source", "profiles": ["default", "floor-py3.12", "node26-py3.15"], "commands": [{"id": "py", "argv": ["bash", "scripts/verify-python-build.sh"]}]},
     "contract-tests": {"kind": "source", "profiles": ["default", "floor-node22-py3.12", "floor-node22-py3.14", "floor-node24-py3.12", "node26-py3.15"], "commands": [{"id": "contract", "argv": ["bash", "scripts/verify-contract-tests.sh"]}]},
     "cdk-go-drift": {"kind": "source", "profiles": ["default", "floor-node22", "node26-py3.15"], "commands": [{"id": "drift", "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]}]},
+    "consumer-install": {"kind": "source", "profiles": ["default", "node26-py3.15"], "commands": [{"id": "consumer", "argv": ["bash", "scripts/verify-consumer-install.sh", "ts"]}]},
     "examples-local": {"kind": "source", "profiles": ["default"], "commands": [{"id": "examples", "argv": ["make", "examples-local"]}]},
     "security-refresh": {"kind": "dependency-scan", "profiles": ["default"], "commands": [{"id": "scan", "argv": ["bash", "scripts/verify-security-refresh.sh"]}]},
     "release-delta": {"kind": "generated-delta", "commands": [{"id": "delta", "argv": ["bash", "scripts/verify-version-alignment.sh"]}]}
@@ -86,6 +87,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile default
+  consumer-install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consumer install proof (producing host)
+        run: bash scripts/evidence/verify-gate.sh --gate consumer-install --profile default
+      - name: Consumer install proof (newest lines)
+        run: bash scripts/evidence/verify-gate.sh --gate consumer-install --profile node26-py3.15
   security-refresh:
     runs-on: ubuntu-latest
     steps:

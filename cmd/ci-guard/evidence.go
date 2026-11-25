@@ -51,6 +51,7 @@ var evidenceWiring = []evidenceWiringRequirement{
 	{workflow: ciWorkflowPath, job: "py", gates: []string{"py"}},
 	{workflow: ciWorkflowPath, job: "contract-tests", gates: []string{"contract-tests"}},
 	{workflow: ciWorkflowPath, job: "cdk-go-drift", gates: []string{"cdk-go-drift"}},
+	{workflow: ciWorkflowPath, job: "consumer-install", gates: []string{"consumer-install"}},
 	{workflow: ciWorkflowPath, job: "security-refresh", gates: []string{"security-refresh"}},
 	{workflow: ciWorkflowPath, job: "release-delta", gates: []string{"release-delta"}, forced: true},
 	{workflow: ciWorkflowPath, job: "runtime-floor-matrix", gates: []string{"ts", "py", "contract-tests"}},
