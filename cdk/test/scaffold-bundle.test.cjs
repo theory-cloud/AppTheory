@@ -719,27 +719,394 @@ for (const layout of [
   });
 }
 
-test("the staged-resolution walk follows Node's own walk from a directory", () => {
-  // The bundler only reuses a staged copy when this walk finds exactly that
-  // copy, so the walk itself is pinned: the directory's own `node_modules`, then
-  // each parent's — including the `node_modules/node_modules` step Node really
-  // checks — up to the asset root.
-  const { resolveStaged } = tsBundle();
-  const closure = new Map([
-    ["node_modules/shared", "/project/node_modules/shared"],
-    ["node_modules/a/node_modules/shared", "/project/node_modules/a/node_modules/shared"],
-  ]);
-  assert.equal(resolveStaged("node_modules/a", "shared", closure), "node_modules/a/node_modules/shared");
-  assert.equal(resolveStaged("node_modules/b", "shared", closure), "node_modules/shared");
-  assert.equal(resolveStaged("", "shared", closure), "node_modules/shared");
-  // A package that requires its own name resolves to itself, exactly as Node
-  // does from a directory that sits under its own `node_modules`.
-  assert.equal(
-    resolveStaged("node_modules/a/node_modules/shared", "shared", closure),
-    "node_modules/a/node_modules/shared",
+// ---------------------------------------------------------------------------
+// Round 4: the layouts the round-3 reviewers reproduced with real `npm install`.
+//
+// Round 3 projected a dependency's slot by counting directory hops from the
+// *source* walk and replaying that count along the *staged* path. A scoped link
+// slot is one segment deeper than the directory behind it
+// (`node_modules/@scope/pkg` is three segments; `pkgs/pkg` is two), and Node
+// never looks in `node_modules/node_modules`, so the copy landed on a slot Node
+// does not search. The shipped check re-implemented the same walk, agreed with
+// itself, and accepted the asset: the handler then failed with MODULE_NOT_FOUND,
+// or — worse, on the unscoped variant — silently resolved a different version
+// than the project.
+//
+// Every one of these layouts is the shape `npm install` leaves: a workspace
+// package or a `file:` dependency is a symlink named after what dependents
+// import, and the transitive dependencies npm hoists are plain installs at the
+// project root. Placement now follows the staged path's own depth, a copy the
+// project reaches through a directory the asset cannot reproduce is staged where
+// its dependent looks first, and acceptance is Node's own resolver on the staged
+// tree.
+
+// A package written where npm puts it when it is not an install: the directory
+// behind a workspace or `file:` link.
+function writeModule(dir, manifest, code) {
+  writePackage(dir, { main: "index.cjs", ...manifest });
+  fs.writeFileSync(path.join(dir, "index.cjs"), `${code}\n`);
+}
+
+// The slot npm links a workspace package or a `file:` dependency into: a symlink
+// named by the dependents that import it, not the directory behind it.
+function linkSlot(root, slot, target) {
+  const link = path.join(root, "node_modules", slot);
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(path.relative(path.dirname(link), target), link);
+}
+
+function writeHandler(root, lines) {
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "handler.mjs"), `${lines.join("\n")}\n`);
+}
+
+// Load and invoke one handler under every interpreter the run proves, from the
+// directory its imports resolve from, and return what it produced.
+function invokeHandlerEverywhere(handlerFile, cwd) {
+  const script = `
+    const { handler } = await import(${JSON.stringify(pathToFileURL(handlerFile).href)});
+    process.stdout.write(JSON.stringify(handler()));
+  `;
+  const results = [];
+  for (const interpreter of assetInterpreters()) {
+    const run = spawnSync(interpreter, ["--input-type=module", "-e", script], { cwd, encoding: "utf8" });
+    assert.equal(
+      run.status,
+      0,
+      `${path.basename(handlerFile)} did not run from ${cwd} under ${interpreter}:\n${run.stderr}`,
+    );
+    results.push({ interpreter, resolved: JSON.parse(run.stdout) });
+  }
+  return results;
+}
+
+// CX1: a scoped workspace package and the transitive dependency npm hoists to
+// the project root — the shape that produced `Cannot find module 'leftpad'`.
+function buildScopedWorkspaceLayout(root) {
+  writePackage(root, {
+    name: "workspace-root",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    workspaces: ["pkgs/*"],
+    dependencies: { "@corp/util": "*" },
+  });
+  writeModule(
+    path.join(root, "pkgs", "util"),
+    { name: "@corp/util", version: "1.0.0", dependencies: { leftpad: "1.0.0" } },
+    'module.exports.self = "@corp/util@1.0.0";\nmodule.exports.leftpad = require("leftpad").self;',
   );
-  assert.equal(resolveStaged("node_modules/a", "absent", closure), null);
-  assert.equal(resolveStaged("vendor/tool", "shared", closure), "node_modules/shared");
+  installPackage(root, "leftpad", "1.0.0", { code: 'module.exports = { self: "leftpad@1.0.0" }' });
+  linkSlot(root, "@corp/util", path.join(root, "pkgs", "util"));
+  writeHandler(root, [
+    'import util from "@corp/util";',
+    "",
+    "export const handler = () => ({ util: util.self, leftpad: util.leftpad });",
+  ]);
+}
+
+// CX2: one scoped workspace package depending on another, which the project root
+// does not declare — the shape that staged only a phantom `@corp/w2`.
+function buildScopedCrossDependencyLayout(root) {
+  writePackage(root, {
+    name: "workspace-root",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    workspaces: ["pkgs/*"],
+    dependencies: { "@corp/w1": "*" },
+  });
+  writeModule(
+    path.join(root, "pkgs", "w1"),
+    { name: "@corp/w1", version: "1.0.0", dependencies: { "@corp/w2": "*" } },
+    'module.exports.self = "@corp/w1@1.0.0";\nmodule.exports.w2 = require("@corp/w2").self;',
+  );
+  writeModule(path.join(root, "pkgs", "w2"), { name: "@corp/w2", version: "2.0.0" }, 'module.exports.self = "@corp/w2@2.0.0";');
+  linkSlot(root, "@corp/w1", path.join(root, "pkgs", "w1"));
+  linkSlot(root, "@corp/w2", path.join(root, "pkgs", "w2"));
+  writeHandler(root, [
+    'import w1 from "@corp/w1";',
+    "",
+    'export const handler = () => ({ w1: w1.self, w2: w1["@corp/w2"] });',
+  ]);
+}
+
+// CX3: an in-project `file:` link two directories deep whose intermediate
+// `vendor/node_modules` carries the first match.
+function buildVendoredIntermediateLayout(root) {
+  writePackage(root, {
+    name: "project",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: { "vendor-thing": "file:./vendor/thing" },
+  });
+  writeModule(
+    path.join(root, "vendor", "thing"),
+    { name: "vendor-thing", version: "1.0.0", dependencies: { leftpad: "*" } },
+    'module.exports.self = "vendor-thing@1.0.0";\nmodule.exports.leftpad = require("leftpad").self;',
+  );
+  writeModule(
+    path.join(root, "vendor", "node_modules", "leftpad"),
+    { name: "leftpad", version: "9.9.9-vendor" },
+    'module.exports.self = "leftpad@9.9.9-vendor";',
+  );
+  linkSlot(root, "vendor-thing", path.join(root, "vendor", "thing"));
+  writeHandler(root, [
+    'import thing from "vendor-thing";',
+    "",
+    "export const handler = () => ({ thing: thing.self, leftpad: thing.leftpad });",
+  ]);
+}
+
+// CX4: an unscoped link two directories deep whose intermediate first-match copy
+// is a different version from the copy the project root holds — the shape that
+// emitted an asset silently running `shared@1.0.0-root` instead of the project's
+// `shared@2.0.0-deep`.
+function buildIntermediateFirstMatchLayout(root) {
+  writePackage(root, {
+    name: "project",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: { lk: "file:./pkgs/deep/l", shared: "1.0.0" },
+  });
+  writeModule(
+    path.join(root, "pkgs", "deep", "l"),
+    { name: "lk", version: "1.0.0", dependencies: { shared: "*" } },
+    'module.exports.self = "lk@1.0.0";\nmodule.exports.shared = require("shared").self;',
+  );
+  writeModule(
+    path.join(root, "pkgs", "deep", "node_modules", "shared"),
+    { name: "shared", version: "2.0.0-deep" },
+    'module.exports.self = "shared@2.0.0-deep";',
+  );
+  installPackage(root, "shared", "1.0.0", { code: 'module.exports = { self: "shared@1.0.0-root" }' });
+  linkSlot(root, "lk", path.join(root, "pkgs", "deep", "l"));
+  writeHandler(root, ['import lk from "lk";', 'import shared from "shared";', "", "export const handler = () => ({ lk: lk.shared, root: shared.self });"]);
+}
+
+// Sanity's first layout: a scoped workspace package whose declared workspace
+// dependency npm links at the project root.
+function buildReviewScopedChainLayout(root) {
+  writePackage(root, {
+    name: "workspace-root",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    workspaces: ["pkgs/*"],
+    dependencies: { "@review/entry": "1.0.0" },
+  });
+  writeModule(
+    path.join(root, "pkgs", "entry"),
+    { name: "@review/entry", version: "1.0.0", dependencies: { "review-leaf": "1.0.0" } },
+    'module.exports.self = "@review/entry@1.0.0";\nmodule.exports.leaf = require("review-leaf").self;',
+  );
+  writeModule(path.join(root, "pkgs", "leaf"), { name: "review-leaf", version: "1.0.0" }, 'module.exports.self = "leaf-ok";');
+  linkSlot(root, "@review/entry", path.join(root, "pkgs", "entry"));
+  linkSlot(root, "review-leaf", path.join(root, "pkgs", "leaf"));
+  writeHandler(root, [
+    'import entry from "@review/entry";',
+    "",
+    'export const handler = () => ({ entry: entry.self, leaf: entry["review-leaf"] });',
+  ]);
+}
+
+// Sanity's second layout: two in-project `file:` aliases of one package, whose
+// own declared `file:` child npm hoists to the project root.
+function buildDualFileHoistedChildLayout(root) {
+  writePackage(root, {
+    name: "project",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: { "lib-one": "file:./shared-lib", "lib-two": "file:./shared-lib" },
+  });
+  writeModule(
+    path.join(root, "shared-lib"),
+    { name: "shared-lib", version: "1.0.0", dependencies: { "deep-thing": "file:./deep-thing" } },
+    'module.exports.self = "shared-lib@1.0.0";\nmodule.exports.deep = require("deep-thing").self;',
+  );
+  writeModule(
+    path.join(root, "shared-lib", "deep-thing"),
+    { name: "deep-thing", version: "1.0.0" },
+    'module.exports.self = "deep-thing@1.0.0";',
+  );
+  linkSlot(root, "lib-one", path.join(root, "shared-lib"));
+  linkSlot(root, "lib-two", path.join(root, "shared-lib"));
+  linkSlot(root, "deep-thing", path.join(root, "shared-lib", "deep-thing"));
+  writeHandler(root, [
+    'import one from "lib-one";',
+    'import two from "lib-two";',
+    "",
+    'export const handler = () => ({ one: one.self, two: two.self, deep: one["deep-thing"] });',
+  ]);
+}
+
+for (const layout of [
+  {
+    id: "adv-scoped-workspace-hoisted-dep",
+    label: "a scoped workspace package's hoisted dependency",
+    absent: ["pkgs"],
+    build: buildScopedWorkspaceLayout,
+  },
+  {
+    id: "adv-scoped-workspace-cross-dependency",
+    label: "one scoped workspace package depending on another",
+    absent: ["pkgs"],
+    build: buildScopedCrossDependencyLayout,
+  },
+  {
+    id: "adv-inproject-link-vendored-intermediate",
+    label: "an in-project link two directories deep with a vendored intermediate copy",
+    absent: ["vendor"],
+    build: buildVendoredIntermediateLayout,
+  },
+  {
+    id: "adv-intermediate-first-match-version",
+    label: "an intermediate first-match copy of a different version",
+    absent: ["pkgs"],
+    build: buildIntermediateFirstMatchLayout,
+  },
+  {
+    id: "sanity-scoped-workspace-chain",
+    label: "a scoped workspace package's workspace dependency",
+    absent: ["pkgs"],
+    build: buildReviewScopedChainLayout,
+  },
+  {
+    id: "sanity-dual-file-links-hoisted-child",
+    label: "two in-project file: aliases and their hoisted file: child",
+    absent: ["shared-lib"],
+    build: buildDualFileHoistedChildLayout,
+  },
+]) {
+  test(`the CDK emits ${layout.label} and it loads the copies the project loads`, () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `apptheory-bundle-${layout.id}-`));
+    const root = path.join(workspace, "project");
+    try {
+      layout.build(root);
+      // What the project itself resolves, before any bundling.
+      const project = invokeHandlerEverywhere(path.join(root, "src", "handler.mjs"), root);
+
+      const asset = synthNodeAsset(root, workspace, layout.id);
+
+      // The asset itself must load and run, under every interpreter the run
+      // proves, and give exactly what the project gave.
+      const asserted = invokeHandlerEverywhere(path.join(asset, "handler.mjs"), asset);
+      assert.deepEqual(
+        asserted.map((entry) => entry.resolved),
+        project.map((entry) => entry.resolved),
+        `the asset resolved ${JSON.stringify(asserted.map((entry) => entry.resolved))} ` +
+          `where the project resolved ${JSON.stringify(project.map((entry) => entry.resolved))}`,
+      );
+
+      // Only the slots Node reaches the packages through are staged: never the
+      // real directory behind a link, and never a `node_modules` below one.
+      for (const absent of [...layout.absent, path.join("node_modules", "node_modules")]) {
+        assert.equal(
+          fs.existsSync(path.join(asset, absent)),
+          false,
+          `the emitted asset must not carry ${absent}: it staged ${JSON.stringify(
+            fs.readdirSync(path.join(asset, "node_modules")),
+          )} under node_modules`,
+        );
+      }
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
+
+// Part 1 of the round-4 change: acceptance is Node's resolver on the staged
+// tree. Round 3's phantom slot, injected into the real bundling path, must
+// refuse the synth and name the edge rather than emit an asset that cannot load.
+test("the CDK refuses a wrong placement instead of emitting an asset that cannot load", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-wrong-placement-"));
+  const root = path.join(workspace, "project");
+  const copySync = fs.cpSync;
+  try {
+    buildScopedWorkspaceLayout(root);
+    const staged = path.join("node_modules", "leftpad");
+    const phantom = path.join("node_modules", "node_modules", "leftpad");
+    fs.cpSync = (source, destination, options) =>
+      copySync(
+        source,
+        typeof destination === "string" && destination.endsWith(staged)
+          ? `${destination.slice(0, -staged.length)}${phantom}`
+          : destination,
+        options,
+      );
+    assert.throws(
+      () => synthNodeAsset(root, workspace, "wrong-placement"),
+      {
+        message:
+          /the staged asset does not resolve like the project: node_modules\/@corp\/util imports leftpad, which resolves to .*node_modules\/leftpad in the project but to nothing from the asset/,
+      },
+      "a copy one directory away from where Node looks must refuse the synth",
+    );
+  } finally {
+    fs.cpSync = copySync;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("the TypeScript bundler decides acceptance with Node's own resolver, not a staged copy of its walk", () => {
+  // The round-3 asset was accepted by a re-implementation of Node's walk that
+  // agreed with itself about a phantom `node_modules/node_modules/<dep>` slot.
+  // Acceptance is now asked of Node, against the directories that were actually
+  // staged: this builds the round-3 phantom by hand, and the same tree with the
+  // copy where Node looks, and pins which one the check accepts.
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-oracle-"));
+  const root = path.join(workspace, "project");
+  const outputDir = path.join(workspace, "asset");
+  try {
+    buildScopedWorkspaceLayout(root);
+    const util = path.join(root, "pkgs", "util");
+    const leftpad = path.join(root, "node_modules", "leftpad");
+
+    // What the bundler stages, and what a hand-rolled walk would accept instead.
+    const accepted = [
+      ["node_modules/@corp/util", util],
+      ["node_modules/leftpad", leftpad],
+    ];
+    const phantom = [
+      ["node_modules/@corp/util", util],
+      ["node_modules/node_modules/leftpad", leftpad],
+    ];
+
+    const stageByHand = (entries) => {
+      fs.rmSync(outputDir, { recursive: true, force: true });
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.cpSync(path.join(root, "src"), outputDir, { recursive: true, dereference: true, force: true });
+      fs.copyFileSync(path.join(root, "package.json"), path.join(outputDir, "package.json"));
+      for (const [destination, source] of entries) {
+        fs.cpSync(source, path.join(outputDir, destination), {
+          recursive: true,
+          dereference: true,
+          force: true,
+          filter: (candidate) => path.basename(candidate) !== "node_modules",
+        });
+      }
+      return new Map(entries);
+    };
+
+    const verification = tsBundle().verifyStaged(root, outputDir, stageByHand(accepted));
+    assert.ok(verification.verified >= 2, `verified ${verification.verified} edges`);
+
+    // Same packages, same bytes, one slot over: Node finds nothing, so the check
+    // refuses and names the edge instead of emitting a broken asset.
+    const phantomClosure = stageByHand(phantom);
+    assert.throws(
+      () => tsBundle().verifyStaged(root, outputDir, phantomClosure),
+      {
+        message:
+          /the staged asset does not resolve like the project: node_modules\/@corp\/util imports leftpad, which resolves to .*node_modules\/leftpad in the project but to nothing from the asset/,
+      },
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("the TypeScript bundler carries peers the handler imports and skips optional ones", () => {
