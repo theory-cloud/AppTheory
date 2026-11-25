@@ -25764,7 +25764,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 492
+            "line": 524
           },
           "name": "logGroupName",
           "parameters": [
@@ -25787,7 +25787,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 499
+            "line": 531
           },
           "name": "logSourcePrefix",
           "returns": {
@@ -29200,7 +29200,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 482
+        "line": 532
       },
       "methods": [
         {
@@ -29210,7 +29210,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 763
+            "line": 842
           },
           "name": "compileVisibilityPolicyJson",
           "parameters": [
@@ -29240,7 +29240,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 692
+            "line": 771
           },
           "name": "derivedNamesJson",
           "parameters": [
@@ -29265,7 +29265,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 845
+            "line": 924
           },
           "name": "keeperDecision",
           "parameters": [
@@ -29301,7 +29301,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 513
+            "line": 563
           },
           "name": "logGroupName",
           "parameters": [
@@ -29331,7 +29331,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 506
+            "line": 556
           },
           "name": "logSourcePrefix",
           "parameters": [
@@ -29355,7 +29355,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 833
+            "line": 912
           },
           "name": "manifestJson",
           "parameters": [
@@ -29379,7 +29379,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 594
+            "line": 645
           },
           "name": "namingScope",
           "parameters": [
@@ -29404,7 +29404,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 524
+            "line": 574
           },
           "name": "physicalName",
           "parameters": [
@@ -29440,7 +29440,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 754
+            "line": 833
           },
           "name": "ruleVersion",
           "parameters": [
@@ -29464,7 +29464,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 499
+            "line": 549
           },
           "name": "s3AccountRegionalSuffix",
           "parameters": [
@@ -29489,7 +29489,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 737
+            "line": 816
           },
           "name": "selectorMatches",
           "parameters": [
@@ -29519,7 +29519,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 745
+            "line": 824
           },
           "name": "sourceVisible",
           "parameters": [
@@ -29550,7 +29550,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 664
+            "line": 743
           },
           "name": "synthCheck",
           "parameters": [
@@ -29585,7 +29585,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 488
+            "line": 538
           },
           "name": "validateContext",
           "parameters": [
@@ -29600,12 +29600,12 @@
         },
         {
           "docs": {
-            "remarks": "Throws on a name outside them.\n\nThis is the section 2 table, not a second one: it reads the same rule rows\nthe derivation uses. A `log_group` accepts `/` in addition to the section 2\ncharset because its fixed names are absolute service paths — the Lambda\ngroup `/aws/lambda/{function name}` of section 3 — and section 3 reserves\nonly the `aws/` prefix, which this still refuses.",
-            "summary": "Validate a physical name the contract fixes rather than derives against the character and shape rules of the type's section 2 row: charset, length, the S3 start/end rule, the SSM and KMS path rules (lead, depth, reserved prefixes) and the secret ARN-suffix rule."
+            "remarks": "Throws on a name outside them.\n\nThis is the section 2 table, not a second one: it reads the same rule rows\nthe derivation uses. A `log_group` accepts `/` in addition to the section 2\ncharset, but only for the two fixed shapes contract section 3 states: a\nlog-source name (which carries no `/` at all, because section 3 joins its\nsegments with `_`) or the Lambda service path `/aws/lambda/{function name}`,\nwhose function name satisfies the `lambda_function` row. Any other\n`/`-bearing log group is refused (SANITY-AT-N3-08).",
+            "summary": "Validate a physical name the contract fixes rather than derives against the character and shape rules of the type's section 2 row: charset, the length range (**both** bounds when the row states a lower one, not only the upper), the S3 start/end rule, the path rules (lead, non-empty segments, depth, reserved prefixes, the `alias/aws/` namespace) and the secret ARN-suffix rule."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 613
+            "line": 668
           },
           "name": "validatePhysicalName",
           "parameters": [
@@ -29631,7 +29631,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 725
+            "line": 804
           },
           "name": "validateSelector",
           "parameters": [
@@ -29650,7 +29650,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 821
+            "line": 900
           },
           "name": "visibilityManifest",
           "parameters": [
@@ -29691,7 +29691,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 801
+            "line": 880
           },
           "name": "visibilityPreview",
           "parameters": [
@@ -35311,5 +35311,5 @@
     }
   },
   "version": "7.5.0",
-  "fingerprint": "9yRcOoh+/1vWahoUbrz8STLA+E333CiBlBdHl5Sffi8="
+  "fingerprint": "P9RPnugr0iU+wdRjGDW/3wm49Ye7RWFvD6PVTTiMajM="
 }

@@ -456,20 +456,52 @@ export class AppTheoryNamingContext extends Construct {
    * The derived-name artifact claims the context's account and region, and the
    * reservation index keys a name by its scope in that environment, so a stack
    * in another account or Region would reserve names it cannot create while the
-   * check refused or admitted them against the wrong environment. An
-   * env-agnostic stack (an unresolved account or region) is admitted: it
-   * deploys into the context's environment, which is what the artifact claims.
+   * check refused or admitted them against the wrong environment.
+   *
+   * The comparison runs on the value **after** `Stack.resolve`, because a
+   * stack's account or Region is not always a literal: `env: { region:
+   * Lazy.string(...) }` and any other token leave a placeholder on
+   * `Stack.region` that `Stack.resolve` turns into the concrete literal the
+   * stack will deploy into. Comparing the raw value would admit a token that
+   * resolves to another environment and let its rows claim the context's instead
+   * (SANITY-AT-N3-06, round 2), so:
+   *
+   * - a value that resolves to a concrete literal must equal the context's;
+   * - a value that is still unresolved after `Stack.resolve` — an `Aws` pseudo
+   *   parameter such as `{Ref: AWS::AccountId}`, or a value only known at deploy
+   *   time — is admitted: the stack is genuinely environment-agnostic and
+   *   deploys into the context's environment, which is what the artifact claims.
    */
   private assertSameEnvironment(resourceType: string, resource: IConstruct): void {
     const owner = Stack.of(resource);
-    const described = (value: string): string => (Token.isUnresolved(value) ? "unresolved" : value);
+    const account = AppTheoryNamingContext.resolvedEnvironmentValue(owner, owner.account);
+    const region = AppTheoryNamingContext.resolvedEnvironmentValue(owner, owner.region);
     const mismatches: string[] = [];
-    if (!Token.isUnresolved(owner.account) && owner.account !== this.account) mismatches.push("account");
-    if (!Token.isUnresolved(owner.region) && owner.region !== this.region) mismatches.push("region");
+    if (account !== undefined && account !== this.account) mismatches.push("account");
+    if (region !== undefined && region !== this.region) mismatches.push("region");
     if (mismatches.length === 0) return;
+    const described = (value: string | undefined): string => value ?? "unresolved";
     throw new Error(
-      `AppTheoryNamingContext cannot declare ${resourceType} in ${owner.node.path} because the stack resolves to account ${described(owner.account)} and region ${described(owner.region)}, while the naming context claims account ${this.account} and region ${this.region} (app ${this.app}, stage ${this.stage}); the derived-name artifact claims the context's environment, so every stack that declares through it must resolve to that environment or to no environment at all`,
+      `AppTheoryNamingContext cannot declare ${resourceType} in ${owner.node.path} because the stack resolves to account ${described(account)} and region ${described(region)}, while the naming context claims account ${this.account} and region ${this.region} (app ${this.app}, stage ${this.stage}); the derived-name artifact claims the context's environment, so every stack that declares through it must resolve to that environment or to no environment at all`,
     );
+  }
+
+  /**
+   * The concrete literal a stack's account or Region resolves to, or `undefined`
+   * when the value stays environment-dependent at synthesis.
+   *
+   * `Stack.resolve` turns a `Lazy` or any other token into the literal it
+   * produces. A pseudo parameter or a reference resolved in a stack without a
+   * concrete environment resolves to a CloudFormation intrinsic object instead
+   * of a string, which is why the result is typed rather than passed to
+   * `Token.isUnresolved` alone: an intrinsic is not a literal and the stack that
+   * carries it deploys wherever it is deployed.
+   */
+  private static resolvedEnvironmentValue(owner: Stack, value: string): string | undefined {
+    const resolved: unknown = owner.resolve(value);
+    if (typeof resolved === "string") return Token.isUnresolved(resolved) ? undefined : resolved;
+    if (typeof resolved === "number") return String(resolved);
+    return undefined;
   }
 
   /**

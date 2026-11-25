@@ -199,11 +199,35 @@ export declare class AppTheoryNamingContext extends Construct {
      * The derived-name artifact claims the context's account and region, and the
      * reservation index keys a name by its scope in that environment, so a stack
      * in another account or Region would reserve names it cannot create while the
-     * check refused or admitted them against the wrong environment. An
-     * env-agnostic stack (an unresolved account or region) is admitted: it
-     * deploys into the context's environment, which is what the artifact claims.
+     * check refused or admitted them against the wrong environment.
+     *
+     * The comparison runs on the value **after** `Stack.resolve`, because a
+     * stack's account or Region is not always a literal: `env: { region:
+     * Lazy.string(...) }` and any other token leave a placeholder on
+     * `Stack.region` that `Stack.resolve` turns into the concrete literal the
+     * stack will deploy into. Comparing the raw value would admit a token that
+     * resolves to another environment and let its rows claim the context's instead
+     * (SANITY-AT-N3-06, round 2), so:
+     *
+     * - a value that resolves to a concrete literal must equal the context's;
+     * - a value that is still unresolved after `Stack.resolve` — an `Aws` pseudo
+     *   parameter such as `{Ref: AWS::AccountId}`, or a value only known at deploy
+     *   time — is admitted: the stack is genuinely environment-agnostic and
+     *   deploys into the context's environment, which is what the artifact claims.
      */
     private assertSameEnvironment;
+    /**
+     * The concrete literal a stack's account or Region resolves to, or `undefined`
+     * when the value stays environment-dependent at synthesis.
+     *
+     * `Stack.resolve` turns a `Lazy` or any other token into the literal it
+     * produces. A pseudo parameter or a reference resolved in a stack without a
+     * concrete environment resolves to a CloudFormation intrinsic object instead
+     * of a string, which is why the result is typed rather than passed to
+     * `Token.isUnresolved` alone: an intrinsic is not a literal and the stack that
+     * carries it deploys wherever it is deployed.
+     */
+    private static resolvedEnvironmentValue;
     /**
      * The nearest stack above the context, if it has one. A context created above
      * the stacks has none: its artifact then appears on the stacks its

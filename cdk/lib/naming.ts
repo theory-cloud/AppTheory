@@ -350,6 +350,12 @@ const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 interface Rule {
   readonly kind: "dash" | "path" | "s3ar" | "log";
   readonly max: number;
+  /**
+   * The lower bound contract section 2 states for the type, when it states one.
+   * A row that states only an upper limit has none here, so the table stays the
+   * section 2 table and not a stricter private one.
+   */
+  readonly min?: number;
   readonly charset: string;
   readonly lead?: string;
 }
@@ -358,7 +364,10 @@ const RULES: { [type: string]: Rule } = {
   s3_bucket: { kind: "s3ar", max: 63, charset: "[a-z0-9-]" },
   s3_vector_bucket: { kind: "dash", max: 63, charset: "[a-z0-9-]" },
   s3_vector_index: { kind: "dash", max: 63, charset: "[a-z0-9-]" },
-  dynamodb_table: { kind: "dash", max: 255, charset: "[A-Za-z0-9_.-]" },
+  // Section 2: "255 (plain-name limit 3–255; the 1024 limit applies to the ARN
+  // form)". The lower bound is part of the row, so a fixed name of one or two
+  // characters is refused (SANITY-AT-N3-08).
+  dynamodb_table: { kind: "dash", max: 255, min: 3, charset: "[A-Za-z0-9_.-]" },
   lambda_function: { kind: "dash", max: 64, charset: "[A-Za-z0-9_-]" },
   sqs_queue: { kind: "dash", max: 80, charset: "[A-Za-z0-9_-]" },
   sns_topic: { kind: "dash", max: 256, charset: "[A-Za-z0-9_-]" },
@@ -406,11 +415,52 @@ const S3_TYPES = new Set(["s3_bucket", "s3_vector_bucket", "s3_vector_index"]);
 
 /**
  * Types whose fixed-name charset differs from the derived-name charset of their
- * section 2 row. A log group is the only one: its fixed names are absolute
- * service paths such as `/aws/lambda/{function name}` (section 3), so `/` is
- * part of the name even though no derived log-group name contains one.
+ * section 2 row. A log group is the only one: one of its two fixed shapes is the
+ * Lambda service path `/aws/lambda/{function name}` (section 3), so `/` is part
+ * of the charset even though no derived log-group name contains one. The shape
+ * rule below is what narrows it again: every other `/`-bearing log group is
+ * refused.
  */
 const FIXED_NAME_CHARSETS = new Map([["log_group", "[A-Za-z0-9_/-]"]]);
+
+/**
+ * The Lambda service log-group path lead (contract section 3).
+ */
+const LAMBDA_LOG_GROUP_LEAD = "/aws/lambda/";
+
+/**
+ * The KMS alias path lead (contract section 2).
+ */
+const KMS_ALIAS_LEAD = "alias/";
+
+/**
+ * An absolute SSM parameter path: a lead `/`, then at least one non-empty
+ * segment, with no empty segment anywhere (contract section 2).
+ */
+const SSM_PATH_RE = /^\/[^/]+(?:\/[^/]+)*$/;
+
+/**
+ * Whether a fixed log-group name is one of the two shapes contract section 3
+ * states, and nothing else:
+ *
+ * - a log-source name, `theorycloud_{namespace}_{app}_{stage}_{logical}`. Its
+ *   segments are joined with `_` precisely so the one grammar also satisfies
+ *   CloudFront's `[\w-]` destination, so such a name carries no `/` at all;
+ * - the Lambda service path `/aws/lambda/{function name}`, whose function name
+ *   satisfies the `lambda_function` row of section 2 (length and charset).
+ *
+ * Any other `/`-bearing name is refused: `arbitrary/path` is neither shape
+ * (SANITY-AT-N3-08).
+ */
+function isFixedLogGroupShape(name: string): boolean {
+  if (!name.includes("/")) return true;
+  if (!name.startsWith(LAMBDA_LOG_GROUP_LEAD)) return false;
+  const functionName = name.slice(LAMBDA_LOG_GROUP_LEAD.length);
+  const lambda = RULES.lambda_function;
+  if (functionName.length > lambda.max) return false;
+  if (lambda.min !== undefined && functionName.length < lambda.min) return false;
+  return new RegExp(`^(?:${lambda.charset})+$`).test(functionName);
+}
 
 /**
  * Types AWS keeps unique across Regions (contract section 11.1).
@@ -579,6 +629,7 @@ export class AppTheoryResourceNaming {
     const name = out.name as string;
     if (!new RegExp(`^(?:${rule.charset})+$`).test(name)) fail("charset");
     if (name.length > rule.max) fail("length");
+    if (rule.min !== undefined && name.length < rule.min) fail("length");
     if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) && !S3_EDGES_RE.test(name)) {
       fail("s3 start/end");
     }
@@ -600,15 +651,19 @@ export class AppTheoryResourceNaming {
 
   /**
    * Validate a physical name the contract fixes rather than derives against the
-   * character and shape rules of the type's section 2 row: charset, length, the
-   * S3 start/end rule, the SSM and KMS path rules (lead, depth, reserved
-   * prefixes) and the secret ARN-suffix rule. Throws on a name outside them.
+   * character and shape rules of the type's section 2 row: charset, the length
+   * range (**both** bounds when the row states a lower one, not only the upper),
+   * the S3 start/end rule, the path rules (lead, non-empty segments, depth,
+   * reserved prefixes, the `alias/aws/` namespace) and the secret ARN-suffix
+   * rule. Throws on a name outside them.
    *
    * This is the section 2 table, not a second one: it reads the same rule rows
    * the derivation uses. A `log_group` accepts `/` in addition to the section 2
-   * charset because its fixed names are absolute service paths — the Lambda
-   * group `/aws/lambda/{function name}` of section 3 — and section 3 reserves
-   * only the `aws/` prefix, which this still refuses.
+   * charset, but only for the two fixed shapes contract section 3 states: a
+   * log-source name (which carries no `/` at all, because section 3 joins its
+   * segments with `_`) or the Lambda service path `/aws/lambda/{function name}`,
+   * whose function name satisfies the `lambda_function` row. Any other
+   * `/`-bearing log group is refused (SANITY-AT-N3-08).
    */
   public static validatePhysicalName(resourceType: string, name: string): void {
     const rule = namingRule(resourceType);
@@ -621,6 +676,9 @@ export class AppTheoryResourceNaming {
     if (name.length > rule.max) {
       fail(`a fixed ${resourceType} name must be at most ${rule.max} characters, got ${name.length}`);
     }
+    if (rule.min !== undefined && name.length < rule.min) {
+      fail(`a fixed ${resourceType} name must be at least ${rule.min} characters (contract section 2), got ${name.length}`);
+    }
     if (rule.lead !== undefined && !name.startsWith(rule.lead)) {
       fail(`a fixed ${resourceType} name must start with ${JSON.stringify(rule.lead)} (contract section 2), got ${quoted}`);
     }
@@ -631,6 +689,13 @@ export class AppTheoryResourceNaming {
       fail(`a fixed secret name must not end with a hyphen and six characters (contract section 2), got ${quoted}`);
     }
     if (resourceType === "ssm_parameter") {
+      // A path name carries at least one non-empty segment after its lead `/`,
+      // and no empty segment: `/` and `/a//b` name nothing AWS can create.
+      if (!SSM_PATH_RE.test(name)) {
+        fail(
+          `a fixed ssm_parameter name must carry at least one non-empty segment after its lead "/" and no empty segment (contract section 2), got ${quoted}`,
+        );
+      }
       if ((name.match(/\//g)?.length ?? 0) > 15) {
         fail(`a fixed ssm_parameter name must have at most 15 levels (contract section 2), got ${quoted}`);
       }
@@ -638,11 +703,25 @@ export class AppTheoryResourceNaming {
         fail(`a fixed ssm_parameter name must not begin with aws or ssm (contract section 2), got ${quoted}`);
       }
     }
-    if (resourceType === "kms_alias" && name.startsWith("alias/aws/")) {
-      fail(`a fixed kms_alias name must not be in the alias/aws/ namespace (contract section 2), got ${quoted}`);
+    if (resourceType === "kms_alias") {
+      // `alias/` alone names no alias: the name after the lead is the alias.
+      if (name.length <= KMS_ALIAS_LEAD.length) {
+        fail(
+          `a fixed kms_alias name must carry a non-empty name after its ${JSON.stringify(KMS_ALIAS_LEAD)} lead (contract section 2), got ${quoted}`,
+        );
+      }
+      if (name.startsWith("alias/aws/")) {
+        fail(`a fixed kms_alias name must not be in the alias/aws/ namespace (contract section 2), got ${quoted}`);
+      }
     }
-    if (resourceType === "log_group" && name.startsWith("aws/")) {
-      fail(`a fixed log_group name must not begin with aws/ (contract section 3), got ${quoted}`);
+    if (resourceType === "log_group") {
+      if (name.startsWith("aws/")) {
+        fail(`a fixed log_group name must not begin with aws/ (contract section 3), got ${quoted}`);
+      } else if (!isFixedLogGroupShape(name)) {
+        fail(
+          `a fixed log_group name must be either a section 3 log-source name (no "/") or the Lambda service path ${JSON.stringify(LAMBDA_LOG_GROUP_LEAD)} followed by a name that satisfies the lambda_function row (contract section 3), got ${quoted}`,
+        );
+      }
     }
   }
 

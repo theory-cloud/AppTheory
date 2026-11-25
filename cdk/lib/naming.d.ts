@@ -328,15 +328,19 @@ export declare class AppTheoryResourceNaming {
     static namingScope(resourceType: string): AppTheoryNamingScope;
     /**
      * Validate a physical name the contract fixes rather than derives against the
-     * character and shape rules of the type's section 2 row: charset, length, the
-     * S3 start/end rule, the SSM and KMS path rules (lead, depth, reserved
-     * prefixes) and the secret ARN-suffix rule. Throws on a name outside them.
+     * character and shape rules of the type's section 2 row: charset, the length
+     * range (**both** bounds when the row states a lower one, not only the upper),
+     * the S3 start/end rule, the path rules (lead, non-empty segments, depth,
+     * reserved prefixes, the `alias/aws/` namespace) and the secret ARN-suffix
+     * rule. Throws on a name outside them.
      *
      * This is the section 2 table, not a second one: it reads the same rule rows
      * the derivation uses. A `log_group` accepts `/` in addition to the section 2
-     * charset because its fixed names are absolute service paths — the Lambda
-     * group `/aws/lambda/{function name}` of section 3 — and section 3 reserves
-     * only the `aws/` prefix, which this still refuses.
+     * charset, but only for the two fixed shapes contract section 3 states: a
+     * log-source name (which carries no `/` at all, because section 3 joins its
+     * segments with `_`) or the Lambda service path `/aws/lambda/{function name}`,
+     * whose function name satisfies the `lambda_function` row. Any other
+     * `/`-bearing log group is refused (SANITY-AT-N3-08).
      */
     static validatePhysicalName(resourceType: string, name: string): void;
     /**

@@ -2460,3 +2460,253 @@ test("G5: a fixed name naming a type the contract does not state is still refuse
     /no stated naming scope/,
   );
 });
+
+// ---- r4 rework r3: the resolved environment and the section 2 rows ----------
+//
+// Each test below pins one defect the round-3 gate found. They are written to
+// fail on the round-2 tree and pass here: SANITY-AT-N3-06 (H1, the environment
+// check compared only non-token values) and SANITY-AT-N3-08 / ADV-N3-R2-01 (H2,
+// the fixed-name check enforced only some of the section 2 rows).
+
+test("H1: a stack whose account token resolves to another account is refused", () => {
+  // `Away` claims no literal account: `Stack.account` is a token whose resolved
+  // value is 111122223333. Comparing the unresolved token admitted the stack and
+  // its rows claimed the context's account (SANITY-AT-N3-06).
+  assert.throws(
+    () =>
+      multiStack((app) => {
+        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
+        const away = new cdk.Stack(app, "Away", {
+          env: { account: cdk.Lazy.string({ produce: () => "111122223333" }), region: LAB_ENV.region },
+        });
+        const context = shopContext(home);
+        shopFunction(away, "Worker", "worker", context);
+        app.synth();
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(message, /cannot declare lambda_function in Away/);
+      assert.match(message, /account 111122223333/);
+      assert.match(message, /account 998115851393/);
+      return true;
+    },
+  );
+});
+
+test("H1: a stack whose region token resolves to another region is refused", () => {
+  // The observed case: a token Region resolving to us-west-2 synthesized with
+  // rows claiming us-east-1 and names the installer would reserve in the wrong
+  // Region.
+  assert.throws(
+    () =>
+      multiStack((app) => {
+        const home = new cdk.Stack(app, "Home", { env: LAB_ENV });
+        const away = new cdk.Stack(app, "Away", {
+          env: { account: LAB_ENV.account, region: cdk.Lazy.string({ produce: () => "us-west-2" }) },
+        });
+        const context = shopContext(home);
+        shopFunction(away, "Worker", "worker", context);
+        app.synth();
+      }),
+    (error) => {
+      const message = String(error.message);
+      assert.match(message, /cannot declare lambda_function in Away/);
+      assert.match(message, /region us-west-2/);
+      assert.match(message, /region us-east-1/);
+      assert.match(message, /app shop, stage lab/);
+      return true;
+    },
+  );
+});
+
+test("H1: a stack whose tokens resolve to the context's own environment is admitted", () => {
+  // The rule is the resolved value, not "any token is refused".
+  const app = multiStack((scope) => {
+    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
+    const twin = new cdk.Stack(scope, "Twin", {
+      env: {
+        account: cdk.Lazy.string({ produce: () => LAB_ENV.account }),
+        region: cdk.Lazy.string({ produce: () => LAB_ENV.region }),
+      },
+    });
+    const context = shopContext(home);
+    shopFunction(twin, "Worker", "worker", context);
+  });
+  const documents = metadataDocuments(app.synth().getStackByName("Twin"));
+  assert.equal(documents.length, 1);
+  assert.deepEqual(documents[0].entries.map((row) => row.type).sort(), [
+    "iam_role",
+    "lambda_function",
+    "log_group",
+  ]);
+});
+
+test("H1: a stack whose environment never resolves is admitted and the artifact claims the context's environment", () => {
+  // `Aws.ACCOUNT_ID` and `Aws.REGION` resolve to CloudFormation intrinsics, not
+  // literals: the stack deploys into whatever environment it is deployed into,
+  // so it is genuinely env-agnostic and stays admitted.
+  const app = multiStack((scope) => {
+    const home = new cdk.Stack(scope, "Home", { env: LAB_ENV });
+    const agnostic = new cdk.Stack(scope, "Agnostic", {
+      env: { account: cdk.Aws.ACCOUNT_ID, region: cdk.Aws.REGION },
+    });
+    const context = shopContext(home);
+    shopFunction(agnostic, "Worker", "worker", context);
+  });
+  const documents = metadataDocuments(app.synth().getStackByName("Agnostic"));
+  assert.equal(documents.length, 1);
+  assert.equal(documents[0].entries.length, 3);
+  assert.deepEqual(documents[0].context, {
+    namespace: "theorycloud",
+    app: "shop",
+    stage: "lab",
+    account: "998115851393",
+    region: "us-east-1",
+  });
+});
+
+test("H2: a fixed dynamodb_table name under the section 2 minimum length fails synthesis", () => {
+  // Section 2 states the plain-name limit as 3–255. Only the upper bound was
+  // enforced, so `ab` and `a` entered the artifact (SANITY-AT-N3-08).
+  for (const name of ["ab", "a"]) {
+    assert.throws(
+      () =>
+        synth((stack) => {
+          const context = shopContext(stack);
+          const table = new cdk.CfnResource(stack, "Fixed", {
+            type: "AWS::DynamoDB::Table",
+            properties: { TableName: name },
+          });
+          context.declareFixedName("dynamodb_table", name, table);
+        }),
+      /must be at least 3 characters/,
+      name,
+    );
+  }
+});
+
+test("H2: a fixed log_group name that is neither a log source nor the Lambda service path fails synthesis", () => {
+  // The `/` charset extension was applied to every log_group name, so any
+  // path-shaped string was admitted. Section 3 states two shapes only.
+  const cases = [
+    ["arbitrary/path", /must be either a section 3 log-source name/],
+    ["/aws/shop-lab", /must be either a section 3 log-source name/],
+    ["/aws/lambda/", /must be either a section 3 log-source name/],
+    ["/aws/lambda/worker/suffix", /must be either a section 3 log-source name/],
+    [`/aws/lambda/${"a".repeat(65)}`, /must be either a section 3 log-source name/],
+  ];
+  for (const [name, pattern] of cases) {
+    assert.throws(
+      () => apptheory.AppTheoryResourceNaming.validatePhysicalName("log_group", name),
+      pattern,
+      name,
+    );
+  }
+});
+
+test("H2: a fixed ssm_parameter name without a non-empty segment after its lead fails synthesis", () => {
+  const cases = ["/", "//", "/a//b", "/a/"];
+  for (const name of cases) {
+    assert.throws(
+      () => apptheory.AppTheoryResourceNaming.validatePhysicalName("ssm_parameter", name),
+      /at least one non-empty segment after its lead/,
+      name,
+    );
+  }
+});
+
+test("H2: a fixed kms_alias name without a name after alias/ fails synthesis", () => {
+  assert.throws(
+    () => apptheory.AppTheoryResourceNaming.validatePhysicalName("kms_alias", "alias/"),
+    /must carry a non-empty name after its "alias\/" lead/,
+  );
+});
+
+test("H2: every section 2 length limit is enforced at both ends", () => {
+  // The audit of the section 2 table: each row's upper limit is enforced, and
+  // the one row that also states a lower limit enforces it. A row that states
+  // no lower limit has none, so the check is the contract's and not a stricter
+  // private one.
+  const fill = (length) => "a".repeat(length);
+  const rows = [
+    ["s3_bucket", 63, null, fill],
+    ["s3_vector_bucket", 63, null, fill],
+    ["s3_vector_index", 63, null, fill],
+    ["dynamodb_table", 255, 3, fill],
+    ["lambda_function", 64, null, fill],
+    ["sqs_queue", 80, null, fill],
+    ["sns_topic", 256, null, fill],
+    ["secret", 512, null, fill],
+    ["ssm_parameter", 900, null, (length) => `/${"a".repeat(length - 1)}`],
+    ["kms_alias", 256, null, (length) => `alias/${"a".repeat(length - 6)}`],
+    ["event_bus", 256, null, fill],
+    ["event_rule", 64, null, fill],
+    ["schedule", 64, null, fill],
+    ["alarm", 255, null, fill],
+    ["dashboard", 255, null, fill],
+    ["iam_role", 64, null, fill],
+    ["iam_managed_policy", 128, null, fill],
+    ["state_machine", 80, null, fill],
+    ["codebuild_project", 150, null, fill],
+    ["api_rest", 128, null, fill],
+    ["api_http", 128, null, fill],
+    ["api_websocket", 128, null, fill],
+    ["log_delivery_source", 60, null, fill],
+    ["log_delivery_destination", 60, null, fill],
+    ["log_group", 512, null, fill],
+  ];
+  const naming = apptheory.AppTheoryResourceNaming;
+  for (const [type, max, min, make] of rows) {
+    assert.doesNotThrow(() => naming.validatePhysicalName(type, make(max)), `${type} at ${max}`);
+    assert.throws(
+      () => naming.validatePhysicalName(type, make(max + 1)),
+      /must be at most/,
+      `${type} at ${max + 1}`,
+    );
+    if (min !== null) {
+      assert.doesNotThrow(() => naming.validatePhysicalName(type, make(min)), `${type} at ${min}`);
+      assert.throws(
+        () => naming.validatePhysicalName(type, make(min - 1)),
+        /must be at least/,
+        `${type} at ${min - 1}`,
+      );
+    }
+  }
+});
+
+test("H2: the fixed names section 3 and section 6 state stay admitted", () => {
+  // The two fixed names AppTheory itself declares, the section 3 log-source
+  // shape, and the path shapes the section 2 rows lead with, all stay admitted:
+  // the restriction narrows the rows, it does not replace them.
+  const naming = apptheory.AppTheoryResourceNaming;
+  naming.validatePhysicalName("log_group", "/aws/lambda/shop-lab-worker");
+  naming.validatePhysicalName("log_group", `/aws/lambda/${"a".repeat(64)}`);
+  naming.validatePhysicalName("log_group", "theorycloud_theorycloud_shop_lab_logs_runtime_worker");
+  naming.validatePhysicalName("ssm_parameter", "/theorycloud/visibility/shop/lab/manifest");
+  naming.validatePhysicalName("ssm_parameter", "/shop/lab/parameter");
+  naming.validatePhysicalName("kms_alias", "alias/shop/lab/key");
+  naming.validatePhysicalName("dynamodb_table", "shop-lab-events");
+
+  // And they still reach the artifact through the constructs that create them.
+  const { documents, template } = synthAssembly((stack) => {
+    const context = shopContext(stack);
+    shopFunction(stack, "Worker", "worker", context);
+    new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+      namingContext: context,
+      readerPrincipalArn: "arn:aws:iam::123456789012:role/cloud-keeper",
+      rules: {},
+    });
+  });
+  const groups = namedResourcesOfType(template, "AWS::Logs::LogGroup");
+  assert.ok(
+    groups.some((group) => group.properties.LogGroupName === "/aws/lambda/shop-lab-worker"),
+    JSON.stringify(groups.map((group) => group.properties.LogGroupName)),
+  );
+  const parameters = namedResourcesOfType(template, "AWS::SSM::Parameter");
+  assert.equal(parameters[0].properties.Name, "/theorycloud/visibility/shop/lab/manifest");
+  assert.equal(documents[0].entries.filter((row) => row.type === "ssm_parameter").length, 1);
+  // The legacy logging profile of this context declares the Lambda service
+  // group only; the standard profile's `logs/runtime/{logical}` group is the
+  // other section 3 shape and is declared by the standard-profile tests.
+  assert.equal(documents[0].entries.filter((row) => row.type === "log_group").length, 1);
+});
