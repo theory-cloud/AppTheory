@@ -15,6 +15,13 @@
 // the asset before it invokes the handler. A handler that only works because
 // the Lambda runtime happens to provide a package would fail here.
 //
+// The closure is staged at the paths the project installed it at, so the proof
+// also carries a dependency tree where one package keeps a nested copy of a
+// shared package two others resolve from the project root. A bundler that
+// deduped those by package name emitted an asset that resolved one of them to
+// the wrong copy and threw `TypeError: require(...).v2 is not a function`; this
+// project asserts each dependent's resolution and what the handler loads.
+//
 // argv: <runtime tarball> <python wheel>
 // stdin/stdout: nothing is interactive; the gate is the process exit code.
 
@@ -131,8 +138,16 @@ function writeNodeProject(projectRoot) {
     path.join(projectRoot, "src", "handler.mjs"),
     [
       'import { buildApp } from "./app.mjs";',
+      'import addonA from "review-addon-a";',
+      'import addonB from "review-addon-b";',
+      'import addonC from "review-addon-c";',
       "",
       "const app = buildApp();",
+      "",
+      "// What the asset's own copies resolved to, for the proof below. A revision of",
+      "// the bundler that deduped these by package name loaded and then threw",
+      "// `TypeError: require(...).v2 is not a function`.",
+      "export const resolved = { a: addonA, b: addonB, c: addonC };",
       "",
       "export const handler = async (event, context) => app.handleLambda(event, context);",
       "",
@@ -143,6 +158,41 @@ function writeNodeProject(projectRoot) {
     encoding: "utf8",
   });
   assert.equal(installed.status, 0, `bundling: npm install failed in ${projectRoot}: ${installed.stderr}`);
+  writeResolutionLayout(projectRoot);
+}
+
+// One dependency keeps its own nested copy of a package two other dependencies
+// share from the project root. `npm ls` reports both shared edges (the second
+// one deduped) and the project's own handler loads. The packages are written
+// straight into the installed tree, which is the layout `npm install` leaves
+// behind, so the proof needs no registry access.
+function writeResolutionLayout(projectRoot) {
+  const install = (dir, name, version, dependencies, code) => {
+    const target = path.join(dir, "node_modules", name);
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(
+      path.join(target, "package.json"),
+      `${JSON.stringify({ name, version, dependencies, main: "index.cjs" }, null, 2)}\n`,
+    );
+    fs.writeFileSync(path.join(target, "index.cjs"), `${code}\n`);
+    return target;
+  };
+  const addonA = install(projectRoot, "review-addon-a", "1.0.0", { "review-shared": "1.0.0" },
+    'module.exports = require("review-shared").v1()');
+  install(projectRoot, "review-addon-b", "1.0.0", { "review-shared": "2.0.0" },
+    'module.exports = require("review-shared").v2()');
+  install(projectRoot, "review-addon-c", "1.0.0", { "review-shared": "2.0.0" },
+    'module.exports = require("review-shared").v2()');
+  install(projectRoot, "review-shared", "2.0.0", {}, "module.exports.v2 = () => 2");
+  install(addonA, "review-shared", "1.0.0", {}, "module.exports.v1 = () => 1");
+  const manifestPath = path.join(projectRoot, "package.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  Object.assign(manifest.dependencies, {
+    "review-addon-a": "1.0.0",
+    "review-addon-b": "1.0.0",
+    "review-addon-c": "1.0.0",
+  });
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 function writePythonProject(projectRoot) {
@@ -279,7 +329,22 @@ assert.ok(s3.S3Client, "@aws-sdk/client-s3 did not load from the asset");
 const tabletheory = await import("@theory-cloud/tabletheory-ts");
 assert.ok(Object.keys(tabletheory).length > 0, "@theory-cloud/tabletheory-ts did not load from the asset");
 
-const { handler } = await import("./handler.mjs");
+const { createRequire } = await import("node:module");
+const { pathToFileURL } = await import("node:url");
+
+// Each dependent must still resolve the copy it resolved in the project: the
+// nested one for review-addon-a, the shared root one for review-addon-b and
+// review-addon-c. This is Node's own resolution, asked from inside the asset.
+const assetDir = process.cwd();
+const cjs = (from) => createRequire(new URL(from, pathToFileURL(assetDir + "/").href));
+const sharedOf = (addon) =>
+  cjs("node_modules/" + addon + "/index.cjs").resolve("review-shared").replace(assetDir + "/", "");
+assert.equal(sharedOf("review-addon-a"), "node_modules/review-addon-a/node_modules/review-shared/index.cjs");
+assert.equal(sharedOf("review-addon-b"), "node_modules/review-shared/index.cjs");
+assert.equal(sharedOf("review-addon-c"), "node_modules/review-shared/index.cjs");
+
+const { handler, resolved } = await import("./handler.mjs");
+assert.deepEqual(resolved, { a: 1, b: 2, c: 2 }, "the asset resolved " + JSON.stringify(resolved));
 const ok = await handler(${JSON.stringify(REQUEST)}, { awsRequestId: "bundling-proof" });
 assert.equal(ok.statusCode, 200, "expected 200, got " + ok.statusCode);
 const body = JSON.parse(ok.body);
@@ -295,7 +360,9 @@ const missing = await handler(
 );
 assert.equal(missing.statusCode, 404, "expected the fail-closed 404 envelope, got " + missing.statusCode);
 
-console.log(JSON.stringify({ status: ok.statusCode, body: body.message, missing: missing.statusCode }));
+console.log(
+  JSON.stringify({ status: ok.statusCode, body: body.message, missing: missing.statusCode, resolved }),
+);
 `,
   ],
   { cwd: nodeAsset.dir, encoding: "utf8" },
@@ -350,7 +417,8 @@ fs.rmSync(workDir, { recursive: true, force: true });
 
 console.log(
   `consumer-install(cdk bundling): ${nodeRuntime.name} asset ${nodeAsset.name} loaded and invoked under node ${process.versions.node} ` +
-    `-> ${nodeResult.status}/${nodeResult.body}, 404 -> ${nodeResult.missing}`,
+    `-> ${nodeResult.status}/${nodeResult.body}, 404 -> ${nodeResult.missing}, ` +
+    `nested/shared resolution -> a=${nodeResult.resolved.a} b=${nodeResult.resolved.b} c=${nodeResult.resolved.c}`,
 );
 console.log(
   `consumer-install(cdk bundling): ${pythonRuntime.name} asset ${pythonAsset.name} loaded and invoked under Python ${pythonMicro} ` +
