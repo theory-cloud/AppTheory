@@ -1018,6 +1018,192 @@ for (const layout of [
   });
 }
 
+// ---------------------------------------------------------------------------
+// Round 5: the two layouts the round-4 reviewers reproduced, refused by name.
+//
+// Both are shapes an asset cannot reproduce, and both slipped through the round-4
+// check because it asked Node where a declared edge's *package directory* is and
+// never where the *file* behind it is. Neither is a layout `npm install`
+// produces, but an author can build either by hand and a published tarball can
+// ship the second, so they are refused at synth with the package and the path
+// named — never staged into an asset that loads a different copy from the one the
+// project loaded, or no copy at all.
+
+// ADV-AT-R1-R4-01: a `node_modules` below a package root. `vend` declares
+// `leftpad`, and its own `lib/node_modules` carries the first match Node reaches
+// from `lib/util.cjs`. Copying a package never brings a subtree of nested
+// installs with it, so the asset would load whichever `leftpad` its own walk
+// reaches — the hoisted `0.0.1` — while the project loads `9.9.9-vendored`.
+function buildVendoredSubtreeLayout(root) {
+  writePackage(root, {
+    name: "project",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: { vend: "file:./vendor/x", leftpad: "0.0.1" },
+  });
+  writeModule(
+    path.join(root, "vendor", "x"),
+    { name: "vend", version: "1.0.0", dependencies: { leftpad: "^0.0.1" } },
+    'module.exports.self = "vend@1.0.0";\n' +
+      'module.exports.fromLib = require("./lib/util.cjs").v();\n' +
+      'module.exports.fromRoot = require("leftpad/package.json").version;',
+  );
+  fs.mkdirSync(path.join(root, "vendor", "x", "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "vendor", "x", "lib", "util.cjs"),
+    'module.exports = { v: () => require("leftpad/package.json").version };\n',
+  );
+  // The copy the project's walk reaches from `lib/util.cjs` ...
+  writeModule(
+    path.join(root, "vendor", "x", "lib", "node_modules", "leftpad"),
+    { name: "leftpad", version: "9.9.9-vendored" },
+    'module.exports = { version: () => "9.9.9-vendored" };',
+  );
+  // ... and the copy npm hoists to the project root, which is the one a staged
+  // copy of `vend` would reach.
+  installPackage(root, "leftpad", "0.0.1", { code: 'module.exports = { version: () => "0.0.1" }' });
+  linkSlot(root, "vend", path.join(root, "vendor", "x"));
+  writeHandler(root, [
+    'import { createRequire } from "node:module";',
+    "const req = createRequire(import.meta.url);",
+    'const vend = req("vend");',
+    "",
+    "export const handler = () => ({ self: vend.self, fromLib: vend.fromLib, fromRoot: vend.fromRoot });",
+  ]);
+}
+
+// SANITY-AT-R1-R4-01: a workspace package whose `main` leaves its own directory.
+// The project loads `build/index.cjs` from the monorepo root; the asset carries
+// the package's manifest but no such file, so the handler cannot load at all.
+function buildEntryOutsidePackageLayout(root) {
+  writePackage(root, {
+    name: "review-monorepo",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    workspaces: ["packages/*"],
+    dependencies: { "@review/build-entry": "1.0.0" },
+  });
+  writePackage(path.join(root, "packages", "entry"), {
+    name: "@review/build-entry",
+    version: "1.0.0",
+    main: "../../../build/index.cjs",
+  });
+  fs.mkdirSync(path.join(root, "build"), { recursive: true });
+  fs.writeFileSync(path.join(root, "build", "index.cjs"), 'module.exports = "workspace build output";\n');
+  linkSlot(root, path.join("@review", "build-entry"), path.join(root, "packages", "entry"));
+  writeHandler(root, [
+    'import { createRequire } from "node:module";',
+    "const req = createRequire(import.meta.url);",
+    "",
+    'export const handler = () => ({ built: req("@review/build-entry") });',
+  ]);
+}
+
+for (const layout of [
+  {
+    id: "adv-vendored-subtree",
+    label: "a node_modules below a package root",
+    build: buildVendoredSubtreeLayout,
+    // What the project itself loads, before any bundling: the vendored copy.
+    project: { self: "vend@1.0.0", fromLib: "9.9.9-vendored", fromRoot: "0.0.1" },
+    refusal:
+      /the staged package vend at node_modules\/vend carries node_modules\/vend\/lib\/node_modules\/leftpad, which the asset does not carry/,
+  },
+  {
+    id: "sanity-entry-outside-package",
+    label: "a package whose entry point leaves its own directory",
+    build: buildEntryOutsidePackageLayout,
+    project: { built: "workspace build output" },
+    refusal:
+      /the staged package @review\/build-entry at node_modules\/@review\/build-entry declares main "\.\.\/\.\.\/\.\.\/build\/index\.cjs", which resolves outside its own directory/,
+  },
+]) {
+  test(`the CDK refuses ${layout.label} instead of emitting a different asset, naming the package and path`, () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `apptheory-bundle-${layout.id}-`));
+    const root = path.join(workspace, "project");
+    const outdir = path.join(workspace, `cdk.out-${layout.id}`);
+    try {
+      layout.build(root);
+      // The layout is real: the project loads it, under every interpreter.
+      const project = invokeHandlerEverywhere(path.join(root, "src", "handler.mjs"), root);
+      assert.deepEqual(
+        project.map((entry) => entry.resolved),
+        project.map(() => layout.project),
+        `the project must load ${JSON.stringify(layout.project)}`,
+      );
+
+      // Synth refuses, naming the package and the path ...
+      assert.throws(
+        () => synthNodeAsset(root, workspace, layout.id),
+        { message: layout.refusal },
+        "a layout the asset cannot reproduce must refuse the synth, not stage it",
+      );
+      // ... and the CDK emits no asset for a deployment to upload. (A refused
+      // bundling leaves its own `asset.<hash>-building` work directory behind;
+      // an emitted asset is an `asset.<hash>`.)
+      const emitted = fs.existsSync(outdir)
+        ? fs.readdirSync(outdir).filter((entry) => /^asset\.[0-9a-f]+$/.test(entry))
+        : [];
+      assert.deepEqual(emitted, [], `the refused synth emitted ${JSON.stringify(emitted)}`);
+
+      // The bundling module refuses the same layout directly, so the refusal is
+      // not an artifact of the construct.
+      assert.throws(() => tsBundle().stage(root, path.join(workspace, "direct")), {
+        message: layout.refusal,
+      });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
+
+// The control for both refusals: the same two package shapes, without the
+// unfaithful part, still bundle and still load exactly what the project loads —
+// so the refusal is about the layout and not about the package names.
+test("the CDK still bundles the supported form of both refused layouts", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-refusal-control-"));
+  try {
+    // `vend` with its dependency hoisted to the project root instead of vendored
+    // below its own root.
+    const vendored = path.join(workspace, "vendored");
+    buildVendoredSubtreeLayout(vendored);
+    fs.rmSync(path.join(vendored, "vendor", "x", "lib", "node_modules"), { recursive: true, force: true });
+    const vendAsset = synthNodeAsset(vendored, workspace, "control-hoisted");
+    const vendProject = invokeHandlerEverywhere(path.join(vendored, "src", "handler.mjs"), vendored);
+    const vendStaged = invokeHandlerEverywhere(path.join(vendAsset, "handler.mjs"), vendAsset);
+    assert.deepEqual(
+      vendStaged.map((entry) => entry.resolved),
+      vendProject.map((entry) => entry.resolved),
+    );
+    assert.deepEqual(vendProject.map((entry) => entry.resolved)[0], {
+      self: "vend@1.0.0",
+      fromLib: "0.0.1",
+      fromRoot: "0.0.1",
+    });
+
+    // `@review/build-entry` with its entry point inside its own directory.
+    const entry = path.join(workspace, "entry");
+    buildEntryOutsidePackageLayout(entry);
+    writePackage(path.join(entry, "packages", "entry"), {
+      name: "@review/build-entry",
+      version: "1.0.0",
+      main: "index.cjs",
+    });
+    fs.writeFileSync(path.join(entry, "packages", "entry", "index.cjs"), 'module.exports = "workspace build output";\n');
+    const entryAsset = synthNodeAsset(entry, workspace, "control-entry-inside");
+    const entryProject = invokeHandlerEverywhere(path.join(entry, "src", "handler.mjs"), entry);
+    const entryStaged = invokeHandlerEverywhere(path.join(entryAsset, "handler.mjs"), entryAsset);
+    assert.deepEqual(
+      entryStaged.map((entry) => entry.resolved),
+      entryProject.map((entry) => entry.resolved),
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 // Part 1 of the round-4 change: acceptance is Node's resolver on the staged
 // tree. Round 3's phantom slot, injected into the real bundling path, must
 // refuse the synth and name the edge rather than emit an asset that cannot load.
