@@ -1,0 +1,66 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-cdk-go-drift.sh"
+      ],
+      "durationSeconds": 17.354,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-25T16:10:04Z",
+      "id": "cdk-go-drift",
+      "inputsDigest": "sha256:02cdeee220fc2d96dd8d146559e8a8d4c9388eae7fa947c6e6e80035b9571359",
+      "logDigest": "sha256:2da4112b9fe7d2aa3b97d4d893dc9ed5a3c3ffbc7db7d99a50cfdc924d37a57c",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261125T160947Z-69402.log",
+      "reused": false,
+      "startedAt": "2026-11-25T16:09:47Z"
+    }
+  ],
+  "consumed": [],
+  "description": "CDK Go bindings regeneration equality",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v26.13.1",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.15.2"
+  },
+  "gate": "cdk-go-drift",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "node26-py3.15",
+  "reason": "",
+  "recordedAt": "2026-11-25T16:10:04Z",
+  "releaseOnly": {
+    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "fileCount": 537,
+    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "version": "7.5.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:ec2b225337269be0040a45e3d0a20c6c073ba4d2892eb000e8069ff050eaca6b",
+    "fileCount": 653,
+    "paths": [
+      "cdk/",
+      "cdk-go/",
+      "scripts/update-cdk-generated.sh",
+      "scripts/verify-cdk-go-drift.sh",
+      "scripts/verify-cdk-go-major-version.sh",
+      "scripts/lib/canonicalize-jsii-tarballs.py"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:2f516487e445ff7b08505ba9a38514b31cec3c509519eb44a07092ca2023b5a7",
+    "fileCount": 2788
+  },
+  "verdict": "PASS"
+}
