@@ -26,7 +26,11 @@ const ASSET_OUTPUT = "/asset-output";
 const REQUIREMENTS = "requirements.txt";
 const PROJECT_FILES = ["app.py", "handler.py"];
 
-const PYTHON = process.env.APPTHEORY_PYTHON ?? "python3";
+// The interpreter that installs the requirements, resolved when the bundle runs
+// so the caller can pin it (`APPTHEORY_PYTHON`) to the line it is proving.
+function interpreter() {
+  return process.env.APPTHEORY_PYTHON ?? "python3";
+}
 
 // Install the declared runtime dependencies and the handler sources at the root
 // of the asset, so the handler imports them exactly as it does in the project.
@@ -41,7 +45,7 @@ function stage(projectRoot, outputDir) {
   fs.rmSync(output, { recursive: true, force: true });
   fs.mkdirSync(output, { recursive: true });
 
-  execFileSync(PYTHON, ["-m", "pip", "install", "-r", requirements, "-t", output], {
+  execFileSync(interpreter(), ["-m", "pip", "install", "-r", requirements, "-t", output], {
     stdio: "inherit",
   });
 
@@ -66,7 +70,7 @@ function assetBundling(runtime, projectRoot) {
     command: [
       "bash",
       "-c",
-      `${PYTHON} -m pip install -r ${path.posix.join(ASSET_INPUT, REQUIREMENTS)} -t ${ASSET_OUTPUT}` +
+      `${interpreter()} -m pip install -r ${path.posix.join(ASSET_INPUT, REQUIREMENTS)} -t ${ASSET_OUTPUT}` +
         ` && cp ${PROJECT_FILES.map((file) => path.posix.join(ASSET_INPUT, file)).join(" ")} ${ASSET_OUTPUT}/`,
     ],
     local: {

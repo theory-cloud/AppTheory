@@ -5,12 +5,17 @@
 // dependencies — the AWS SDK v3 clients and `@theory-cloud/tabletheory-ts` — so
 // an asset that carries only the runtime package loads and then fails with
 // `ERR_MODULE_NOT_FOUND`. The Lambda Node.js runtime provides `@aws-sdk/*`, but
-// it does not provide `@theory-cloud/tabletheory-ts`, and a bundle that depends
-// on the runtime's SDK copy silently runs a different SDK version than the one
-// the project resolved. This module therefore stages the project's complete
-// *production* dependency closure, resolved out of the project's own installed
-// tree: what you tested is what the asset contains, and neither the container
-// bundler nor the local bundler needs the network.
+// it does not provide `@theory-cloud/tabletheory-ts`, and a bundle that leans on
+// the runtime's SDK copy silently runs a different SDK version than the one the
+// project resolved. This module therefore stages the project's complete
+// *production* dependency closure: what you tested is what the asset contains.
+//
+// The closure is the project's declared `dependencies` (and `optionalDependencies`)
+// followed transitively, resolved the way Node itself resolves them — each
+// package's own directory first, then its parent's `node_modules`, up to the
+// project root — and staged at the path that same walk would find them at inside
+// the asset. Development dependencies and a linked package's development tree
+// are never part of it, because they are not part of what the handler imports.
 //
 // The file is plain CommonJS with no dependencies, because it runs twice: from
 // the CDK app during local bundling, and inside the Node bundling image where
@@ -19,7 +24,6 @@
 
 "use strict";
 
-const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -32,74 +36,114 @@ const ASSET_OUTPUT = "/asset-output";
 const SOURCE_DIR = "src";
 const PROJECT_FILES = ["package.json"];
 
-const NPM = process.env.APPTHEORY_NPM ?? "npm";
+// The manifest fields that describe what the handler imports at run time.
+const RUNTIME_DEPENDENCIES = ["dependencies", "optionalDependencies"];
 
-// The package a path inside an installed tree belongs to: the segments after the
-// last `node_modules`, which keeps the scope for a scoped package.
-function packageName(packagePath) {
-  const segments = packagePath.split(path.sep);
-  const index = segments.lastIndexOf("node_modules");
-  if (index < 0 || index === segments.length - 1) {
-    throw new Error(`bundling: ${packagePath} is not inside a node_modules tree`);
+function readManifest(dir) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(dir, "package.json"), "utf8");
+  } catch {
+    return null;
   }
-  return segments.slice(index + 1).join("/");
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// Locate an installed package the way Node does: the nearest `node_modules` from
+// `fromDir` upwards that carries it. `fromDir` is the real directory of the
+// package that declared the dependency, so a linked package resolves through its
+// own install rather than through the project's.
+function resolvePackageDir(fromDir, name) {
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    const candidate = path.join(dir, "node_modules", name);
+    if (fs.existsSync(path.join(candidate, "package.json"))) {
+      return fs.realpathSync(candidate);
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+    dir = parent;
+  }
 }
 
 // Every package in the project's production dependency closure, as a map from
 // the path it must occupy inside the asset to the directory it is read from.
 //
-// A package the project links in from outside its own tree (a `file:` dependency
-// of a sibling checkout, which is how the framework's own scaffold gate installs
-// the in-progress runtime) still resolves through the project's
-// `node_modules`, so it is staged there rather than refused. Two different
-// sources claiming one destination is refused: the asset cannot carry both.
+// The first package to claim `node_modules/<name>` keeps it, in breadth-first
+// order from the project itself, which is the hoist npm performs. A later
+// package that resolved a *different* copy of the same name is staged under its
+// parent instead, which is also where Node will look first. A name two sources
+// claim at the same destination is refused: the asset cannot carry both.
 function productionClosure(projectRoot) {
   const root = fs.realpathSync(path.resolve(projectRoot));
-  let listing;
-  try {
-    listing = execFileSync(NPM, ["ls", "--omit=dev", "--all", "--parseable"], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (error) {
-    const detail = [error.stdout, error.stderr]
-      .filter(Boolean)
-      .map((chunk) => String(chunk).trim())
-      .filter((chunk) => chunk !== "")
-      .join(" ");
-    throw new Error(
-      `bundling: ${NPM} could not read the production dependency closure of ${root}: ${detail}`,
-    );
-  }
-
-  const entries = listing
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-  if (entries.length === 0 || path.resolve(entries[0]) !== root) {
-    throw new Error(
-      `bundling: ${NPM} did not report ${root} as the root of the production dependency closure`,
-    );
+  const manifest = readManifest(root);
+  if (manifest === null) {
+    throw new Error(`bundling: ${root} has no readable package.json to read dependencies from`);
   }
 
   const closure = new Map();
-  for (const entry of entries.slice(1)) {
-    const resolved = path.resolve(entry);
-    const relative = path.relative(root, resolved);
-    const insideTree = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-    const destination = insideTree
-      ? relative
-      : path.join("node_modules", packageName(resolved));
-    const source = fs.realpathSync(resolved);
-    const existing = closure.get(destination);
-    if (existing !== undefined && existing !== source) {
-      throw new Error(
-        `bundling: ${destination} is claimed by both ${existing} and ${source}; the asset cannot carry both`,
-      );
+  const staged = new Set();
+  const queue = [{ dir: root, destination: null }];
+
+  while (queue.length > 0) {
+    const parent = queue.shift();
+    const parentManifest = readManifest(parent.dir);
+    if (parentManifest === null) {
+      continue;
     }
-    closure.set(destination, source);
+    const declared = [];
+    for (const field of RUNTIME_DEPENDENCIES) {
+      const value = parentManifest[field];
+      if (value && typeof value === "object") {
+        for (const name of Object.keys(value)) {
+          if (!declared.includes(name)) {
+            declared.push(name);
+          }
+        }
+      }
+    }
+
+    for (const name of declared) {
+      const source = resolvePackageDir(parent.dir, name);
+      if (source === null) {
+        throw new Error(
+          `bundling: ${parent.dir} declares ${name} but it is not installed; run npm install`,
+        );
+      }
+      if (staged.has(source)) {
+        continue;
+      }
+
+      const hoisted = path.join("node_modules", name);
+      let destination = hoisted;
+      const hoistedSource = closure.get(hoisted);
+      if (hoistedSource !== undefined && hoistedSource !== source) {
+        if (parent.destination === null) {
+          throw new Error(
+            `bundling: ${hoisted} is claimed by both ${hoistedSource} and ${source}; the asset cannot carry both`,
+          );
+        }
+        destination = path.join(parent.destination, "node_modules", name);
+      }
+      const existing = closure.get(destination);
+      if (existing !== undefined && existing !== source) {
+        throw new Error(
+          `bundling: ${destination} is claimed by both ${existing} and ${source}; the asset cannot carry both`,
+        );
+      }
+
+      closure.set(destination, source);
+      staged.add(source);
+      queue.push({ dir: source, destination });
+    }
   }
+
   return closure;
 }
 
@@ -120,7 +164,7 @@ function copyPackage(source, destination) {
 
 // Stage the asset: the handler sources, the project manifest and the complete
 // production dependency closure. Nothing is copied that the project did not
-// install for production, and nothing is left out that it did.
+// install for production, and nothing is left out that it imports.
 function stage(projectRoot, outputDir) {
   const root = fs.realpathSync(path.resolve(projectRoot));
   const output = path.resolve(outputDir);
