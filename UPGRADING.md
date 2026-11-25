@@ -17,6 +17,29 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **Node.js 26 and Python 3.15 are supported; Node.js 22 is deprecated.** Both newest lines are tested by the
+  contract corpus, the package builds, the CDK Go bindings and the clean-consumer install proof.
+
+  Consumer action now: **none**. Every floor is unchanged — `ts/package.json` and `cdk/package.json` still declare
+  `engines.node: ">=22"`, `py/pyproject.toml` still declares `requires-python: ">=3.12"`, and the construct and
+  template selections are unchanged (`NODEJS_24_X` for TypeScript, `PYTHON_3_14` for Python). Nothing you deploy moves
+  because of this line.
+
+  What the notice means:
+
+  - Node.js 22 reaches end of life on **2027-04-30**. It stays the floor and stays tested until then.
+  - The **2027-02 major** raises the floor to `>=24` and drops Node.js 22 from the tested set. That is the release that
+    will require action on a Node.js 22 deployment, and it is announced here so the migration can be planned rather
+    than discovered.
+  - Releases published before this line — including **v7.5.0** — were tested on Node.js 22 and 24 and on Python 3.12
+    and 3.14 only. If you run a published release, this section does not ask you to change anything; the newest lines
+    are supported from the next release onward.
+
+  Selecting `NODEJS_26_X` or `PYTHON_3_15` for your own functions through `AppTheoryFunction`'s `runtime` prop is
+  supported today: both runtimes exist in the pinned `aws-cdk-lib`, both resolve their own bundling image, and a stack
+  that declares them synthesizes. The single support table lives in
+  [Runtime Support](./docs/runtimes/support.md); link to it rather than restating support status elsewhere.
+
 - **`FRONTED` front-door verification from a well-known SSM parameter.** The `FRONTED` origin posture no longer
   requires the front-door secret as a literal in application source. `frontDoorVerification` takes exactly one of
   `secretValue` (the existing literal form, unchanged) or `secretParameterName`, a well-known, stage-qualified

@@ -24,10 +24,13 @@ grep " theory-cloud-apptheory-${VERSION}.tgz$" SHA256SUMS.txt | sha256sum -c -
 npm install "./theory-cloud-apptheory-${VERSION}.tgz"
 ```
 
-The package is ESM and ships TypeScript declarations. Node.js 22+ is required. The floor is pinned by
-`ts/package.json`, `ts/package-lock.json`, the pinned TableTheory GitHub Release tarball metadata, and CI. Do not
-document a different Node.js runtime floor unless `scripts/verify-runtime-floor-claims.sh` passes with a CI matrix that
-includes both the floor and Node.js 24.
+The package is ESM and ships TypeScript declarations. Node.js 22+ is required; the floor is pinned by
+`ts/package.json`, `ts/package-lock.json`, the pinned TableTheory GitHub Release tarball metadata, and CI.
+
+Which Node.js lines are tested, which is the floor, and which line is being retired are stated once in
+[Runtime Support](support.md). Do not restate a support statement on this page or in a guide: link here, so the answer
+cannot drift. Do not document a different Node.js runtime floor unless `scripts/verify-runtime-floor-claims.sh` passes
+with a CI matrix that covers both the floor and the newest supported line.
 
 ## Module layout
 
