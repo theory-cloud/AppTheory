@@ -66,6 +66,7 @@ and a host that satisfies neither profile refuses to execute.
 | `floor-node22-py3.12` | `go1.27.4` | 22 | 3.12 | linux/x64 | `contract-tests` |
 | `floor-node22-py3.14` | `go1.27.4` | 22 | 3.14 | linux/x64 | `contract-tests` |
 | `floor-node24-py3.12` | `go1.27.4` | 24 | 3.12 | linux/x64 | `contract-tests` |
+| `node26-py3.15` | `go1.27.4` | 26 | 3.15 | linux/x64 (intended CI floor) | `ts`, `py`, `contract-tests`, `cdk-go-drift`, `consumer-install` |
 | `linux-x64` | `go1.27.4` | 24 | 3.14 | linux/x64 (CI fallback producer) | `deterministic-builds` |
 
 A record is bound to exactly one profile (`gov-infra/evidence/proportionate/<gate>/<profile>.json`)
@@ -121,6 +122,10 @@ tc-toolchain exec frameworks/AppTheory --node 24.21.0 --python 3.14.7 -- \
 # One floor profile, under the governed floor toolchain.
 tc-toolchain exec frameworks/AppTheory --node 22.23.3 --python 3.12.14 -- \
   scripts/evidence/collect.sh --gate ts --profile floor-node22
+# The newest supported lines, under their own governed toolchain. A record for
+# this profile is never produced by a host that does not run them.
+tc-toolchain exec frameworks/AppTheory --node 26.13.1 --python 3.15.2 -- \
+  scripts/evidence/collect.sh --gate contract-tests --profile node26-py3.15
 tc-toolchain exec frameworks/AppTheory --node 24.21.0 --python 3.12.14 -- \
   scripts/evidence/collect.sh --gate py --profile floor-py3.12
 tc-toolchain exec frameworks/AppTheory --node 22.23.3 --python 3.12.14 -- \
@@ -582,7 +587,8 @@ practical first-run sequence:
 
 1. Collect the non-rubric gates for the profile by repeating `--gate` for
    `go`, `unit`, `ts`, `py`, `contract-tests`, `cdk-go-drift`,
-   `deterministic-builds`, `examples-local` and `security-refresh`.
+   `deterministic-builds`, `examples-local` and
+   `security-refresh`.
 2. Make the normal signed evidence commit with those records.
 3. Collect only `rubric` on the now-clean tree:
    `scripts/evidence/collect.sh --gate rubric --profile default`.
@@ -720,8 +726,19 @@ The lower-floor matrix maps each cell to explicit profiles:
 | 22 / 3.12 | `floor-node22` | `floor-py3.12` | `floor-node22-py3.12` |
 | 22 / 3.14 | `floor-node22` | `default` (py 3.14) | `floor-node22-py3.14` |
 | 24 / 3.12 | `default` (Node 24) | `floor-py3.12` | `floor-node24-py3.12` |
+| 26 / 3.15 | `node26-py3.15` | `node26-py3.15` | `node26-py3.15` |
 
-The CDK Node 22 floor uses `floor-node22`. `ci-guard` resolves every profile
+Each row is a distinct tested environment, and the oldest rows carry the declared
+floors while the newest row carries the newest supported lines. The newest row
+names its own profile in all three cells: an addition to the tested set is a
+claim with its own record, never a claim an older profile stands in for.
+
+The CDK Node 22 floor uses `floor-node22` and the newest CDK line uses
+`node26-py3.15`, so neither line rests on the other's label. Every record
+discloses the host that really ran it (today: darwin/arm64 under the governed
+toolchain); the `linux/x64` spelling in a floor row names the CI floor the claim
+stands for, and none of these gates binds the platform dimension. `ci-guard`
+resolves every profile
 reference (literal or matrix-driven) against the tracked declarations and the
 job's explicit matrix cells, so a cell cannot name an undeclared profile or fall
 back to forced execution. `verify-runtime-floor-claims.sh` keeps the floor

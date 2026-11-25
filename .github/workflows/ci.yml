@@ -181,16 +181,18 @@ jobs:
         run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced
 
   runtime-floor-matrix:
-    name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
+    name: Runtime line matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Each cell is a distinct tested environment with its own tracked proof
-        # profile, produced locally under that floor. The latest/latest leg is the
-        # dedicated Go/TypeScript/Python/contract job set. These cells verify
-        # their records; a changed floor or input invalidates only that profile.
+        # Every row is a distinct tested environment with its own tracked proof
+        # profile, produced locally under that exact environment. The oldest rows
+        # carry the declared floors; the newest row carries the newest supported
+        # lines, and it names its own profile rather than borrowing an older one.
+        # These cells verify their records; a changed floor or input invalidates
+        # only that profile.
         include:
           - node-version: "22"
             python-version: "3.12"
@@ -207,26 +209,35 @@ jobs:
             ts-profile: default
             py-profile: floor-py3.12
             contract-profile: floor-node24-py3.12
+          - node-version: "26"
+            python-version: "3.15"
+            ts-profile: node26-py3.15
+            py-profile: node26-py3.15
+            contract-profile: node26-py3.15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Verify lower-floor package and fixture proof
+      - name: Verify the recorded runtime-line package and fixture proof
         run: |
           bash scripts/evidence/verify-gate.sh --gate ts --profile "${{ matrix.ts-profile }}"
           bash scripts/evidence/verify-gate.sh --gate py --profile "${{ matrix.py-profile }}"
           bash scripts/evidence/verify-gate.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
 
   cdk-floor-matrix:
-    name: CDK floor matrix (Node ${{ matrix.node-version }})
+    name: CDK line matrix (Node ${{ matrix.node-version }})
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Node 24 is covered by the dedicated CDK Go binding drift job, which
-        # uses the default profile.
+        # Node 24 is the approved producing host and is covered by the dedicated
+        # CDK Go binding drift job, which verifies the `default` profile. The
+        # oldest supported line and the newest supported line each get their own
+        # cell, so neither rests on the other's label.
         include:
           - node-version: "22"
             drift-profile: floor-node22
+          - node-version: "26"
+            drift-profile: node26-py3.15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -237,9 +248,9 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
-      # Same profile mechanism as the runtime floor: this job verifies the
-      # committed Node 22 binding record instead of regenerating it.
-      - name: Verify CDK lower-floor generated binding proof
+      # Same profile mechanism as the runtime line matrix: each cell verifies the
+      # committed binding record for its own line instead of regenerating it.
+      - name: Verify the recorded CDK line generated binding proof
         run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
       - name: Verify CDK dependency engines admit the Node floor
         run: bash scripts/verify-cdk-engines-floor.sh
