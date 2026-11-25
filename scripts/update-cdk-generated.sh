@@ -38,7 +38,7 @@ if [[ ! -d "cdk-go/apptheorycdk" ]]; then
   echo "update-cdk-generated: FAIL (missing cdk-go/apptheorycdk/)" >&2
   exit 1
 fi
-for handwritten_test in bindings_test.go generated_sync_test.go; do
+for handwritten_test in bindings_test.go generated_sync_test.go naming_synth_test.go; do
   if [[ ! -f "cdk-go/apptheorycdk/${handwritten_test}" ]]; then
     echo "update-cdk-generated: FAIL (missing handwritten cdk-go/apptheorycdk/${handwritten_test})" >&2
     exit 1
@@ -136,7 +136,7 @@ else
   exit 1
 fi
 
-for handwritten_test in bindings_test.go generated_sync_test.go; do
+for handwritten_test in bindings_test.go generated_sync_test.go naming_synth_test.go; do
   cp "${destination}/${handwritten_test}" "${tmp_dir}/${handwritten_test}"
 done
 
@@ -159,6 +159,7 @@ if [[ "${generated_module}" == "${generated_module_base}" ]]; then
     --exclude go.sum \
     --exclude bindings_test.go \
     --exclude generated_sync_test.go \
+    --exclude naming_synth_test.go \
     "${generated_root}/" \
     "${destination}/"
   module_root="cdk-go"
@@ -179,6 +180,7 @@ elif [[ "${generated_module}" =~ ^github\.com/theory-cloud/apptheory/cdk-go/appt
   rsync -a --delete \
     --exclude bindings_test.go \
     --exclude generated_sync_test.go \
+    --exclude naming_synth_test.go \
     "${generated_root}/" \
     "${destination}/"
   rm -f cdk-go/go.mod cdk-go/go.sum
@@ -188,7 +190,7 @@ else
   exit 1
 fi
 
-for handwritten_test in bindings_test.go generated_sync_test.go; do
+for handwritten_test in bindings_test.go generated_sync_test.go naming_synth_test.go; do
   if ! cmp -s "${tmp_dir}/${handwritten_test}" "${destination}/${handwritten_test}"; then
     echo "update-cdk-generated: FAIL (regeneration changed handwritten ${destination}/${handwritten_test})" >&2
     exit 1

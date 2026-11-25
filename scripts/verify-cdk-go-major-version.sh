@@ -68,6 +68,7 @@ PY
 
 cp "${fixture_root}/cdk-go/apptheorycdk/bindings_test.go" "${tmp_dir}/bindings_test.go"
 cp "${fixture_root}/cdk-go/apptheorycdk/generated_sync_test.go" "${tmp_dir}/generated_sync_test.go"
+cp "${fixture_root}/cdk-go/apptheorycdk/naming_synth_test.go" "${tmp_dir}/naming_synth_test.go"
 
 # Snapshot the Release Please-authored state before generated artifacts move.
 cp "${fixture_root}/cdk/.jsii" "${baseline_root}/cdk/.jsii"
@@ -92,7 +93,7 @@ if [[ "${observed_module}" != "${canonical_module}" ]]; then
   exit 1
 fi
 
-for handwritten_test in bindings_test.go generated_sync_test.go; do
+for handwritten_test in bindings_test.go generated_sync_test.go naming_synth_test.go; do
   if ! cmp -s \
     "${tmp_dir}/${handwritten_test}" \
     "${fixture_root}/cdk-go/apptheorycdk/${handwritten_test}"
