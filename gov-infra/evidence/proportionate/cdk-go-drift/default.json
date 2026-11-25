@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 20.329,
+      "durationSeconds": 15.271,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-24T20:56:00Z",
+      "finishedAt": "2026-11-25T07:36:28Z",
       "id": "cdk-go-drift",
-      "inputsDigest": "sha256:e453a83f7f888ff09c4ce8041da1811a2d502fa0b55fbb745ce0e279efa09ac6",
-      "logDigest": "sha256:354c877c8f1cafd4f99f1726042e29d6a2df195b28edc346a3e6d859389ca495",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261124T205540Z-69425.log",
+      "inputsDigest": "sha256:3e5d68702f19d3a5b410b7a9177cdb12acbd800fed0eab58b6e0f7ef8e6b781e",
+      "logDigest": "sha256:2da4112b9fe7d2aa3b97d4d893dc9ed5a3c3ffbc7db7d99a50cfdc924d37a57c",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261125T073613Z-51868.log",
       "reused": false,
-      "startedAt": "2026-11-24T20:55:40Z"
+      "startedAt": "2026-11-25T07:36:13Z"
     }
   ],
   "consumed": [],
   "description": "CDK Go bindings regeneration equality",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,18 +36,18 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-24T20:56:00Z",
+  "recordedAt": "2026-11-25T07:36:28Z",
   "releaseOnly": {
-    "digest": "sha256:d02fc034e77e252e280198a904c6cbd94fd9221e15ff65bfe401a4bc96264a80",
-    "fileCount": 529,
-    "normalizedDigest": "sha256:5437076b62127e357b480533f5984b0e716b77212177f9dece067fb6a44218f9",
-    "version": "7.5.0-rc.2"
+    "digest": "sha256:31fcc2d4c1ac0af3dca7affae8c80fbd4ae30f6e3c7b2fc2fee1d8a4243a7a8c",
+    "fileCount": 533,
+    "normalizedDigest": "sha256:6afe4d7098c3ef9f72547017e04c95d54f26601f3cf82ab6705b7e6fc672457d",
+    "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:cdc96956c4e417420f968031f74e57362d5bd926192fda849c7db5c7c5bdc4ab",
-    "fileCount": 644,
+    "digest": "sha256:292ea5b2453d14a66d99a9bddf7532c992d4e844d2ce3860db0308735f113e0b",
+    "fileCount": 648,
     "paths": [
       "cdk/",
       "cdk-go/",
@@ -59,8 +59,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:ecbfd426d4135930621338c01ae0242987158b96a897ee865e8ce828e807297d",
-    "fileCount": 2774
+    "digest": "sha256:99048eef0795a9d1727270a4f02c77e7052ae7b0c2ce8bf0c2ba9d9fb53d6ef9",
+    "fileCount": 2781
   },
   "verdict": "PASS"
 }
