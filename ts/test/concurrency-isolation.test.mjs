@@ -1033,6 +1033,53 @@ function stagedKeyPublication(issuer, published, late) {
   };
 }
 
+/**
+ * The same staged retry, reached through a second `kid`: the first document
+ * carries the already-published key, the second carries the late one. A request
+ * for the late key therefore opens its own window while another key's fetch is
+ * still in flight, and its permitted retry only starts after that fetch clears —
+ * the ordering in which a peer that watched only the fetch slot saw it empty.
+ */
+function mixedKeyPublication(issuer, published, late) {
+  const first = deferred();
+  const retry = deferred();
+  const state = {
+    fetches: 0,
+    firstStarted: deferred(),
+    retryStarted: deferred(),
+  };
+  const fetchImpl = async () => {
+    state.fetches += 1;
+    if (state.fetches === 1) {
+      state.firstStarted.resolve();
+      return await first.promise;
+    }
+    if (state.fetches === 2) {
+      state.retryStarted.resolve();
+      return await retry.promise;
+    }
+    // Every later fetch answers with the steady document, so the refusal
+    // controls are refused by the key set rather than by a transport error.
+    return Response.json(published.jwksDocument());
+  };
+  return {
+    state,
+    publishFirst: () => first.resolve(Response.json(published.jwksDocument())),
+    publishLate: () => retry.resolve(Response.json(late.jwksDocument())),
+    failLate: (error) => retry.reject(error),
+    build: async (overrides = {}) =>
+      await newJwksValidator({
+        issuer,
+        jwksUri: `${issuer}/jwks`,
+        fetchImpl,
+        allowPrivateHosts: true,
+        requiredAudience: PROVIDER_AUDIENCE,
+        requiredScopes: ["namespace:use"],
+        ...overrides,
+      }),
+  };
+}
+
 test("the key-publication retry serves every overlapping valid caller", async () => {
   // The shared fixture already promises that a valid token is accepted when its
   // signing key is published after the first key-set fetch. On a Web Function
@@ -1155,6 +1202,134 @@ test("the key-publication retry serves every overlapping valid caller", async ()
   }
   assert.equal(hangs, 1, `a hanging key set was fetched ${hangs} times`);
   hang.resolve(new Response(null, { status: 503 }));
+});
+
+test("a window opened behind another key's fetch serves every peer it admits", async () => {
+  // Request A asks for a key that is already published; request B asks for a key
+  // that is only published by the second fetch. The first B request opens B's
+  // resolution window but joins A's pending fetch, so B's own permitted retry
+  // can only start once that fetch has cleared. A peer that followed the fetch
+  // slot alone — rather than the window it was admitted to — observed the slot
+  // empty in that gap and refused a token whose key the same window went on to
+  // publish: one valid caller and seven refusals from two fetches. Peers must
+  // reach the outcome of the window they were admitted to, whatever fetch the
+  // window's first step happened to join.
+  const issuer = "https://mixed-key-publication.example.test";
+  const published = newFakeOAuthProvider({ issuer, kid: "kid-already-published" });
+  const late = newFakeOAuthProvider({ issuer, kid: "kid-newly-published" });
+  const minted = (provider, subject, overrides = {}) =>
+    provider.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject,
+      scope: "namespace:use",
+      ...overrides,
+    });
+
+  // The single-request control on this ordering: one caller whose key is only
+  // published by the second fetch is authorized on exactly two fetches.
+  const control = mixedKeyPublication(issuer, published, late);
+  const single = await control.build();
+  const singleRun = settled(single(validatorContext(), minted(late, "single")));
+  await control.state.firstStarted.promise;
+  assert.equal(control.state.fetches, 1, "the control fetched the key set twice at once");
+  control.publishFirst();
+  await control.state.retryStarted.promise;
+  control.publishLate();
+  const singleOutcome = await singleRun;
+  assert.equal(singleOutcome.ok, true, `the single-request control was refused: ${singleOutcome.reason}`);
+  assert.equal(control.state.fetches, 2, "the single-request control outspent its retry");
+
+  // The same ordering as a burst: A's request first, then B's opener and seven
+  // peers. They are started synchronously, which is how a burst reaches one
+  // event loop before the first document is published.
+  const overlap = mixedKeyPublication(issuer, published, late);
+  const validate = await overlap.build({ maxRefreshPerKid: 1, maxUnknownKidFetches: 4 });
+  const burstTokens = [
+    minted(published, "existing"),
+    ...Array.from({ length: 8 }, (_, index) => minted(late, `fresh-${index}`)),
+  ];
+  const burst = burstTokens.map(async (token) => await settled(validate(validatorContext(), token)));
+  assert.equal(overlap.state.fetches, 1, "the first key-set document was fetched more than once");
+  overlap.publishFirst();
+  await overlap.state.retryStarted.promise;
+  overlap.publishLate();
+  const outcomes = await Promise.all(burst);
+  outcomes.forEach((outcome, index) => {
+    assert.equal(outcome.ok, true, `overlapping caller ${index} was refused a valid token: ${outcome.reason}`);
+  });
+  assert.equal(outcomes[0].value.subject, "existing", "the first caller received another caller's claims");
+  assert.equal(outcomes.at(-1).value.subject, "fresh-7", "a peer received another caller's claims");
+  assert.equal(overlap.state.fetches, 2, "the mixed-key burst outspent the single request's retry");
+
+  // A caller arriving after the window settled is served from the same cache,
+  // without a fetch.
+  const afterwards = await settled(validate(validatorContext(), minted(late, "arrived-later")));
+  assert.equal(afterwards.ok, true, `a caller after the window settled was refused: ${afterwards.reason}`);
+  assert.equal(overlap.state.fetches, 2, "a caller after the window settled fetched again");
+
+  // Control: an unpublished kid is still refused inside its per-kid bound, and a
+  // repeat inside the cooldown — a window that has already settled — neither
+  // fetches nor waits.
+  const stranger = minted(late, "stranger", { kid: "never-published" });
+  const strangerOutcome = await settled(validate(validatorContext(), stranger));
+  assert.equal(strangerOutcome.ok, false, "an unpublished kid was authorized");
+  assert.match(strangerOutcome.reason, /unknown_kid/);
+  const afterStranger = overlap.state.fetches;
+  assert.ok(
+    afterStranger - 2 <= 2,
+    `an unknown kid outspent its per-kid bound: ${afterStranger - 2}`,
+  );
+  const repeated = await settled(validate(validatorContext(), stranger));
+  assert.equal(repeated.ok, false, "a repeat unknown kid was authorized");
+  assert.equal(overlap.state.fetches, afterStranger, "a repeat unknown kid inside the cooldown fetched again");
+
+  // Control: the window's retry failing releases every peer it admitted — none
+  // is authorized, none waits past the bound, and the caller whose key was
+  // already published is unaffected.
+  const rejecting = mixedKeyPublication(issuer, published, late);
+  const rejectingValidate = await rejecting.build({ maxRefreshPerKid: 1, maxUnknownKidFetches: 4 });
+  const rejectingTokens = [
+    minted(published, "existing"),
+    ...Array.from({ length: 7 }, (_, index) => minted(late, `rejected-${index}`)),
+  ];
+  const rejectingRun = rejectingTokens.map(
+    async (token) => await settled(rejectingValidate(validatorContext(), token)),
+  );
+  rejecting.publishFirst();
+  await rejecting.state.retryStarted.promise;
+  const rejectingAt = Date.now();
+  rejecting.failLate(new Error("upstream down"));
+  const rejectedOutcomes = await Promise.all(rejectingRun);
+  assert.ok(Date.now() - rejectingAt < 1000, "a rejecting retry stranded a peer");
+  assert.equal(rejectedOutcomes[0].ok, true, `the already-published caller was refused: ${rejectedOutcomes[0].reason}`);
+  for (const outcome of rejectedOutcomes.slice(1)) {
+    assert.equal(outcome.ok, false, "a failed retry authorized a caller whose key was never published");
+  }
+
+  // Control: the same window with a hanging retry is released at the fetch
+  // timeout, so no peer is stranded behind a fetch the window never finishes.
+  const hanging = mixedKeyPublication(issuer, published, late);
+  const hangingValidate = await hanging.build({
+    maxRefreshPerKid: 1,
+    maxUnknownKidFetches: 4,
+    fetchTimeoutSeconds: 0.05,
+  });
+  const hangingTokens = [
+    minted(published, "existing"),
+    ...Array.from({ length: 7 }, (_, index) => minted(late, `hanging-${index}`)),
+  ];
+  const hangingRun = hangingTokens.map(
+    async (token) => await settled(hangingValidate(validatorContext(), token)),
+  );
+  hanging.publishFirst();
+  const hangingAt = Date.now();
+  const hangingOutcomes = await Promise.all(hangingRun);
+  assert.ok(Date.now() - hangingAt < 1000, "a hanging retry held a peer past the fetch timeout");
+  assert.equal(hangingOutcomes[0].ok, true, `the already-published caller was refused: ${hangingOutcomes[0].reason}`);
+  for (const outcome of hangingOutcomes.slice(1)) {
+    assert.equal(outcome.ok, false, "a hanging retry authorized a caller whose key was never published");
+  }
+  hanging.publishLate();
 });
 
 const MCP_TOOL_HEADERS = {

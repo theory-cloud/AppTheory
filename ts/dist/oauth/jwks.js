@@ -32,6 +32,14 @@ export const DEFAULT_MAX_KEY_ENTRIES = 128;
 export const DEFAULT_MAX_UNKNOWN_KID_FETCHES = 32;
 /** Framework default length, in seconds, of the unknown-kid fetch budget window. */
 export const DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS = 60;
+/** Opens a resolution window whose `settled` promise any peer can await. */
+function openResolutionWindow(startedAt) {
+    let settle = () => { };
+    const settled = new Promise((resolve) => {
+        settle = () => resolve();
+    });
+    return { startedAt, settled, settle };
+}
 /**
  * Fetches the OIDC discovery document at `discoveryUrl`, verifies that its
  * `issuer` equals `issuer`, and returns the document's `jwks_uri`. The
@@ -117,6 +125,13 @@ export async function newJwksValidator(options) {
     let fetchBudgetWindowStart = Number.NEGATIVE_INFINITY;
     let fetchBudgetUsed = 0;
     let inFlightRefresh = null;
+    /**
+     * The bound on one `kid`'s whole resolution: the `maxRefreshPerKid + 1`
+     * fetches it may wait on, each bounded by the fetch timeout. A peer that
+     * follows a window waits at most this long, so a rejecting or hanging
+     * resolution releases every waiter instead of stranding one.
+     */
+    const resolutionBoundMs = (maxRefreshPerKid + 1) * fetchTimeoutMs;
     /**
      * Consumes one unit of the global unknown-`kid` fetch budget. The window
      * resets once `unknownKidFetchWindowMs` has elapsed since it opened; when the
@@ -212,29 +227,31 @@ export async function newJwksValidator(options) {
         return true;
     };
     /**
-     * Records the resolution window for `kid`. Entries older than the refresh
+     * Opens the resolution window for `kid`. Entries older than the refresh
      * cooldown are dropped, and a full map evicts its oldest entry first, so the
      * map never holds more than `maxWindowEntries` entries however many distinct
      * attacker-chosen kids arrive.
      */
     const recordWindow = (kid, at) => {
-        for (const [existing, startedAt] of windows) {
-            if (at - startedAt >= refreshCooldownMs)
+        for (const [existing, window] of windows) {
+            if (at - window.startedAt >= refreshCooldownMs)
                 windows.delete(existing);
         }
         if (windows.size >= maxWindowEntries) {
             let victim;
             let oldest = Number.POSITIVE_INFINITY;
-            for (const [existing, startedAt] of windows) {
-                if (startedAt < oldest) {
-                    oldest = startedAt;
+            for (const [existing, window] of windows) {
+                if (window.startedAt < oldest) {
+                    oldest = window.startedAt;
                     victim = existing;
                 }
             }
             if (victim !== undefined)
                 windows.delete(victim);
         }
-        windows.set(kid, at);
+        const window = openResolutionWindow(at);
+        windows.set(kid, window);
+        return window;
     };
     const cachedKey = (kid, at) => {
         const entry = keys.get(kid);
@@ -243,34 +260,30 @@ export async function newJwksValidator(options) {
         return entry.key;
     };
     /**
-     * Follows the key resolution another validation already started, without
-     * starting a fetch of its own and without consuming a fetch-budget unit.
+     * Reaches the outcome of the resolution window another validation opened,
+     * without a fetch of its own and without consuming a fetch-budget unit.
      *
-     * It waits on the in-flight fetch, re-reads the cache it filled, and — when
-     * that fetch did not publish `kid` and the request that opened the window is
-     * still inside the same permitted retry — waits on the retry instead of
-     * refusing. The loop cannot outlast the opener's budget: it takes at most the
-     * `maxRefreshPerKid + 1` waits that request may spend on fetches, and every
-     * wait is bounded by the fetch timeout. It returns null when nothing is in
-     * flight, when a joined fetch failed, or when the chain ended without the key,
-     * so the caller still fails closed.
+     * It waits for that window's whole resolution to end — the fetch the opening
+     * request started, any fetch that request joined, and the publication-lag
+     * retry the contract permits — and then reads the cache the resolution filled.
+     * Following the window rather than the fetch slot is what makes the outcome
+     * the window's outcome: when the window's first step joined a fetch opened for
+     * a different `kid`, its own retry only starts after that fetch clears, and a
+     * peer watching only the slot finds it empty in between and refuses a key the
+     * window is about to publish. The wait is bounded by the window's own
+     * resolution bound, so a rejecting or hanging resolution releases every peer
+     * and a window that has already settled returns the cache read immediately.
+     * It returns null when the window ended without this `kid`, so the caller
+     * still fails closed.
      */
-    const followInFlightRefresh = async (kid) => {
-        for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
-            const shared = inFlightRefresh;
-            if (!shared)
-                return null;
-            try {
-                await boundRefreshWait(shared, fetchTimeoutMs);
-            }
-            catch {
-                return null;
-            }
-            const found = cachedKey(kid, now().getTime());
-            if (found)
-                return found;
+    const followWindow = async (kid, window) => {
+        try {
+            await boundRefreshWait(window.settled, resolutionBoundMs);
         }
-        return null;
+        catch {
+            return null;
+        }
+        return cachedKey(kid, now().getTime());
     };
     /**
      * Resolves a signing key for `kid` from the bounded cache. A `kid` longer than
@@ -279,9 +292,9 @@ export async function newJwksValidator(options) {
      * `refreshCooldownSeconds`: the first fetch populates the cache and up to
      * `maxRefreshPerKid` further fetches absorb key publication lag. Every further
      * unknown-`kid` token inside the cooldown performs no fetch of its own — it
-     * only follows the resolution still in flight, so it reaches the same outcome
-     * the opening request reaches — and the global unknown-`kid` fetch budget caps
-     * the fetches distinct kids can trigger, so an attacker cannot amplify token
+     * only follows its window's resolution, so it reaches the same outcome the
+     * opening request reaches — and the global unknown-`kid` fetch budget caps the
+     * fetches distinct kids can trigger, so an attacker cannot amplify token
      * traffic into key-set traffic.
      */
     const keyForKid = async (kid) => {
@@ -291,28 +304,35 @@ export async function newJwksValidator(options) {
         const cached = cachedKey(kid, at);
         if (cached)
             return cached;
-        const startedAt = windows.get(kid);
-        if (startedAt !== undefined && at - startedAt < refreshCooldownMs) {
+        const window = windows.get(kid);
+        if (window && at - window.startedAt < refreshCooldownMs) {
             // The window is open, but an open window does not mean the key set has
             // been seen: the request that opened it may still be fetching the
             // document that carries this `kid`, and it may still be inside the
             // publication-lag retry the contract already permits. Refusing here would
             // fail a valid token only because a sibling request was mid-resolution —
             // the failure a burst of first requests produces on a Web Function. So
-            // follow that resolution for as long as it stays in flight (no fetch of
-            // our own, no budget unit); when nothing is in flight the cooldown still
-            // refuses, as it must.
-            return followInFlightRefresh(kid);
+            // follow that resolution to its end (no fetch of our own, no budget
+            // unit); when the window ended without the key the refusal stands, as it
+            // must.
+            return await followWindow(kid, window);
         }
-        recordWindow(kid, at);
-        for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
-            if (!(await refresh(at)))
-                return null;
-            const found = cachedKey(kid, at);
-            if (found)
-                return found;
+        const opened = recordWindow(kid, at);
+        try {
+            for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
+                if (!(await refresh(at)))
+                    return null;
+                const found = cachedKey(kid, at);
+                if (found)
+                    return found;
+            }
+            return null;
         }
-        return null;
+        finally {
+            // Every peer following this window is released here, whether the
+            // resolution found the key, spent its bound, or threw.
+            opened.settle();
+        }
     };
     return async (ctx, token) => {
         const parsed = parseCompactJWS(token);
