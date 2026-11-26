@@ -7,6 +7,9 @@ import { assertDistIsFresh } from "./invocation-scope-dist-freshness.mjs";
 import {
   AppTheoryError,
   LOGGING_PROFILE_CLOUDWATCH_JSON,
+  MCP_HEADER_PROTOCOL_VERSION,
+  MCP_HEADER_SESSION_ID,
+  MCP_PROTOCOL_VERSION,
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MemoryMcpSessionStore,
   MemoryMcpStreamStore,
@@ -17,10 +20,12 @@ import {
   createApp,
   createLambdaFunctionURLStreamingHandler,
   createMemoryMicroVMSessionRegistry,
+  createMcpServer,
   defaultLoggingProfile,
   getLogger,
   json,
   newJwksValidator,
+  parseMcpTestSSEFrames,
   registerMcpFacade,
   setLogger,
   supportedEndpointTemplates,
@@ -1150,6 +1155,189 @@ test("the key-publication retry serves every overlapping valid caller", async ()
   }
   assert.equal(hangs, 1, `a hanging key set was fetched ${hangs} times`);
   hang.resolve(new Response(null, { status: 503 }));
+});
+
+const MCP_TOOL_HEADERS = {
+  "content-type": ["application/json"],
+  accept: ["application/json, text/event-stream"],
+};
+
+function mcpInitializeBody(id) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: { protocolVersion: MCP_PROTOCOL_VERSION },
+  };
+}
+
+function mcpRpc(id, method, params = {}) {
+  return { jsonrpc: "2.0", id, method, params };
+}
+
+/** A request carrying a distinct authenticated caller, as the runtime sees it. */
+function mcpCallerRequest(caller, body, sessionId = "") {
+  const headers = { ...MCP_TOOL_HEADERS };
+  if (sessionId) {
+    headers[MCP_HEADER_SESSION_ID] = [sessionId];
+    headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION];
+  }
+  return {
+    request: {
+      method: "POST",
+      path: "/mcp",
+      headers,
+      query: {},
+      body: Buffer.from(JSON.stringify(body), "utf8"),
+      isBase64: false,
+    },
+    authIdentity: caller.identity,
+    tenantId: caller.tenantId,
+    tenantBound: true,
+    securePrincipal: () => ({
+      identity: caller.identity,
+      scopes: [...caller.scopes],
+      claims: {},
+      kind: "user",
+    }),
+    get: () => null,
+  };
+}
+
+function mcpSessionOf(response) {
+  return response.headers?.[MCP_HEADER_SESSION_ID]?.[0] ?? "";
+}
+
+function mcpBodyOf(response) {
+  return JSON.parse(Buffer.from(response.body ?? "", "utf8").toString("utf8"));
+}
+
+function mcpStreamedResult(response) {
+  const frames = parseMcpTestSSEFrames(Buffer.from(response.body));
+  // Progress and heartbeat frames carry no payload; the call's response is the
+  // last frame that does.
+  const answered = frames.filter((frame) => {
+    if (!frame.data) return false;
+    try {
+      return typeof JSON.parse(frame.data).result === "object";
+    } catch {
+      return false;
+    }
+  });
+  assert.ok(answered.length > 0, "the streamed call produced no response frame");
+  return JSON.parse(answered.at(-1).data);
+}
+
+test("overlapping MCP tool calls keep their own invocation context", async () => {
+  // The ordinary, streaming and task routes each build a fresh McpToolContext
+  // and a fresh auth view for one call. This row rendezvouses inside the tool
+  // across all three routes at once, so any per-call value that lived on the
+  // server instead of on the call would surface as another caller's identity.
+  const server = createMcpServer("Concurrent tool MCP", "1", {
+    taskRuntime: { store: new MemoryMcpTaskStore() },
+  });
+  const registry = server.registry();
+  const routes = [
+    { route: "ordinary", tool: "who" },
+    { route: "ordinary", tool: "who" },
+    { route: "streaming", tool: "stream-who" },
+    { route: "streaming", tool: "stream-who" },
+    { route: "task", tool: "task-who" },
+    { route: "task", tool: "task-who" },
+  ];
+  // One rendezvous across every route: all six handlers are parked at the same
+  // moment, which is the strongest interleaving one event loop can produce.
+  const inside = rendezvous(routes.length);
+  const echo = async (context) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          sessionId: context.sessionId,
+          requestId: context.requestId,
+          auth: context.auth ?? null,
+        }),
+      },
+    ],
+  });
+  const parked = async (context) => {
+    await inside();
+    return await echo(context);
+  };
+  registry.registerTool({ name: "who", inputSchema: {} }, (_args, context) => parked(context));
+  registry.registerStreamingTool(
+    { name: "stream-who", inputSchema: {} },
+    (_args, _emit, context) => parked(context),
+  );
+  registry.registerTool(
+    { name: "task-who", inputSchema: {}, execution: { taskSupport: "optional" } },
+    (_args, context) => parked(context),
+  );
+
+  const callers = routes.map((spec, index) => ({
+    ...spec,
+    index,
+    identity: `user-${index}`,
+    tenantId: `tenant-${index}`,
+    scopes: [`scope-${index}`],
+  }));
+  const handler = server.handler();
+  for (const caller of callers) {
+    const initialized = await handler(
+      mcpCallerRequest(caller, mcpInitializeBody(`init-${caller.index}`)),
+    );
+    assert.equal(initialized.status, 200, `caller ${caller.index} could not open a session`);
+    caller.sessionId = mcpSessionOf(initialized);
+    assert.ok(caller.sessionId, `caller ${caller.index} received no session id`);
+  }
+  // Sessions are bound to their caller: a mismatched identity is refused, so
+  // the session id below can only ever be the one that caller opened.
+  assert.equal(new Set(callers.map((caller) => caller.sessionId)).size, callers.length);
+
+  const calls = callers.map(async (caller) => {
+    const id = `req-${caller.index}`;
+    const params =
+      caller.route === "task"
+        ? { name: caller.tool, task: {} }
+        : { name: caller.tool };
+    const response = await handler(
+      mcpCallerRequest(caller, mcpRpc(id, "tools/call", params), caller.sessionId),
+    );
+    return { caller, id, response };
+  });
+  // Started together, so every route is inside the tool before any returns.
+  const answered = await Promise.all(calls);
+
+  for (const { caller, id, response } of answered) {
+    assert.equal(response.status, 200, `caller ${caller.index} was refused`);
+    const payload =
+      caller.route === "streaming" ? mcpStreamedResult(response) : mcpBodyOf(response);
+    let result = payload.result;
+    let ownRequestId = id;
+    if (caller.route === "task") {
+      // A task-augmented call answers with the task, and the tool's own result
+      // is read back through tasks/result.
+      ownRequestId = result.task.taskId;
+      const readBack = await handler(
+        mcpCallerRequest(
+          caller,
+          mcpRpc(`result-${caller.index}`, "tasks/result", { taskId: ownRequestId }),
+          caller.sessionId,
+        ),
+      );
+      assert.equal(readBack.status, 200, `caller ${caller.index} could not read its task`);
+      result = mcpBodyOf(readBack).result;
+    } else {
+      assert.equal(payload.id, id, "the response answered a different request");
+    }
+    const echoed = JSON.parse(result.content[0].text);
+    assert.equal(echoed.sessionId, caller.sessionId, `caller ${caller.index} saw another session`);
+    assert.ok(echoed.auth, `caller ${caller.index} lost its caller identity`);
+    assert.equal(echoed.auth.authIdentity, caller.identity, "another caller's identity was used");
+    assert.equal(echoed.auth.tenantId, caller.tenantId, "another caller's tenant was used");
+    assert.deepEqual(echoed.auth.scopes, caller.scopes, "another caller's scopes were used");
+    assert.equal(echoed.requestId, ownRequestId, "the call lost its own request id");
+  }
 });
 
 test("the provider caches discovery and validators under overlap", async () => {

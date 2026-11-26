@@ -26,6 +26,9 @@ from apptheory.logging_profile import (  # noqa: E402
     default_logging_profile,
 )
 from apptheory.mcp import (  # noqa: E402
+    MCP_HEADER_PROTOCOL_VERSION,
+    MCP_HEADER_SESSION_ID,
+    MCP_PROTOCOL_VERSION,
     McpSession,
     McpTask,
     McpTaskListRequest,
@@ -34,6 +37,7 @@ from apptheory.mcp import (  # noqa: E402
     MemoryMcpSessionStore,
     MemoryMcpStreamStore,
     MemoryMcpTaskStore,
+    create_mcp_server,
 )
 from apptheory.microvm.model import MicroVMSessionRecord  # noqa: E402
 from apptheory.microvm.registry import (  # noqa: E402
@@ -54,6 +58,7 @@ from apptheory.oauth.jwks import JWKSValidatorOptions, new_jwks_validator  # noq
 from apptheory.oauth.provider import ProviderError, TokenExpectations  # noqa: E402
 from apptheory.request import Request  # noqa: E402
 from apptheory.response import Response  # noqa: E402
+from apptheory.secure_types import SecurePrincipal  # noqa: E402
 
 # This file proves the multi-concurrency isolation invariant for the Python
 # runtime: AWS Lambda Web Functions serve many requests in one execution
@@ -999,6 +1004,179 @@ class TestBearerValidationStaysAuthorized(unittest.TestCase):
         with self.assertRaises(OAuthBearerError):
             validator(ctx, other)
         self.assertEqual(transport.fetches, after_stranger, "an exhausted fetch budget still fetched")
+
+
+class TestMcpToolInvocationStaysPerCall(unittest.TestCase):
+    """SAN-3738-05: the MCP tool invocation contexts are pinned as per-call.
+
+    ``McpToolContext`` and ``McpCallerAuth`` carry real per-call data — the
+    session, the request id, and the caller's identity, tenant and scopes — and
+    the ordinary, streaming and task routes each build their own. This row parks
+    every route inside the tool at the same moment with distinct authenticated
+    callers, so a value that lived on the server rather than on the call would
+    surface as another caller's identity.
+    """
+
+    @staticmethod
+    def _mcp_headers(session_id: str = "") -> dict[str, Any]:
+        headers: dict[str, Any] = {
+            "content-type": ["application/json"],
+            "accept": ["application/json, text/event-stream"],
+        }
+        if session_id:
+            headers[MCP_HEADER_SESSION_ID] = [session_id]
+            headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION]
+        return headers
+
+    def _serve(
+        self,
+        handler: Any,
+        caller: dict[str, Any],
+        body: dict[str, Any],
+        *,
+        session_id: str = "",
+    ) -> Response:
+        ctx = Context(
+            request=Request(
+                method="POST",
+                path="/mcp",
+                headers=self._mcp_headers(session_id),
+                body=json.dumps(body).encode("utf-8"),
+                is_base64=False,
+            ),
+            auth_identity=caller["identity"],
+            tenant_id=caller["tenant_id"],
+            tenant_bound=True,
+        )
+        # The scopes reach the tool through the verified principal, exactly as
+        # they do for an authenticated request.
+        ctx._secure_principal = SecurePrincipal(identity=caller["identity"], scopes=list(caller["scopes"]))
+        return handler(ctx)
+
+    def test_overlapping_tool_calls_keep_their_own_invocation_context(self) -> None:
+        server = create_mcp_server(
+            "Concurrent tool MCP",
+            "1",
+            {"task_runtime": {"store": MemoryMcpTaskStore()}},
+        )
+        registry = server.registry()
+        routes = ["ordinary", "ordinary", "streaming", "streaming", "task", "task"]
+        inside = threading.Barrier(len(routes))
+
+        def echo(context: Any) -> dict[str, Any]:
+            payload = {
+                "session_id": context.session_id,
+                "request_id": context.request_id,
+                "auth": None
+                if context.auth is None
+                else {
+                    "auth_identity": context.auth.auth_identity,
+                    "tenant_id": context.auth.tenant_id,
+                    "scopes": list(context.auth.scopes),
+                },
+            }
+            return {"content": [{"type": "text", "text": json.dumps(payload)}]}
+
+        def parked(_args: Any, context: Any) -> dict[str, Any]:
+            inside.wait(timeout=10)
+            return echo(context)
+
+        registry.register_tool({"name": "who", "inputSchema": {}}, parked)
+        registry.register_streaming_tool(
+            {"name": "stream-who", "inputSchema": {}},
+            lambda _args, _emit, context: parked(_args, context),
+        )
+        registry.register_tool(
+            {"name": "task-who", "inputSchema": {}, "execution": {"taskSupport": "optional"}},
+            parked,
+        )
+        handler = server.handler()
+        callers = [
+            {
+                "route": route,
+                "index": index,
+                "identity": f"user-{index}",
+                "tenant_id": f"tenant-{index}",
+                "scopes": [f"scope-{index}"],
+                "tool": {"ordinary": "who", "streaming": "stream-who", "task": "task-who"}[route],
+            }
+            for index, route in enumerate(routes)
+        ]
+        for caller in callers:
+            initialized = self._serve(
+                handler,
+                caller,
+                {"jsonrpc": "2.0", "id": f"init-{caller['index']}", "method": "initialize"},
+            )
+            self.assertEqual(initialized.status, 200)
+            caller["session_id"] = initialized.headers[MCP_HEADER_SESSION_ID][0]
+        self.assertEqual(len({caller["session_id"] for caller in callers}), len(callers))
+
+        answered: list[tuple[dict[str, Any], str, Response]] = []
+
+        def call(caller: dict[str, Any]) -> None:
+            request_id = f"req-{caller['index']}"
+            params: dict[str, Any] = {"name": caller["tool"]}
+            if caller["route"] == "task":
+                params["task"] = {}
+            answered.append(
+                (
+                    caller,
+                    request_id,
+                    self._serve(
+                        handler,
+                        caller,
+                        {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": params},
+                        session_id=caller["session_id"],
+                    ),
+                )
+            )
+
+        threads = [threading.Thread(target=call, args=(caller,)) for caller in callers]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        self.assertEqual(len(answered), len(callers))
+
+        for caller, request_id, response in answered:
+            self.assertEqual(response.status, 200)
+            body: dict[str, Any] = {}
+            if caller["route"] != "streaming":
+                body = json.loads(response.body.decode("utf-8"))
+            else:
+                frames = [
+                    line[len("data: ") :]
+                    for line in response.body.decode("utf-8").splitlines()
+                    if line.startswith("data: ")
+                ]
+                body = json.loads([frame for frame in frames if frame.strip()][-1])
+            result = body["result"]
+            own_request_id = request_id
+            if caller["route"] == "task":
+                own_request_id = result["task"]["taskId"]
+                read_back = self._serve(
+                    handler,
+                    caller,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": f"result-{caller['index']}",
+                        "method": "tasks/result",
+                        "params": {"taskId": own_request_id},
+                    },
+                    session_id=caller["session_id"],
+                )
+                self.assertEqual(read_back.status, 200)
+                result = json.loads(read_back.body.decode("utf-8"))["result"]
+            else:
+                self.assertEqual(body["id"], request_id, "the response answered a different request")
+            echoed = json.loads(result["content"][0]["text"])
+            self.assertEqual(echoed["session_id"], caller["session_id"], "a call saw another session")
+            self.assertIsNotNone(echoed["auth"], "a call lost its caller identity")
+            self.assertEqual(echoed["auth"]["auth_identity"], caller["identity"], "another identity")
+            self.assertEqual(echoed["auth"]["tenant_id"], caller["tenant_id"], "another tenant")
+            self.assertEqual(echoed["auth"]["scopes"], caller["scopes"], "another caller's scopes")
+            self.assertEqual(echoed["request_id"], own_request_id, "the call lost its own request id")
 
 
 def _unsigned_token(*, kid: str, issuer: str, now: dt.datetime) -> str:
