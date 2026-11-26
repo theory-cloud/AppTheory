@@ -189,7 +189,7 @@ class RealTreeTests(unittest.TestCase):
         # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
         # executing), and the two LOCAL-W3-X6 rows with the versioning handler
         # they cover.
-        self.assertEqual(146, len(classified))
+        self.assertEqual(148, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
