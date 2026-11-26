@@ -6,24 +6,18 @@
         "scripts/verify-python-build.sh"
       ],
       "durationSeconds": 0.75,
-      "executed": true,
+      "executed": false,
       "exitCode": 0,
       "finishedAt": "2026-11-26T16:35:59Z",
       "id": "py-build",
       "inputsDigest": "sha256:aa6874bdd05efaf541a35fd3b886c791754f5affcb27d3214a1b8be3115995c8",
       "logDigest": "sha256:fd155253ad38919a2db937467c457d4ef2e8819cab72bc3a15ec891a1af4f0ad",
       "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T163558Z-89022.log",
-      "reused": false,
+      "reused": true,
       "startedAt": "2026-11-26T16:35:58Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:607ee9c8b1f914243944417fceff37f1ff9800ab10e639a406e36643d41199a7",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-26T16:33:43Z"
-    }
-  ],
+  "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
@@ -42,11 +36,11 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T16:35:59Z",
+  "recordedAt": "2026-11-26T19:13:56Z",
   "releaseOnly": {
-    "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
-    "fileCount": 537,
-    "normalizedDigest": "sha256:f0086bb3b5fa0d8d45dc672d3d18a5208727ca9dbff594a38d644d9e9e81761a",
+    "digest": "sha256:bcbd1ab6ea7ac6a3317b2535995438cb920fd00d345290d99c4d139aa47d7a5a",
+    "fileCount": 546,
+    "normalizedDigest": "sha256:78a72278b93ac2f5e5515fcf6ad025ec8823cf368450a5ecae6dff7d001f942c",
     "version": "7.5.0"
   },
   "reviews": [],
@@ -62,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d4fd0003a4b34fc1d7dd6f3d0fadb6385362ca878cc12179d5e542d3b3790869",
-    "fileCount": 2823
+    "digest": "sha256:b06aed6d23473baa48c1769cdd403583207fe4dfa14dae14b653153271d59f30",
+    "fileCount": 2835
   },
   "verdict": "PASS"
 }

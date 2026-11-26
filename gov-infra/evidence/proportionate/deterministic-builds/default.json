@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-builds.sh"
       ],
-      "durationSeconds": 62.123,
+      "durationSeconds": 62.027,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T16:33:43Z",
+      "finishedAt": "2026-11-26T19:11:26Z",
       "id": "deterministic-builds",
-      "inputsDigest": "sha256:552a299cad1ebd19ae96f4a9f1246ab67500ebb64ddb130c28d76818dc2a7e02",
-      "logDigest": "sha256:6877800492eb72dff4389680ff5f1dddcba67464e49449b5fac29d8a42cac800",
-      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261126T163241Z-89022.log",
+      "inputsDigest": "sha256:5ff39022243648769ab769fab748524d5704c2b460b7c8b94f735a3d9f371b28",
+      "logDigest": "sha256:6c3c1494fe93dd2c88a7cec433bc218104822cbcf196ed43abbab1e291b27e8c",
+      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261126T191024Z-77631.log",
       "reused": false,
-      "startedAt": "2026-11-26T16:32:41Z"
+      "startedAt": "2026-11-26T19:10:24Z"
     }
   ],
   "consumed": [],
@@ -36,18 +36,18 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T16:33:43Z",
+  "recordedAt": "2026-11-26T19:11:26Z",
   "releaseOnly": {
-    "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
-    "fileCount": 537,
-    "normalizedDigest": "sha256:f0086bb3b5fa0d8d45dc672d3d18a5208727ca9dbff594a38d644d9e9e81761a",
+    "digest": "sha256:bcbd1ab6ea7ac6a3317b2535995438cb920fd00d345290d99c4d139aa47d7a5a",
+    "fileCount": 546,
+    "normalizedDigest": "sha256:78a72278b93ac2f5e5515fcf6ad025ec8823cf368450a5ecae6dff7d001f942c",
     "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:607ee9c8b1f914243944417fceff37f1ff9800ab10e639a406e36643d41199a7",
-    "fileCount": 953,
+    "digest": "sha256:3d4a270b681ac21c95af5da03774d5f91fe492443de4f3899e31efcfed888713",
+    "fileCount": 957,
     "paths": [
       "VERSION",
       "ts/",
@@ -69,8 +69,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d4fd0003a4b34fc1d7dd6f3d0fadb6385362ca878cc12179d5e542d3b3790869",
-    "fileCount": 2823
+    "digest": "sha256:b06aed6d23473baa48c1769cdd403583207fe4dfa14dae14b653153271d59f30",
+    "fileCount": 2835
   },
   "verdict": "PASS"
 }
