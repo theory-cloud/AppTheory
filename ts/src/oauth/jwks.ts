@@ -443,6 +443,23 @@ export async function newJwksValidator(
   };
 
   /**
+   * Joins a key-set refresh another validation already started, without
+   * starting one and without consuming a fetch-budget unit. Returns false when
+   * nothing is in flight or the fetch it joined failed, so the caller still
+   * fails closed.
+   */
+  const joinInFlightRefresh = async (): Promise<boolean> => {
+    const shared = inFlightRefresh;
+    if (!shared) return false;
+    try {
+      await boundRefreshWait(shared, fetchTimeoutMs);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
    * Resolves a signing key for `kid` from the bounded cache. A `kid` longer than
    * `maxKidLength` is refused as unknown without touching any map and without a
    * fetch. An unknown `kid` opens one resolution window per
@@ -459,7 +476,15 @@ export async function newJwksValidator(
     if (cached) return cached;
     const startedAt = windows.get(kid);
     if (startedAt !== undefined && at - startedAt < refreshCooldownMs) {
-      return null;
+      // The window is open, but an open window does not mean the key set has
+      // been seen: a peer that opened it this instant may still be fetching the
+      // document that carries this `kid`. Refusing here would fail a valid
+      // token only because a sibling request was mid-refresh — the failure a
+      // burst of first requests produces on a Web Function. Join that refresh
+      // (no second fetch, no budget unit) and re-read what it published; when
+      // nothing is in flight the cooldown still refuses, as it must.
+      if (!(await joinInFlightRefresh())) return null;
+      return cachedKey(kid, now().getTime());
     }
     recordWindow(kid, at);
     for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
