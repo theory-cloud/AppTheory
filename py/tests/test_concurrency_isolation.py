@@ -847,6 +847,44 @@ class _StagedKeyPublication:
         return 200, {"content-type": "application/json"}, json.dumps(document).encode()
 
 
+class _StagedRotationRecovery:
+    """Serves the pre-rotation key set twice, then one that carries the rotation.
+
+    The first two responses are the document that predates the rotation, so a
+    request for the rotated key spends its whole per-kid bound and is refused.
+    The third response carries the rotation and is held for ``hold_seconds``, so
+    the rotated key's next caller reaches the validator while another key's fetch
+    is already running — the ordering a rotation creates, arrived at while the
+    earlier refusal is still inside its cooldown.
+    """
+
+    def __init__(
+        self, jwks_uri: str, stale: dict[str, Any], published: dict[str, Any], hold_seconds: float
+    ) -> None:
+        self._jwks_uri = jwks_uri
+        self._stale = stale
+        self._published = published
+        self._hold = hold_seconds
+        self._lock = threading.Lock()
+        self.fetches = 0
+        self.publishing_started = threading.Event()
+
+    def __call__(self, url: str) -> tuple[int, dict[str, str], bytes]:
+        if url != self._jwks_uri:
+            return 404, {"content-type": "text/plain"}, b"not found"
+        with self._lock:
+            self.fetches += 1
+            attempt = self.fetches
+        if attempt <= 2:
+            document = self._stale
+        else:
+            if attempt == 3:
+                self.publishing_started.set()
+                time.sleep(self._hold)
+            document = self._published
+        return 200, {"content-type": "application/json"}, json.dumps(document).encode()
+
+
 class TestBearerValidationStaysAuthorized(unittest.TestCase):
     """SAN-3738-03: the repaired bearer path is pinned by its positive outcome.
 
@@ -1073,6 +1111,113 @@ class TestBearerValidationStaysAuthorized(unittest.TestCase):
         )
         self.assertEqual(arrived_later.subject, "arrived-later")
         self.assertEqual(transport.fetches, 2, "a cached key fetched again")
+
+
+    def test_settled_window_serves_the_caller_a_rotation_publishes(self) -> None:
+        """SAN-3738-08 parity: a settled window does not refuse a published key.
+
+        A rotated key's earlier caller spends its whole per-kid bound against the
+        document that predates the rotation, so its window settles with a refusal
+        and stays inside the cooldown. A neighbouring key's caller then opens the
+        fetch that carries the rotation, and the rotated key's next caller arrives
+        while that fetch is running. ``_key_for`` holds its lock across the whole
+        resolution, so this caller cannot read the cache between the fetch and its
+        publication: it serializes behind the fetch and is authorized on the same
+        three fetches, exactly as a caller arriving afterwards is. The refusals
+        that must not move — a kid nothing publishes, its repeat inside the
+        cooldown, and its per-kid bound — are below.
+        """
+        issuer = "https://rotation-recovery.example.test"
+        stale = FakeUpstreamProvider(issuer=issuer, kid="kid-still-published", key_bits=512)
+        neighbor = FakeUpstreamProvider(issuer=issuer, kid="kid-neighbor", key=generate_rsa_key(512))
+        rotated = FakeUpstreamProvider(issuer=issuer, kid="kid-rotated", key=generate_rsa_key(512))
+        transport = _StagedRotationRecovery(
+            neighbor.jwks_uri,
+            stale.jwks_document(),
+            {
+                "keys": [
+                    *stale.jwks_document()["keys"],
+                    *neighbor.jwks_document()["keys"],
+                    *rotated.jwks_document()["keys"],
+                ]
+            },
+            hold_seconds=0.4,
+        )
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=issuer,
+                jwks_uri=neighbor.jwks_uri,
+                http_get=transport,
+                allow_private_hosts=True,
+                required_audience=_OAUTH_AUDIENCE,
+                required_scopes=["namespace:use"],
+                max_unknown_kid_fetches=8,
+                refresh_cooldown_seconds=60,
+            )
+        )
+        ctx = Context(request=_request("/"))
+
+        def token(provider: FakeUpstreamProvider, subject: str) -> str:
+            return provider.mint_access_token(
+                audience=_OAUTH_AUDIENCE, subject=subject, scope="namespace:use"
+            )
+
+        # The rotated key misses: its window settles with a refusal, in cooldown.
+        with self.assertRaises(OAuthBearerError):
+            validator(ctx, token(rotated, "before-publication"))
+        self.assertEqual(
+            transport.fetches, 2, "the first resolution did not spend its per-kid bound"
+        )
+
+        # A neighbouring key's caller opens the third fetch and holds it.
+        publishing: list[Any] = []
+        publisher = threading.Thread(
+            target=lambda: publishing.append(validator(ctx, token(neighbor, "publisher")))
+        )
+        publisher.start()
+        self.assertTrue(
+            transport.publishing_started.wait(5), "the neighbouring key's caller never fetched"
+        )
+
+        # The rotated key's next caller arrives while that fetch is running.
+        with _RaceProne():
+            try:
+                overlapping_subject: str = validator(
+                    ctx, token(rotated, "overlapping")
+                ).subject
+            except OAuthBearerError as exc:
+                overlapping_subject = f"refused: {exc}"
+        publisher.join(10)
+        self.assertFalse(publisher.is_alive(), "the neighbouring key's caller never finished")
+
+        self.assertEqual(
+            overlapping_subject,
+            "overlapping",
+            "the caller whose key the running fetch published was refused",
+        )
+        self.assertEqual(len(publishing), 1, "the neighbouring key's caller was refused")
+        self.assertEqual(publishing[0].subject, "publisher")
+        self.assertEqual(transport.fetches, 3, "the recovery caller fetched the key set itself")
+
+        # A caller arriving after that fetch settled is served from the cache.
+        self.assertEqual(validator(ctx, token(rotated, "arrived-later")).subject, "arrived-later")
+        self.assertEqual(transport.fetches, 3, "a cached key fetched again")
+
+        # Controls: a kid nothing publishes is still refused, inside its own
+        # per-kid bound, and a repeat inside the cooldown neither fetches nor
+        # waits on the fetch that ran.
+        stranger = FakeUpstreamProvider(
+            issuer=issuer, kid="never-published", key=generate_rsa_key(512)
+        ).mint_access_token(audience=_OAUTH_AUDIENCE, subject="stranger", scope="namespace:use")
+        with self.assertRaises(OAuthBearerError):
+            validator(ctx, stranger)
+        after_stranger = transport.fetches
+        self.assertLessEqual(after_stranger - 3, 2, "an unknown kid outspent its per-kid bound")
+        with self.assertRaises(OAuthBearerError):
+            validator(ctx, stranger)
+        self.assertEqual(
+            transport.fetches, after_stranger, "a repeat unknown kid inside the cooldown fetched again"
+        )
 
 
 class TestMcpToolInvocationStaysPerCall(unittest.TestCase):
