@@ -1,0 +1,63 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-python-build.sh"
+      ],
+      "durationSeconds": 3.997,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-25T16:11:22Z",
+      "id": "py-build",
+      "inputsDigest": "sha256:1d998544008789cfd80638b213d2f7b1f1c7dd8c1972677d97b579212a1da0fb",
+      "logDigest": "sha256:f5cba3390d89192077a0cf36b9c25e045a7bc2420b296b32012ca95cee858866",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261125T161118Z-69402.log",
+      "reused": false,
+      "startedAt": "2026-11-25T16:11:18Z"
+    }
+  ],
+  "consumed": [],
+  "description": "Python wheel and sdist build",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v26.13.1",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.15.2"
+  },
+  "gate": "py",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "node26-py3.15",
+  "reason": "",
+  "recordedAt": "2026-11-25T16:11:22Z",
+  "releaseOnly": {
+    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "fileCount": 537,
+    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "version": "7.5.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:d7a85e0433c73e45c1e9c9846992d3a40e58a6a35942ea24bb373c40a9763c9a",
+    "fileCount": 133,
+    "paths": [
+      "py/",
+      "scripts/verify-python-build.sh",
+      "scripts/read-version.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:2f516487e445ff7b08505ba9a38514b31cec3c509519eb44a07092ca2023b5a7",
+    "fileCount": 2788
+  },
+  "verdict": "PASS"
+}

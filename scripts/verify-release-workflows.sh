@@ -281,7 +281,7 @@ require_job_contains(
     release_please_draft_guard,
     "required version checks must not evaluate draft release-please heads before generated artifacts are synced",
 )
-for job in ("go", "ts", "py", "contract-tests", "cdk-go-drift", "runtime-floor-matrix", "cdk-floor-matrix"):
+for job in ("go", "ts", "py", "contract-tests", "cdk-go-drift", "consumer-install", "runtime-floor-matrix", "cdk-floor-matrix"):
     require_job_contains(
         ".github/workflows/ci.yml",
         job,

@@ -17,6 +17,44 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **Node.js 26 and Python 3.15 are supported; Node.js 22 is deprecated.** Both newest lines are tested by the
+  contract corpus, the package builds, the CDK Go bindings and the clean-consumer install proof.
+
+  Consumer action now: **none**. Every floor is unchanged — `ts/package.json` and `cdk/package.json` still declare
+  `engines.node: ">=22"`, `py/pyproject.toml` still declares `requires-python: ">=3.12"`, and the construct and
+  template selections are unchanged (`NODEJS_24_X` for TypeScript, `PYTHON_3_14` for Python). One deployed resource
+  does move: `AppTheoryRestV1ChallengeRestoration`'s CloudFront edge function now targets `NODEJS_24_X` instead of
+  `NODEJS_22_X`, so a stack that uses it updates that function on the next deploy. Nothing else changes shape, name or
+  selection.
+
+  What the notice means:
+
+  - AppTheory stops testing Node.js 22 with the **2027-02 major**: that release raises the floor to `>=24` and drops
+    Node.js 22 from the tested set. It is AppTheory's one cutoff, and the release that will require action on a
+    Node.js 22 deployment; it is announced here so the migration can be planned rather than discovered.
+  - AWS ends support for the Node.js 22 Lambda runtime on **2027-04-30**. That is upstream context only, not the
+    AppTheory cutoff: 2027-02 comes first, so no deployment outlives the runtime it runs on.
+  - Releases published before this line — including **v7.5.0** — were tested on Node.js 22 and 24 and on Python 3.12
+    and 3.14 only. If you run a published release, this section does not ask you to change anything; the newest lines
+    are supported from the next release onward.
+
+  Selecting `NODEJS_26_X` or `PYTHON_3_15` for your own functions through `AppTheoryFunction`'s `runtime` prop is
+  supported today: both runtimes exist in the pinned `aws-cdk-lib`, both resolve their own bundling image, a stack that
+  declares them synthesizes, and the clean-consumer install proof bundles a real asset per line through the
+  `apptheory-init` bundlers and loads and invokes the handler it produces. The single support table lives in
+  [Runtime Support](./docs/runtimes/support.md); link to it rather than restating support status elsewhere.
+
+- **`apptheory-init` bundles the whole production dependency closure.** The generated TypeScript project used to bundle
+  only `node_modules/@theory-cloud/apptheory`, so its asset was missing the packages the runtime imports — the AWS SDK
+  v3 clients and `@theory-cloud/tabletheory-ts` — and the handler failed at load with `ERR_MODULE_NOT_FOUND`. The
+  scaffold now stages the project's complete production dependency closure, read from the project's own installed tree,
+  and runs the same module from the bundling image and from local bundling. The Python scaffold's dependency install is
+  unchanged and is now the same shared module. Regenerate a project with `apptheory-init` to pick it up; the asset no
+  longer depends on which packages the Lambda runtime happens to provide.
+
+  The clean-consumer install proof covers this: it bundles one asset per line through these bundlers and loads and
+  invokes the handler that landed in the emitted asset directory under the matching interpreter.
+
 - **`FRONTED` front-door verification from a well-known SSM parameter.** The `FRONTED` origin posture no longer
   requires the front-door secret as a literal in application source. `frontDoorVerification` takes exactly one of
   `secretValue` (the existing literal form, unchanged) or `secretParameterName`, a well-known, stage-qualified

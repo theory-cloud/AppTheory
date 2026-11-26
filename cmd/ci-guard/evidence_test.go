@@ -17,16 +17,18 @@ const evidenceRegistryFixture = `{
     "floor-py3.12": {"environment": {"go": "go1.27.4", "node": "24", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}},
     "floor-node22-py3.12": {"environment": {"go": "go1.27.4", "node": "22", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}},
     "floor-node22-py3.14": {"environment": {"go": "go1.27.4", "node": "22", "python": "3.14", "platform": {"os": "linux", "arch": "x64"}}},
-    "floor-node24-py3.12": {"environment": {"go": "go1.27.4", "node": "24", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}}
+    "floor-node24-py3.12": {"environment": {"go": "go1.27.4", "node": "24", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}},
+    "node26-py3.15": {"environment": {"go": "go1.27.4", "node": "26", "python": "3.15", "platform": {"os": "linux", "arch": "x64"}}}
   },
   "gates": {
     "rubric": {"kind": "source", "profiles": ["default"], "commands": [{"id": "rubric", "argv": ["make", "rubric"]}]},
     "deterministic-builds": {"kind": "source", "profiles": ["default"], "commands": [{"id": "builds", "argv": ["bash", "scripts/verify-builds.sh"]}]},
     "go": {"kind": "source", "profiles": ["default"], "commands": [{"id": "go", "argv": ["bash", "scripts/verify-go.sh"]}]},
-    "ts": {"kind": "source", "profiles": ["default", "floor-node22"], "commands": [{"id": "ts", "argv": ["bash", "scripts/verify-ts-pack.sh"]}]},
-    "py": {"kind": "source", "profiles": ["default", "floor-py3.12"], "commands": [{"id": "py", "argv": ["bash", "scripts/verify-python-build.sh"]}]},
-    "contract-tests": {"kind": "source", "profiles": ["default", "floor-node22-py3.12", "floor-node22-py3.14", "floor-node24-py3.12"], "commands": [{"id": "contract", "argv": ["bash", "scripts/verify-contract-tests.sh"]}]},
-    "cdk-go-drift": {"kind": "source", "profiles": ["default", "floor-node22"], "commands": [{"id": "drift", "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]}]},
+    "ts": {"kind": "source", "profiles": ["default", "floor-node22", "node26-py3.15"], "commands": [{"id": "ts", "argv": ["bash", "scripts/verify-ts-pack.sh"]}]},
+    "py": {"kind": "source", "profiles": ["default", "floor-py3.12", "node26-py3.15"], "commands": [{"id": "py", "argv": ["bash", "scripts/verify-python-build.sh"]}]},
+    "contract-tests": {"kind": "source", "profiles": ["default", "floor-node22-py3.12", "floor-node22-py3.14", "floor-node24-py3.12", "node26-py3.15"], "commands": [{"id": "contract", "argv": ["bash", "scripts/verify-contract-tests.sh"]}]},
+    "cdk-go-drift": {"kind": "source", "profiles": ["default", "floor-node22", "node26-py3.15"], "commands": [{"id": "drift", "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]}]},
+    "consumer-install": {"kind": "source", "profiles": ["default", "node26-py3.15"], "commands": [{"id": "consumer", "argv": ["bash", "scripts/verify-consumer-install.sh", "ts"]}]},
     "examples-local": {"kind": "source", "profiles": ["default"], "commands": [{"id": "examples", "argv": ["make", "examples-local"]}]},
     "security-refresh": {"kind": "dependency-scan", "profiles": ["default"], "commands": [{"id": "scan", "argv": ["bash", "scripts/verify-security-refresh.sh"]}]},
     "release-delta": {"kind": "generated-delta", "commands": [{"id": "delta", "argv": ["bash", "scripts/verify-version-alignment.sh"]}]}
@@ -85,6 +87,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile default
+  consumer-install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consumer install proof (producing host)
+        run: bash scripts/evidence/verify-gate.sh --gate consumer-install --profile default
+      - name: Consumer install proof (newest lines)
+        run: bash scripts/evidence/verify-gate.sh --gate consumer-install --profile node26-py3.15
   security-refresh:
     runs-on: ubuntu-latest
     steps:
@@ -114,6 +123,11 @@ jobs:
             ts-profile: default
             py-profile: floor-py3.12
             contract-profile: floor-node24-py3.12
+          - node-version: "26"
+            python-version: "3.15"
+            ts-profile: node26-py3.15
+            py-profile: node26-py3.15
+            contract-profile: node26-py3.15
     steps:
       - name: Floor proof
         run: |
@@ -127,6 +141,8 @@ jobs:
         include:
           - node-version: "22"
             drift-profile: floor-node22
+          - node-version: "26"
+            drift-profile: node26-py3.15
     steps:
       - name: CDK floor proof
         run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
@@ -228,7 +244,7 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 		{
 			name: "matrix reference without explicit cells",
 			mutate: func(text string) string {
-				return strings.Replace(text, "    strategy:\n      matrix:\n        include:\n          - node-version: \"22\"\n            drift-profile: floor-node22\n", "", 1)
+				return strings.Replace(text, "    strategy:\n      matrix:\n        include:\n          - node-version: \"22\"\n            drift-profile: floor-node22\n          - node-version: \"26\"\n            drift-profile: node26-py3.15\n", "", 1)
 			},
 			want: "declares no explicit matrix.include cells",
 		},
@@ -251,7 +267,7 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 			name:   "gate supports an undeclared profile",
 			mutate: func(text string) string { return text },
 			registry: func(text string) string {
-				return strings.Replace(text, `"profiles": ["default", "floor-node22"], "commands": [{"id": "drift"`, `"profiles": ["default", "floor-node22", "floor-node99"], "commands": [{"id": "drift"`, 1)
+				return strings.Replace(text, `"profiles": ["default", "floor-node22", "node26-py3.15"], "commands": [{"id": "drift"`, `"profiles": ["default", "floor-node22", "floor-node99"], "commands": [{"id": "drift"`, 1)
 			},
 			want: "supports undeclared proof profile",
 		},

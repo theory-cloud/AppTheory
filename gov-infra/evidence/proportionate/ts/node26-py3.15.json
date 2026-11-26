@@ -1,0 +1,84 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-ts-dist-drift.sh"
+      ],
+      "durationSeconds": 1.829,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-25T16:11:23Z",
+      "id": "ts-dist-drift",
+      "inputsDigest": "sha256:74c41bff983d27a100e689ff8a8a388146c0d8c198324b8abadd2bec9e33cbf4",
+      "logDigest": "sha256:689cc69789fd8dba267380ace3b0b9f52c5e4f6d5d6edfafe0a46383ccd43758",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261125T161122Z-69402.log",
+      "reused": false,
+      "startedAt": "2026-11-25T16:11:22Z"
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-ts-pack.sh"
+      ],
+      "durationSeconds": 5.62,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-25T16:11:29Z",
+      "id": "ts-pack",
+      "inputsDigest": "sha256:1b08c043e32560e20d8bb14d74bedb48a3b474e5b141a682b091d52dd5026621",
+      "logDigest": "sha256:aaf88daafa5c25da414c8213b9afd3a4aeb4d71f6d7547b20bdca6ab15fdcbbc",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261125T161123Z-69402.log",
+      "reused": false,
+      "startedAt": "2026-11-25T16:11:23Z"
+    }
+  ],
+  "consumed": [],
+  "description": "TypeScript checked-in dist drift and npm pack",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v26.13.1",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.15.2"
+  },
+  "gate": "ts",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "node26-py3.15",
+  "reason": "",
+  "recordedAt": "2026-11-25T16:11:29Z",
+  "releaseOnly": {
+    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "fileCount": 537,
+    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "version": "7.5.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:4945cd42f955d22ffb9e0d709b2bea1559e04b32619c511b144cce1d319f66cc",
+    "fileCount": 464,
+    "paths": [
+      "ts/",
+      "scripts/verify-ts-dist-drift.sh",
+      "scripts/verify-ts-pack.sh",
+      "scripts/read-version.sh",
+      "scripts/lib/ts-runtime-deps.sh",
+      "scripts/lib/runtime-deps.sh",
+      "scripts/lib/retry.sh",
+      "scripts/lib/blocked.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:2f516487e445ff7b08505ba9a38514b31cec3c509519eb44a07092ca2023b5a7",
+    "fileCount": 2788
+  },
+  "verdict": "PASS"
+}

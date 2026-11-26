@@ -27,8 +27,12 @@ except ModuleNotFoundError:  # pragma: no cover - CI/local toolchains are 3.11+.
 
 
 ROOT = Path.cwd()
-LATEST_PROVEN_PYTHON = (3, 14)
-LATEST_PROVEN_NODE_MAJOR = 24
+# The newest tested runtime lines. These are not floors: py/pyproject.toml keeps
+# requires-python >=3.12 and ts/cdk package.json keep engines.node >=22, and both
+# of those stay unchanged. The newest line is an addition to the tested set, so
+# this pair only says which majors the CI matrix has to keep proving.
+LATEST_PROVEN_PYTHON = (3, 15)
+LATEST_PROVEN_NODE_MAJOR = 26
 TABLETHEORY_RELEASE_PREFIX = "https://github.com/theory-cloud/TableTheory/releases/download/"
 
 
@@ -362,6 +366,16 @@ def main() -> None:
         f"contract-profile: floor-node{ts_floor}-py{version_text(py_floor)}",
     )
     require_job_not_contains("runtime-floor-matrix", runtime_floor_job, "EVIDENCE_FORCE_EXECUTE: \"true\"")
+    # The newest tested line names its own tracked profile exactly like a floor
+    # cell does. Adding Node 26 / Python 3.15 to the supported set is a claim
+    # that gets its own record, not a claim an older profile stands in for.
+    latest_line_profile = f"node{LATEST_PROVEN_NODE_MAJOR}-py{version_text(LATEST_PROVEN_PYTHON)}"
+    for cell_key in ("ts-profile", "py-profile", "contract-profile"):
+        require_job_contains(
+            "runtime-floor-matrix",
+            runtime_floor_job,
+            f"{cell_key}: {latest_line_profile}",
+        )
     require_job_contains(
         "release-security-gates",
         workflow_job_body("release-security-gates"),
@@ -372,16 +386,16 @@ def main() -> None:
     cdk_floor_node_versions = collect_versions_from_text(cdk_floor_job, "node")
     require_ci_node_major(cdk_floor, cdk_floor_node_versions)
     if cdk_floor < LATEST_PROVEN_NODE_MAJOR:
-        # Node 24 CDK coverage lives in the dedicated binding-drift job, which
-        # verifies the `default` profile. That profile's tracked declaration is
-        # the Node 24 claim; requiring the label again in the floor job would
-        # only re-state an always-covered environment.
+        # The oldest CDK line is covered by the dedicated binding-drift job, which
+        # verifies the `default` profile. The newest line gets its own cell below,
+        # so neither line depends on a label the other one carries.
         require_job_contains(
             "cdk-go-drift",
             workflow_job_body("cdk-go-drift"),
             'bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile default',
         )
     require_job_contains("cdk-floor-matrix", cdk_floor_job, f"drift-profile: floor-node{cdk_floor}")
+    require_job_contains("cdk-floor-matrix", cdk_floor_job, f"drift-profile: {latest_line_profile}")
     require_job_contains(
         "cdk-floor-matrix",
         cdk_floor_job,

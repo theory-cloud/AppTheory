@@ -30,6 +30,7 @@ APPROVED_GATES = {
     "py",
     "contract-tests",
     "cdk-go-drift",
+    "consumer-install",
     "examples-local",
     "security-refresh",
     "release-delta",

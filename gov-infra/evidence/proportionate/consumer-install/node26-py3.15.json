@@ -1,0 +1,104 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-consumer-install.sh",
+        "ts"
+      ],
+      "durationSeconds": 9.672,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-26T00:52:34Z",
+      "id": "consumer-install-ts",
+      "inputsDigest": "sha256:d0d0362d45b764afc7bbc74487a178375a456876953944785e7b23386ccdc6e2",
+      "logDigest": "sha256:83a336f24695b5a0b2649c6560c8376ca636267b0cdb6478fa652ddf753ffc26",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-ts-20261126T005224Z-42230.log",
+      "reused": false,
+      "startedAt": "2026-11-26T00:52:24Z"
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-consumer-install.sh",
+        "py"
+      ],
+      "durationSeconds": 10.647,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-26T00:52:45Z",
+      "id": "consumer-install-py",
+      "inputsDigest": "sha256:21504b9705eed504b69d4d1b34f9bbbe12cc8aa9a4fcca01aaf5eaddc3448a76",
+      "logDigest": "sha256:2c4e52998aad766b06a2723dcc3887fc91b1bbf335c01958e1091daba0129f24",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-py-20261126T005234Z-42230.log",
+      "reused": false,
+      "startedAt": "2026-11-26T00:52:34Z"
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-consumer-install.sh",
+        "cdk"
+      ],
+      "durationSeconds": 33.8,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-26T00:53:18Z",
+      "id": "consumer-install-cdk",
+      "inputsDigest": "sha256:65f809dcf86057861455c89bf18e60190d33b7d5edb361f4151be92a858c66b3",
+      "logDigest": "sha256:1a40693ccd774b7f697db65c857f77ad37acb1275ca8d8fa304d223b467f99b6",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-cdk-20261126T005245Z-42230.log",
+      "reused": false,
+      "startedAt": "2026-11-26T00:52:45Z"
+    }
+  ],
+  "consumed": [],
+  "description": "Packed TypeScript and CDK artifacts plus the built Python distribution installed into empty consumers, exercised, and bundled into runnable assets by the scaffold bundlers",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v26.13.1",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.15.2"
+  },
+  "gate": "consumer-install",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "node26-py3.15",
+  "reason": "",
+  "recordedAt": "2026-11-26T00:53:18Z",
+  "releaseOnly": {
+    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "fileCount": 537,
+    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "version": "7.5.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:318f185b48a6632234bf105426c9c0d13595f932be8efc463dcef52f6f729677",
+    "fileCount": 972,
+    "paths": [
+      "VERSION",
+      "ts/",
+      "py/",
+      "cdk/",
+      "templates/",
+      "scripts/read-version.sh",
+      "scripts/verify-consumer-install.sh",
+      "scripts/fixtures/consumer-install/",
+      "scripts/lib/"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:38c196bf3edea3a5afaad714ededc74bba263bdc36bf3a5973e66f6e153e8334",
+    "fileCount": 2792
+  },
+  "verdict": "PASS"
+}

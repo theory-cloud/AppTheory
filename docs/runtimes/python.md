@@ -25,8 +25,12 @@ python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 ```
 
 Python 3.12+ is required. The floor is pinned by `py/pyproject.toml`, Ruff, Pyright, the pinned TableTheory GitHub
-Release wheel metadata, and CI. Do not document a different Python floor unless `scripts/verify-runtime-floor-claims.sh`
-passes with a CI matrix that includes both the floor and Python 3.14.
+Release wheel metadata, and CI.
+
+Which Python lines are tested, which is the floor, and which lines are being retired are stated once in
+[Runtime Support](support.md). Do not restate a support statement on this page or in a guide: link here, so the answer
+cannot drift. Do not document a different Python floor unless `scripts/verify-runtime-floor-claims.sh` passes with a CI
+matrix that covers both the floor and the newest supported line.
 
 ## Module layout
 
@@ -46,9 +50,12 @@ from apptheory import create_app, text
 
 app = create_app()
 
-@app.get("/ping")
+
 def ping(ctx):
     return text(200, "pong")
+
+
+app.get("/ping", ping)
 
 def handler(event, ctx):
     return app.handle_lambda(event, ctx)

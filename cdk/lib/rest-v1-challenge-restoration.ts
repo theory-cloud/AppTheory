@@ -411,7 +411,7 @@ export class AppTheoryRestV1ChallengeRestoration extends Construct {
       this,
       "ChallengeRestorationFunction",
       {
-        runtime: lambda.Runtime.NODEJS_22_X,
+        runtime: lambda.Runtime.NODEJS_24_X,
         handler: "index.handler",
         code: lambda.Code.fromInline(
           generateRestV1ChallengeRestorationHandlerCode(this.restoreSourceHeaders),
