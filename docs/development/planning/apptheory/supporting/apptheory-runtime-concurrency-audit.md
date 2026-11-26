@@ -1,12 +1,15 @@
 # Runtime concurrency audit: multi-request isolation in one execution environment
 
-Status: complete, revised in round 1. Audited at `staging` `397ebd591b70aa333820a544f3acbade426dce13`; fixes and tests
+Status: complete, revised in round 2. Audited at `staging` `397ebd591b70aa333820a544f3acbade426dce13`; fixes and tests
 land with the `feat/runtime-multiconcurrency` branch. Scope: the TypeScript and Python runtimes. Go is recorded as
-**N/A** (AWS has no Go Web Function runtime, and the Go runtime is unchanged).
+**N/A** (AWS has no Go Web Function runtime, and the Go runtime is unchanged); §8 states what Go shares and what
+closing it there would cost.
 
 This is the evidence behind [Concurrency and request isolation](../../../features/concurrency.md). Line numbers below
 are the audited (pre-fix) tree, so every citation resolves against `397ebd59`, except the round-1 additions, whose
-citations resolve against the round-0 head `710c1b62` and are marked **(r1)**. §7 records what round 1 changed and why.
+citations resolve against the round-0 head `710c1b62` and are marked **(r1)**, and the round-2 additions, whose
+citations resolve against the round-1 head `356e847b` and are marked **(r2)**. §7 and §8 record what each round
+changed and why.
 
 ## 1. Method
 
@@ -47,7 +50,8 @@ hope" with an enumerable sweep, run over both runtimes, whose hits were then cla
 | Class-level mutable state (TS) | `new Map()/Set()/WeakMap()` on a class field plus `private` mutable fields | `mcp/index.ts:646,755,840,881,955,1140` (S8/S9), `mcpfacade.ts:1356` (S4), `oauth/store.ts` (S7), `oauth/provider.ts` (S6), **`microvm/registry.ts:109`** (new: S19), `microvm/fake.ts:68,270` (new: X2), `internal/aws-lambda-streaming.ts:216` (P6). |
 | Module-level dicts/locks (Python) | `^name = {...}` / `[...]` / `threading.Lock()` at column 0 | `oauth/fake_provider.py:54-55` (S13), `mcpfacade.py:1544` (U5), `aws_http.py:49` (S12), import-time dicts (S18). No new item. |
 | Classes holding mutable collections (Python) | `self._*(store\|records\|sessions\|tasks\|events\|streams\|cache\|validators\|metadata\|entries\|index) = {…}` | `mcp/__init__.py` (S8/U1/U2/U6), `oauth/store.py` (S7), `oauth/autheory.py` (U4), `logging_profile.py` (S2), `microvm/fake.py` (X2), **`microvm/registry.py:78`** (new: U7). |
-| Exported request-state types | `class .*Context`, `asAppSync`/`asWebSocket` accessors, per-invocation transport state | `context.ts` P1/P2 plus **`AppSyncContext` at `context.ts:33`** (new: P11) and the **Function URL writer's per-invocation locals at `internal/aws-lambda-streaming.ts:95-212`** (new: P12). |
+| Exported request-state types | `class .*Context`, `asAppSync`/`asWebSocket` accessors, per-invocation transport state | `context.ts` P1/P2 plus **`AppSyncContext` at `context.ts:33`** (new: P11) and the **Function URL writer's per-invocation locals at `internal/aws-lambda-streaming.ts:95-212`** (new: P12). **The query was too narrow: it matched class declarations only, so a `Context` that is an `interface` — or a Python dataclass — was invisible to it** (r2, corrected below). |
+| Interface- and dataclass-typed holder types (TS + Python) | `export interface .*Context`, `export type .*Handler = (\(.*context`; every `McpToolContext(`/`McpToolContext {` construction site; `@dataclass.*\nclass \w*Context` in Python (r2) | **`McpToolContext` and `McpToolAuthContext` at `ts/src/mcp/index.ts:260-275`** (r2: P13), built per call for the ordinary (`:2810`), streaming (`:2928`) and task (`:3044`) routes with the auth view from `authFromContext` (`:4999`), and the Python siblings **`McpToolContext`/`McpCallerAuth` at `py/src/apptheory/mcp/__init__.py:271`, `:260`** (r2: P14), built per call at `:2106`, `:2182` and `:2255`. Both are per-request holders; neither was in the round-1 tables. |
 | Registration-time tables | `add_*`/`register*` writers vs. serving reads | MCP tool/resource/prompt registry indexes (`mcp/index.ts:646,755,840`; `py …/mcp/__init__.py:610,693,757`) are written only by registration and read by index during serving — the S9 shape (new: S20). |
 | Test doubles and process-global fakes | `fake*.py`, `testkit*.py`, `testkit/`, `microvm/fake.*` | Already covered as X2 for Python; the TypeScript siblings (`testkit/oauthprovider.ts:158-163`, `microvm/fake.ts:68,270`) are now named in X2 as well. |
 
@@ -55,6 +59,31 @@ The sweep found the items the round-0 tables did not list: the Python `MemoryMic
 defect), its TypeScript sibling (S19, correct today but unlisted and untested), the two TypeScript per-invocation
 holders the sanity review named (P11, P12), the registration-time MCP registry indexes (S20), and the TypeScript test
 doubles (X2). Everything it found is a bounded fix or a classification row; nothing required a redesign.
+
+**Correction (r2).** The round-1 claim that the sweep enumerated every request-state holder was wrong for exactly one
+family: the "exported request-state types" query above matched `class .*Context`, so it could only see class-declared
+holders. `McpToolContext` and `McpToolAuthContext` are interfaces that hold real per-call data — session id, request
+id, method, input responses, request state, and the caller's identity, tenant and scopes — and the Python runtime
+declares the same shape as dataclasses. Round 2 ran the interface/dataclass/construction-site queries in the row above
+over both runtimes. The result, honestly recorded:
+
+- `McpToolContext` + `McpToolAuthContext` (`ts/src/mcp/index.ts:260`, `:267`) and their Python siblings
+  `McpToolContext` + `McpCallerAuth` (`py/src/apptheory/mcp/__init__.py:271`, `:260`): **new rows P13 and P14**, each
+  classified per-request and each now pinned by an overlap test that rendezvouses inside the tool across the ordinary,
+  streaming and task routes with distinct authenticated callers.
+- `MicroVMAuthContext` (`ts/src/microvm/model.ts:525`; `py/src/apptheory/microvm/model.py:138`) and `McpResourceContext`
+  (`ts/src/mcp/index.ts:304`; `py/…/mcp/__init__.py:300`): a field of one request's own payload, built per call
+  (`ts/src/microvm/controller-routes.ts:141`, `:277`, `:369`; `py/…/microvm/controller.py:989`) and read only
+  downstream. Per-request by construction; no row needed beyond the note here.
+- `NamingContext` (`ts/src/naming.ts:98`), `LoggingProfileRequestContext` and `LoggingProfileJobContext`
+  (`ts/src/logging-profile.ts:256`, `:269`): argument values handed to a pure function or one log encode; never stored,
+  never shared. Per-request by construction.
+- `EventContext` and `WebSocketContext` (`py/src/apptheory/context.py:221`, `:291`) and `AppSyncContext`
+  (`py/src/apptheory/context.py:20`, alongside the TypeScript P11): already covered by P2/P11.
+
+No further shared holder appeared: every interface-typed or dataclass-typed hit is either a per-call argument or a
+field of one request's payload, and the two that carry identity — `McpToolContext`/`McpToolAuthContext` and
+`MicroVMAuthContext` — are constructed per call and never mutated after construction.
 
 ## 2. Classification
 
@@ -74,6 +103,8 @@ doubles (X2). Everything it found is a bounded fix or a classification row; noth
 | P10 | `py/src/apptheory/aws_http.py:214`, `:305` | Per-drain `box` dict and worker thread | The worker touches only its own request's stream (see §3.1 for the residual). |
 | P11 **(r1)** | `ts/src/context.ts:33`, held at `:182`, exposed at `:308`; built at `ts/src/app.ts:1662` from `ts/src/internal/aws-appsync.ts:119` | `AppSyncContext` (field, parent type, arguments, identity, source, variables, stash, prev, request headers, raw event) | Constructed per resolver invocation and stored on that invocation's `Context`; every field is copied in the constructor, so the holder and the event it came from are unreachable from another request. Pinned by `overlapping AppSync resolvers keep their own resolver context`. |
 | P12 **(r1)** | `ts/src/internal/aws-lambda-streaming.ts:95-212` | The production Function URL writer's per-invocation state: `meta`, `firstChunk`, `iterator`, `streamErrorCode`, and the wrapped `out` stream | All five are locals of `writeStreamedLambdaFunctionURLResponse`, one call per invocation, and the stream they write to is the invocation's own argument. Pinned by `overlapping function URL streamed responses keep their own transport state` and `a broken stream reports only its own invocation's error code`. |
+| P13 **(r2)** | `ts/src/mcp/index.ts:267` (`McpToolContext`), `:260` (`McpToolAuthContext`), built at `:2810` (ordinary), `:2928` (streaming), `:3044` (task); auth view from `authFromContext` at `:4997` | The MCP tool invocation context: `sessionId`, `requestId`, `method`, `inputResponses`, `requestState`, and the caller's `authIdentity`, `tenantId`, `tenantBound` and `scopes` | One object literal per `tools/call`, per route, with the auth view built from that call's `Context` into a fresh `McpToolAuthContext` (strings and a new `scopes` array). Nothing is stored and nothing is reused; the task route builds its own copy from the task record. Pinned by `overlapping MCP tool calls keep their own invocation context`. |
+| P14 **(r2)** | `py/src/apptheory/mcp/__init__.py:271` (`McpToolContext`), `:260` (`McpCallerAuth`), built at `:2106` (ordinary), `:2182` (streaming), `:2255` (task); auth view from `_caller_auth_from_context` at `:3634` | The same invocation context in the Python runtime | A fresh dataclass per `tools/call`, per route, with a fresh `McpCallerAuth` whose `scopes` list comes from `_normalize_scope_list` (a new list). Pinned by `test_overlapping_tool_calls_keep_their_own_invocation_context`. |
 
 Pinned by `test_http_pipeline_isolates_overlapping_requests`, `test_overlapping_failures_keep_their_own_identity` and
 `test_overlapping_early_returns_keep_their_own_response_state` (Python) and their two TypeScript counterparts.
@@ -89,7 +120,7 @@ Pinned by `test_http_pipeline_isolates_overlapping_requests`, `test_overlapping_
 | U5 | `py/src/apptheory/mcpfacade.py:1538` (`global` at `:1542`, assign `:1548`) | `_front_door_ssm_client_instance` lazy boto3 SSM client | 8 clients created for 8 overlapping first reads. botocore documents client creation as not thread-safe. | Module lock with double-check inside `_front_door_ssm_client()`. |
 | U6 | `py/src/apptheory/mcp/__init__.py:1166` (`_store` at `:1167`) | `_S3McpStreamSpillStore._store` lazy object store | 8 object stores created for 8 overlapping first writes. | Instance `threading.Lock` with double-check. |
 | U7 **(r1)** | `py/src/apptheory/microvm/registry.py:78` (`_records` at `:81`, `list` walking it at `:143` and `:155`) | `MemoryMicroVMSessionRegistry` — the process-wide micro:vm session registry behind `MicroVMSessionClient` | `RuntimeError: dictionary changed size during iteration` escaping `list()` while another request's `put()`/`delete()` mutated the map: reproduced in 5/5 trials with two writers and two listers, and by `test_microvm_session_registry_survives_concurrent_put_delete_list` / `test_microvm_session_registry_keeps_tenants_apart_under_overlap` on `710c1b62` (2 errors). On a Web Function that is a 500 for a valid list. | `threading.RLock` guarding `put`, `get` (including its pre-M1 move, which writes and drops), `delete`, and both passes of `list`; reentrant because the legacy fallback reads the map inside `get`'s guarded section. |
-| U8 **(r1)** | `ts/src/oauth/jwks.ts:455-467` (the cooldown refusal at `:461`) | The shared JWKS signing-key cache's cold-start window: `windows` is recorded **before** the fetch that would fill `keys`, so every peer that arrives during that fetch sees an open window | A burst of *valid* tokens on a cold cache is refused: 1 authorization, 7 `unknown_kid` refusals out of 8 overlapping validations on `710c1b62` (`a cold key set serves every overlapping validation`, `the provider caches discovery and validators under overlap`). Not torn state — a check-then-act across an `await` in another request's frame — so a burst of first requests (or the first burst after the 900 s cache expiry) rejects almost every user. Note the Python validator does not have this shape: its `_lock` is held across the fetch, so peers find the key. | A peer that finds an open window and an in-flight refresh now joins that refresh (`joinInFlightRefresh`, no second fetch, no budget unit) and re-reads the cache it published; when nothing is in flight the cooldown still refuses, so fetch amplification is unchanged. |
+| U8 **(r1)** | `ts/src/oauth/jwks.ts:455-467` (the cooldown refusal at `:461`) | The shared JWKS signing-key cache's cold-start window: `windows` is recorded **before** the fetch that would fill `keys`, so every peer that arrives during that fetch sees an open window | A burst of *valid* tokens on a cold cache is refused: 1 authorization, 7 `unknown_kid` refusals out of 8 overlapping validations on `710c1b62` (`a cold key set serves every overlapping validation`, `the provider caches discovery and validators under overlap`). Not torn state — a check-then-act across an `await` in another request's frame — so a burst of first requests (or the first burst after the 900 s cache expiry) rejects almost every user. Note the Python validator does not have this shape: its `_lock` is held across the fetch, so peers find the key. | A peer that finds an open window now **follows the resolution in flight** (`followInFlightRefresh`, r2): it waits on the in-flight fetch, re-reads the cache that fetch filled, and — when the key is still absent and the request that opened the window is inside its own permitted retry — waits on that retry instead of refusing. It starts no fetch and consumes no budget unit, and the loop takes at most the `maxRefreshPerKid + 1` bounded waits the opening request may spend on fetches, so it cannot outlast the budget. When nothing is in flight the cooldown still refuses, as it must. This closes the round-1 gap: the cold-cache fix alone left peers of a *permitted* publication-lag retry with `unknown_kid` (1 of 8 authorized, 7 refused) even though the opening request went on to publish the key. |
 
 Failing-first evidence: the round-0 suite (16 tests) run against `397ebd59` reports
 `Ran 16 tests — FAILED (failures=6)`, one failure per U1–U6 item (U2 carries two tests; the create test is the
@@ -130,7 +161,7 @@ pass unchanged — which is also the evidence that the remaining TypeScript rows
 | # | Location | Item | Classification |
 |---|---|---|---|
 | X1 | `ts/src/testkit/oauthprovider.ts:158`, `:162`, `:163` | `lastToken`, `refreshCalls`, `lastRefreshForm` on the fake OAuth server | `UNSAFE_SHARED`, **test-double only**. Two overlapping token calls in one test can overwrite each other's last-request record. Never constructed by the runtime; not on a request path. Left as-is; a fake that records "the last request" is single-threaded instrumentation by definition, and changing it to a per-call record would add public testkit surface (which the size check forbids). |
-| X2 | `py/src/apptheory/objectstore.py:293-294`, `vectorstore.py:151`, `microvm/fake.py:24`; `ts/src/testkit/oauthprovider.ts:158-163`, `ts/src/microvm/fake.ts:68`, `:270-272`; `py/src/apptheory/testkit.py:590`, `ids.py:39-43`, `clock.py` | In-memory fakes and their recorded-call buffers, `ManualIdGenerator`, manual clocks | `UNSAFE_SHARED if shared`, **test-double only**. Deterministic test instrumentation; the runtime never constructs them for a request, and a double that records "the last call" is single-threaded by definition. Documented in the feature page as "not for production concurrency". |
+| X2 | `py/src/apptheory/objectstore.py:293-294`, `vectorstore.py:151`, `microvm/fake.py:24`; `ts/src/testkit/oauthprovider.ts:158-163`, `ts/src/microvm/fake.ts:68`, `:270-272`; `py/src/apptheory/testkit.py:590`, `ids.py:39-43`, `clock.py`; the TypeScript doubles `FakeVectorStore`, `FakeEmbedder`, `FakeObjectStore` and `FakeWebSocketManagementClient` (r2, completing the named list) | In-memory fakes and their recorded-call buffers, `ManualIdGenerator`, manual clocks | `UNSAFE_SHARED if shared`, **test-double only**. Deterministic test instrumentation; the runtime never constructs them for a request, and a double that records "the last call" is single-threaded by definition. Documented in the feature page as "not for production concurrency". |
 | X3 | `py/src/apptheory/app.py:77-89`; `bind_handler.py:158-168`; `mcp/__init__.py:3936-3949` | `_resolve` and its siblings bridging an awaitable with `asyncio.run` | Not shared state: a **capability** limit. `asyncio.run` raises inside a live event loop, so the Python runtime supports thread concurrency only, and fails closed with a named message otherwise. Changing this would alter runtime semantics, which is a size-check trigger; recorded for the AT-W1 composition instead. |
 
 ## 3. Flagged to the owner, deliberately not changed
@@ -172,6 +203,11 @@ changes what an already-refused caller waits for: no exported signature, type, c
 or CDK/jsii construct changed. `api-snapshots/*.txt` are unchanged. The audit found nothing requiring a public API
 redesign, so this change stays inside the bounded fix and does not stop for approval.
 
+Round 2 kept that shape. The U8 completion is one private helper (`followInFlightRefresh`) replacing its predecessor and
+one call site; it adds no state, no knob, no fetch, and changes no refusal other than the one the contract already
+requires. The P13/P14 work adds no runtime change at all: both holders were already per-call, and the round added their
+classification and the overlap tests that pin it.
+
 ## 6. What the tests establish
 
 | Claim | Test |
@@ -186,13 +222,22 @@ redesign, so this change stays inside the bounded fix and does not stop for appr
 | The session store, front-door cache, drain registry and shared key cache stay correct under overlap (S1, S4, S12, S13) | `test_memory_session_store_keeps_sessions_apart_under_overlap`, `test_front_door_secret_cache_reads_once_under_overlap`, `test_drain_worker_registry_is_readable_during_overlap`, `test_shared_rsa_key_returns_one_keypair_under_overlap` |
 | The micro:vm session registry loses no record, crosses no tenant, and lists a self-consistent snapshot under overlap (U7, S19) | `test_microvm_session_registry_survives_concurrent_put_delete_list`, `test_microvm_session_registry_keeps_tenants_apart_under_overlap`; `interleaved microvm registry writes never lose a record or cross a tenant`, `microvm registry mutations finish inside one synchronous stretch` |
 | A burst of overlapping valid tokens is authorized on a cold JWKS cache, and fetch amplification stays bounded (U8) | `a cold key set serves every overlapping validation`; `test_valid_tokens_stay_authorized_under_overlap` |
+| A permitted key-publication retry reaches every overlapping caller, not only the one that opened it, and the refusal controls (unknown kid, 503, hanging fetch, exhausted budget) are unchanged (U8, r2) | `the key-publication retry serves every overlapping valid caller` (TS); `test_key_publication_retry_serves_every_overlapping_caller` (Python) |
+| MCP tool invocation contexts stay with their own call across the ordinary, streaming and task routes under overlap (P13, P14, r2) | `overlapping MCP tool calls keep their own invocation context` (TS); `test_overlapping_tool_calls_keep_their_own_invocation_context` (Python) |
 | AppSync resolver metadata and the Function URL writer's per-invocation transport state stay with their request (P11, P12) | `overlapping AppSync resolvers keep their own resolver context`, `overlapping function URL streamed responses keep their own transport state`, `a broken stream reports only its own invocation's error code` |
 | The default front-door reader and the provider's discovery/validator caches are correct under overlap on their production paths (S3, S6) | `the default front-door parameter reader shares one SSM client under overlap`, `the provider caches discovery and validators under overlap` |
 | Valid Python bearer tokens stay authorized, reuse one validator per key, and keep two issuers' keys apart under overlap (U3, U4) | `test_valid_tokens_stay_authorized_under_overlap`, `test_two_issuer_keys_stay_separated_under_overlap` |
 
-Of the fifteen TypeScript rows, thirteen pass on the **unmodified** round-0 runtime: those are pins of already-correct
-behaviour, and they exist to keep it that way. Two fail on `710c1b62` — the cold-cache pair that exposed U8 — and pass
-after its fix. The Python suite fails 6 of its round-0 16 at `397ebd59` and passes all 20 with the round-1 additions.
+Of the fifteen round-1 TypeScript rows, thirteen pass on the **unmodified** round-0 runtime: those are pins of
+already-correct behaviour, and they exist to keep it that way. Two fail on `710c1b62` — the cold-cache pair that
+exposed U8 — and pass after its fix. The Python suite fails 6 of its round-0 16 at `397ebd59` and passes all 20 with
+the round-1 additions.
+
+Round 2 adds two TypeScript rows and two Python rows. The publication-lag row fails on `356e847b` — the round-1 head —
+with `overlapping caller 1 was refused a valid token: invalid bearer token: unknown_kid`, and passes after the U8
+completion. The two MCP rows pass wherever they run, because both holders were already per-call; they are pins, and
+they were shown to be load-bearing by mutation: sharing the tool context (TypeScript) or the auth view (Python) makes
+them fail with another caller's session, identity and scopes.
 
 ## 7. Round 1: findings closed
 
@@ -212,3 +257,34 @@ Still flagged to the owner, deliberately unchanged in this round: §3.1 (the buf
 versus the normative contract) and X3 (`asyncio.run`, so Python is thread-concurrent only). Both reviewers agree
 neither leaks state across requests; the drain worker is a fail-closed wording decision and the `asyncio.run` bridge a
 capability boundary for the Web Function composition, not isolation defects. §3.2's two older observations stand.
+
+## 8. Round 2: findings closed
+
+Round 1 was cleared by the adversary and blocked by sanity with two findings. Both name a claim, an owner and
+evidence, and both are closed here.
+
+| Finding | Closure |
+|---|---|
+| `SAN-3738-04` (high): the U8 repair is incomplete — peers of a *permitted* publication-lag retry are refused | **U8 completed.** The cooldown branch now follows the whole bounded resolution (`followInFlightRefresh`, `ts/src/oauth/jwks.ts:458-473`) instead of only the first fetch: it waits, re-reads, and waits again while the opening request is still inside the retry the contract already allows. No fetch is added, no budget unit is consumed, and cooldown, per-kid bound, global fetch budget, fetch timeout and unknown-kid refusal are untouched. Pinned by `the key-publication retry serves every overlapping valid caller`, which fails on `356e847b` (`overlapping caller 1 was refused a valid token: invalid bearer token: unknown_kid`) and passes after, with the single-request control, unknown-kid, 503, hanging-fetch and exhausted-budget controls in the same row. **Python has no such gap** and needs no production change: `_key_for` holds `self._lock` across the whole resolution (`py/src/apptheory/oauth/jwks.py:397-421`), so a peer blocks until the opening request has finished its permitted retry and then finds the published key in the cache — the same outcome by serialization rather than by joining. `test_key_publication_retry_serves_every_overlapping_caller` pins that outcome on the unchanged runtime. |
+| `SAN-3738-05` (medium): the round-1 sweep missed the MCP tool invocation contexts | Classified **P13** (TypeScript) and **P14** (Python), and pinned by two overlap tests that rendezvous *inside* the tool across the ordinary, streaming and task routes with six distinct authenticated callers, asserting each call's session id, request id, identity, tenant and scopes. No runtime change was needed: both holders are built per call. §1.1 carries the corrected sweep method and its honest result. |
+
+**Go: N/A, with the reason stated precisely.** Go *does* share the shape of this defect: `keyForKid`
+(`runtime/oauth/jwks.go:556-592`) returns `errUnknownKey` immediately for a `kid` whose window is open, so it is strictly
+worse than round 1's TypeScript — no peer ever benefits from the opening request's permitted retry, and a burst of valid
+tokens on a rolling key is refused outright. It is not fixed here for two reasons, both stated rather than assumed.
+
+1. **It is unreachable in production.** AWS has no Go Web Function runtime: a Go Lambda execution environment handles one
+   invocation at a time, which is the assignment's stated reason for recording Go N/A and for not changing it.
+2. **Closing it is not a bounded change.** Go's single-flight object (`jwksRefreshFlight`) covers *one* fetch and is
+   cleared before the retry loop's next iteration, so a peer can sample the gap between two fetches and see nothing in
+   flight — a naive join would be both racy and only partially correct. A correct fix has to publish one resolution
+   object across the whole retry loop (splitting `refresh` into begin/fetch/end), which is the redesign of the JWKS
+   refresh state machine this round's size check says to report rather than implement.
+
+So Go's overlap behaviour is recorded as a residual for the operator, not silently matched. Everything else in Go is
+untouched: no exported signature, no construct, no fixture, and no runtime file other than this record.
+
+The `py/weak-sensitive-data-hashing` CodeQL advisory at `py/src/apptheory/oauth/jwks.py:439` and
+`oauth/fake_provider.py:126` stays untouched. Both reviewers independently found it a false positive on pre-existing
+RS256 digest code (the SHA-256 there is the RSASSA-PKCS#1-v1.5 message digest), the flagged lines are unchanged from
+`710c1b62` to this head, and no CodeQL configuration was added: the disposition belongs to the operator.

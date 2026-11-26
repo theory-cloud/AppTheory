@@ -50,6 +50,9 @@ Each request owns its own instance of everything below. Two overlapping requests
   registration-time middleware and the next handler, and the per-request continuation is built per call.
 - Guardrail budgets: the request-body size limit, the response-body size limit, the remaining-milliseconds deadline,
   and the timeout middleware's cancellation token.
+- The MCP tool invocation context your tool handler receives (`McpToolContext`, with its caller view: session id,
+  request id, identity, tenant and scopes). It is built for that call on the ordinary, streaming and task routes alike,
+  so a handler never has to copy it and can never observe another call's view.
 
 ## Shared: process-wide by design, and safe under overlap
 
@@ -121,6 +124,13 @@ cache (a cold JWKS key set, a discovery document, a lazily created client), ever
 waits for that fill and then reads the result; it must not fail a valid request because an unrelated request is still
 in flight. The cold-cache tests hold a burst of valid tokens against one cold cache and require all of them to be
 authorized.
+
+That obligation follows the *whole* fill, not one step of it. A shared cache whose fill is a single operation is joined
+by that operation. The JWKS validator is the case with two steps: when the first key-set document does not carry the
+token's `kid`, the validator may refresh once more to absorb key publication lag, so a request that arrives during the
+resolution follows the opening request through that permitted retry and reaches the same outcome it reaches — accepted
+when the key is published, refused when it is not. It never starts a fetch of its own, never spends a second unit of the
+unknown-`kid` fetch budget, and is still bounded by the same fetch timeout, per-`kid` bound, cooldown and budget.
 
 ## Where this is proven
 
