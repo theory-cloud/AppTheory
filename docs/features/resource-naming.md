@@ -78,7 +78,10 @@ that fit:
 form puts it: `{namespace}-` for `dash` names and S3 prefixes, `{lead}{namespace}/` for `path` names, and
 `theorycloud_{namespace}_` for log groups. Containing the namespace elsewhere is not enough: `shop-lab-events` is not a
 pin for namespace `hop`. `naming.generated` and `naming.profile: legacy` exist for the live compatibility of platform
-apps only, so a hosted deployment that uses either fails synthesis.
+apps only, so a hosted deployment that uses either fails synthesis. This is a property of the context, not of one
+composed name: a hosted context is refused when it is established, before any construct composes a physical name, so a
+stack that declares no names yet cannot stand as a valid context whose future names would carry no namespace
+(SAN-AT-N5-01).
 
 **Refusals at synthesis.** Each names the rule it broke:
 
@@ -364,8 +367,12 @@ installer would read wrong:
   synthesis is never evaluated early (SANITY-AT-N3-09; operator ruling 2026-11-25).
 
 For a hosted deployment the artifact carries the hosted names, because every declaration composes through its
-context: the reservation index TheoryCloud.ai runs therefore reserves the namespaced forms, which never collide across
-tenants. The artifact's wire schema is unchanged (`apptheory_resource_naming.derived_names.v1`) and its
+context: the reservation index TheoryCloud.ai runs therefore reserves the namespaced forms. Namespacing separates
+tenants' names — it makes every hosted name start with its tenant namespace, so one tenant's app no longer derives the
+platform app's `{app}-{stage}-{logical}` form — but it does not make collisions impossible: contract section 11.2 leaves
+two shortened names in one account able to meet, across namespaces as within one. TheoryCloud.ai's reservation index is
+authoritative and is what guarantees uniqueness; the namespace only keeps the names apart to begin with. The artifact's
+wire schema is unchanged (`apptheory_resource_naming.derived_names.v1`) and its
 `context.namespace` is the tenant namespace, so a reader can tell a hosted deployment (`context.namespace` other than
 `theorycloud`) from a platform app. A platform app's artifact stays byte-identical to r4.
 
