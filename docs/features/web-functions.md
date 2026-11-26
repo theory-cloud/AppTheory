@@ -56,7 +56,10 @@ authentication; ensure your handler code validates every request. (Construct Ann
    Acknowledge with 'Annotation::@aws-cdk/aws-lambda:webFunctionPublicEndpoint'
 ```
 
-An endpoint that warns nothing is an endpoint that is not public.
+That warning is a signal, not a gate. It can be acknowledged — the `Annotation::` key in the output above suppresses
+it — and an acknowledged warning is still an endpoint Lambda does not authenticate, so an endpoint that warns
+nothing has not thereby been shown to be private. Read the endpoint's `authType` in the synthesized template: that
+is what the service acts on, and it is what this construct's own assertions check.
 
 ## Traffic between revisions
 
@@ -178,8 +181,13 @@ arrived at 0.515s), so the two responses were not delivered concurrently
 ## Proof boundary
 
 This page and the example were verified locally: synthesis, the pinned template hash, the focused construct
-assertions, and the harness row above. **Nothing was deployed**, and no AWS credentials were used. Deploying is
-`theory app up` with the stack as written; that step is not part of this proof.
+assertions, and the harness row above. **Nothing was deployed**, and no AWS credentials were used.
+
+The example's stack composes **two** functions, so both sides of the authorization decision appear in one synthesis:
+`Private` keeps the default `IamAuth`, and `Public` opts into `ApplicationManaged`, which Lambda does not
+authenticate. The second one is a synthesis demo — it shows what the opt-in looks like in a template — and it is not
+a decision to expose a service: the example's application authenticates nothing. Anything you deploy should keep the
+`IamAuth` composition. The deploy step itself, `theory app up` with the stack as written, is not part of this proof.
 
 Install the CDK package from a pinned GitHub Releases asset:
 [Installation](../getting-started.md).

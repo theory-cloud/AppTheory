@@ -6,6 +6,13 @@ that serves a page and streams a response, and a local row that proves both with
 
 Full guidance: [Lambda Web Functions](../../../docs/features/web-functions.md).
 
+**The stack as written contains a public endpoint.** `lib/web-function-stack.ts` composes two functions so both sides
+of the authorization decision show up in one synthesized template: `Private` keeps the default `IamAuth`, and `Public`
+opts into `ApplicationManaged`, which means the Lambda service authenticates nothing and the application itself
+authenticates nothing either. The `Public` composition is there as a **synthesis demo** — what the opt-in looks like,
+and what the warning it emits looks like — and it is not a decision to expose a service. Keep the `IamAuth`
+composition for anything you deploy.
+
 ## What is here
 
 | Path | What it is |
@@ -87,7 +94,7 @@ npx cdk synth
 ```
 
 Synthesis prints the documented public-endpoint warning, because the second composition opts into
-`ApplicationManaged` on purpose:
+`ApplicationManaged` on purpose — as a demo, per the note above:
 
 ```text
 WARNING WebFunction endpoint uses APPLICATION_MANAGED auth. The Lambda service will not enforce
@@ -104,7 +111,13 @@ npx cdk deploy --all     # or: theory app up
 ```
 
 Deploying is the one step this example does not prove locally. The application performs no authentication of its own,
-so the `ApplicationManaged` endpoint is a demonstration, not a template for anything public.
+so the `ApplicationManaged` endpoint is a demonstration, not a template for anything public: `cdk deploy --all` as
+written creates an unauthenticated endpoint on a public TLS name. Remove the `Public` composition, or deploy only the
+`Private` one, unless an unauthenticated endpoint is exactly what you decided to run.
+
+The warning is not a gate either. It can be acknowledged and suppressed
+(`Annotation::@aws-cdk/aws-lambda:webFunctionPublicEndpoint`), and an endpoint that prints no warning has not thereby
+been shown to be private; read `authType` in the synthesized template instead.
 
 ## Runtime support
 
