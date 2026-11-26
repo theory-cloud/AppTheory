@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-go.sh"
       ],
-      "durationSeconds": 27.736,
+      "durationSeconds": 26.799,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T07:44:15Z",
+      "finishedAt": "2026-11-26T10:06:44Z",
       "id": "go-test-vet",
-      "inputsDigest": "sha256:a64a95546fc72e42cc2c3ec7aa867bee60e22c216c91d22d517565a3fbecf31e",
-      "logDigest": "sha256:272179f779741f9661b8adc4924b321769b5499fcc28f187c15c98dd30744ef1",
-      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261126T074347Z-22737.log",
+      "inputsDigest": "sha256:2c9e286dfc30702ce95361e7704255707fae1a1ff0587a4649f42165fb187b0d",
+      "logDigest": "sha256:5627651b742c14ced1947454b58b03a8e013cb6892a50afbb21b0e2de1873ce7",
+      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261126T100617Z-44711.log",
       "reused": false,
-      "startedAt": "2026-11-26T07:43:47Z"
+      "startedAt": "2026-11-26T10:06:17Z"
     }
   ],
   "consumed": [],
   "description": "Go test and vet",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T07:44:15Z",
+  "recordedAt": "2026-11-26T10:06:44Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -46,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:0e8a6cbf240a16a0135b2752cc6637335fd6bf199de5c26f706a16070fbe2d2a",
+    "digest": "sha256:d36615d8aff6509304ed48f01dfb5ca97ccd2384b9fd09e412da36eab0dee1c6",
     "fileCount": 1663,
     "paths": [
       "go.mod",
@@ -64,7 +64,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:318fa2f60897f798dbfebb234d5f64fa193b069ad0870ba1eff064f7d337d0e4",
+    "digest": "sha256:23a607183e2377d3dbdd2473a9e11ab42b8330855772e73207135e139dd4a4f9",
     "fileCount": 2823
   },
   "verdict": "PASS"
