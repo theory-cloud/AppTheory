@@ -863,6 +863,12 @@ class MemoryMcpStreamStore:
         max_session_bytes: int = MAX_MEMORY_STREAM_SESSION_BYTES,
     ) -> None:
         self._sessions: dict[str, _MemoryStreamSession] = {}
+        # One request per execution environment was the old assumption; a Web
+        # Function serves many at once, so append/subscribe/eviction on one
+        # session must not interleave. The lock is the same shape the session
+        # store uses and is reentrant because the helpers below are called from
+        # guarded methods.
+        self._lock = threading.RLock()
         self._id_generator = id_generator or RealIdGenerator()
         self._max_event_bytes = _positive_integer(max_event_bytes, MAX_MEMORY_STREAM_EVENT_BYTES)
         self._max_events_per_session = _positive_integer(max_events_per_session, MAX_MEMORY_STREAM_EVENTS_PER_SESSION)
@@ -870,49 +876,61 @@ class MemoryMcpStreamStore:
 
     def create(self, session_id: str) -> str:
         sid = _normalize_required(session_id, "missing session id")
-        session = self._ensure_session(sid)
-        stream_id = _normalize_required(self._id_generator.new_id(), "stream id generator returned empty id")
-        session.streams[stream_id] = _MemoryStream()
-        return stream_id
+        with self._lock:
+            session = self._ensure_session(sid)
+            stream_id = _normalize_required(self._id_generator.new_id(), "stream id generator returned empty id")
+            session.streams[stream_id] = _MemoryStream()
+            return stream_id
 
     def append(self, session_id: str, stream_id: str, data: bytes | bytearray | str | None = None) -> str:
         payload = _to_bytes(data)
         if len(payload) > self._max_event_bytes:
             raise McpStreamEventTooLargeError()
-        session = self._lookup_session(session_id)
-        stream = self._lookup_stream(session, stream_id)
-        session.next_seq += 1
-        event_id = str(session.next_seq)
-        stream.events.append(McpStreamEvent(id=event_id, data=payload))
-        session.event_to_stream[event_id] = str(stream_id or "").strip()
-        session.event_count += 1
-        session.total_bytes += len(payload)
-        self._trim_session(session)
-        return event_id
+        with self._lock:
+            session = self._lookup_session(session_id)
+            stream = self._lookup_stream(session, stream_id)
+            session.next_seq += 1
+            event_id = str(session.next_seq)
+            stream.events.append(McpStreamEvent(id=event_id, data=payload))
+            session.event_to_stream[event_id] = str(stream_id or "").strip()
+            session.event_count += 1
+            session.total_bytes += len(payload)
+            self._trim_session(session)
+            return event_id
 
     def close(self, session_id: str, stream_id: str) -> None:
-        stream = self._lookup_stream(self._lookup_session(session_id), stream_id)
-        stream.closed = True
+        with self._lock:
+            stream = self._lookup_stream(self._lookup_session(session_id), stream_id)
+            stream.closed = True
 
     def subscribe(self, session_id: str, stream_id: str, after_event_id: str = "") -> list[McpStreamEvent]:
-        session = self._lookup_session(session_id)
-        stream = self._lookup_stream(session, stream_id)
-        after = str(after_event_id or "").strip()
-        stream_key = str(stream_id or "").strip()
-        if after and session.event_to_stream.get(after) != stream_key:
-            raise McpEventNotFoundError()
-        after_number = int(after or "0")
-        return [McpStreamEvent(id=e.id, data=bytes(e.data)) for e in stream.events if int(e.id or "0") > after_number]
+        # The snapshot is built under the lock: appending or trimming while
+        # another request iterates these events silently skipped one.
+        with self._lock:
+            session = self._lookup_session(session_id)
+            stream = self._lookup_stream(session, stream_id)
+            after = str(after_event_id or "").strip()
+            stream_key = str(stream_id or "").strip()
+            if after and session.event_to_stream.get(after) != stream_key:
+                raise McpEventNotFoundError()
+            after_number = int(after or "0")
+            return [
+                McpStreamEvent(id=event.id, data=bytes(event.data))
+                for event in stream.events
+                if int(event.id or "0") > after_number
+            ]
 
     def stream_for_event(self, session_id: str, event_id: str) -> str:
-        session = self._lookup_session(session_id)
-        stream_id = session.event_to_stream.get(str(event_id or "").strip())
-        if not stream_id:
-            raise McpEventNotFoundError()
-        return stream_id
+        with self._lock:
+            session = self._lookup_session(session_id)
+            stream_id = session.event_to_stream.get(str(event_id or "").strip())
+            if not stream_id:
+                raise McpEventNotFoundError()
+            return stream_id
 
     def delete_session(self, session_id: str) -> None:
-        self._sessions.pop(str(session_id or "").strip(), None)
+        with self._lock:
+            self._sessions.pop(str(session_id or "").strip(), None)
 
     def _ensure_session(self, session_id: str) -> _MemoryStreamSession:
         session = self._sessions.get(session_id)
@@ -965,74 +983,83 @@ class MemoryMcpTaskStore:
     ) -> None:
         self._sessions: dict[str, dict[str, McpTaskRecord]] = {}
         self._clock = clock or RealClock()
+        # Task lifecycle is read-modify-write over a *live* stored record: a
+        # cancel and a completion that interleave can resurrect a canceled task
+        # or lose a create. Guarded exactly like the session store.
+        self._lock = threading.RLock()
         self._max_tasks_per_session = _positive_integer(max_tasks_per_session, MAX_MEMORY_TASKS_PER_SESSION)
 
     def create(self, task: McpTaskRecord | dict[str, Any]) -> McpTaskRecord:
         record = _clone_task_record(task)
         record.session_id = _normalize_required(record.session_id, "missing session id")
         record.task.task_id = _normalize_required(record.task.task_id, "missing task id")
-        session = self._sessions.get(record.session_id, {})
-        if record.task.task_id in session:
-            raise ValueError("task already exists")
-        self._reap_expired(session)
-        while len(session) >= self._max_tasks_per_session:
-            before = len(session)
-            self._evict_oldest_terminal(session)
-            if len(session) == before:
-                raise McpTaskCapacityError()
-        session[record.task.task_id] = record
-        self._sessions[record.session_id] = session
-        return _clone_task_record(record)
+        with self._lock:
+            session = self._sessions.setdefault(record.session_id, {})
+            if record.task.task_id in session:
+                raise ValueError("task already exists")
+            self._reap_expired(session)
+            while len(session) >= self._max_tasks_per_session:
+                before = len(session)
+                self._evict_oldest_terminal(session)
+                if len(session) == before:
+                    raise McpTaskCapacityError()
+            session[record.task.task_id] = record
+            return _clone_task_record(record)
 
     def get(self, lookup: McpTaskLookup | dict[str, Any]) -> McpTaskRecord:
-        record = self._record(lookup)
-        if record is None:
-            raise McpTaskNotFoundError()
-        return _clone_task_record(record)
+        with self._lock:
+            record = self._record(lookup)
+            if record is None:
+                raise McpTaskNotFoundError()
+            return _clone_task_record(record)
 
     def update(self, task: McpTaskRecord | dict[str, Any]) -> McpTaskRecord:
         next_record = _clone_task_record(task)
-        existing = self._record({"session_id": next_record.session_id, "task_id": next_record.task.task_id})
-        if existing is None:
-            raise McpTaskNotFoundError()
-        if _task_status_terminal(existing.task.status):
-            raise McpTaskTerminalError()
-        session = self._sessions.get(next_record.session_id)
-        if session is None:
-            raise McpTaskNotFoundError()
-        session[next_record.task.task_id] = next_record
-        return _clone_task_record(next_record)
+        with self._lock:
+            existing = self._record({"session_id": next_record.session_id, "task_id": next_record.task.task_id})
+            if existing is None:
+                raise McpTaskNotFoundError()
+            if _task_status_terminal(existing.task.status):
+                raise McpTaskTerminalError()
+            session = self._sessions.get(next_record.session_id)
+            if session is None:
+                raise McpTaskNotFoundError()
+            session[next_record.task.task_id] = next_record
+            return _clone_task_record(next_record)
 
     def list(self, request: McpTaskListRequest | dict[str, Any]) -> McpTaskListResult:
         session_id = str(_field(request, "session_id") or _field(request, "sessionId") or "").strip()
         if not session_id:
             return McpTaskListResult()
-        session = self._sessions.get(session_id)
-        if session is None:
-            return McpTaskListResult()
-        cursor = _parse_task_cursor(str(_field(request, "cursor") or ""))
-        limit = _task_list_limit(_int_field(request, "limit"))
-        records = sorted(session.values(), key=lambda r: (r.task.created_at, r.task.task_id))
-        chosen = records[cursor : cursor + limit]
-        result = McpTaskListResult(tasks=[_clone_task(record.task) for record in chosen])
-        if cursor + limit < len(records):
-            result.next_cursor = str(cursor + limit)
-        return result
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return McpTaskListResult()
+            cursor = _parse_task_cursor(str(_field(request, "cursor") or ""))
+            limit = _task_list_limit(_int_field(request, "limit"))
+            records = sorted(session.values(), key=lambda r: (r.task.created_at, r.task.task_id))
+            chosen = records[cursor : cursor + limit]
+            result = McpTaskListResult(tasks=[_clone_task(record.task) for record in chosen])
+            if cursor + limit < len(records):
+                result.next_cursor = str(cursor + limit)
+            return result
 
     def cancel(self, lookup: McpTaskLookup | dict[str, Any]) -> McpTaskRecord:
-        record = self._record(lookup)
-        if record is None:
-            raise McpTaskNotFoundError()
-        if _task_status_terminal(record.task.status):
-            raise McpTaskTerminalError()
-        record.task.status = "canceled"
-        record.task.status_message = TASK_CANCELED_MESSAGE
-        record.task.last_updated_at = _iso_no_millis(self._clock.now())
-        record.error = McpRPCError(code=MCP_CODE_SERVER_ERROR, message=TASK_CANCELED_MESSAGE)
-        return _clone_task_record(record)
+        with self._lock:
+            record = self._record(lookup)
+            if record is None:
+                raise McpTaskNotFoundError()
+            if _task_status_terminal(record.task.status):
+                raise McpTaskTerminalError()
+            record.task.status = "canceled"
+            record.task.status_message = TASK_CANCELED_MESSAGE
+            record.task.last_updated_at = _iso_no_millis(self._clock.now())
+            record.error = McpRPCError(code=MCP_CODE_SERVER_ERROR, message=TASK_CANCELED_MESSAGE)
+            return _clone_task_record(record)
 
     def delete_session(self, session_id: str) -> None:
-        self._sessions.pop(str(session_id or "").strip(), None)
+        with self._lock:
+            self._sessions.pop(str(session_id or "").strip(), None)
 
     def _record(self, lookup: McpTaskLookup | dict[str, Any]) -> McpTaskRecord | None:
         session_id = str(_field(lookup, "session_id") or _field(lookup, "sessionId") or "").strip()
@@ -1165,13 +1192,17 @@ class _S3McpStreamSpillStore:
     def __init__(self, bucket: str) -> None:
         self._bucket = bucket
         self._store: Any | None = None
+        # The object store is built lazily on the request path; overlapping
+        # first writes must not build it twice.
+        self._lock = threading.Lock()
 
     def _object_store(self) -> Any:
-        if self._store is None:
-            from apptheory.objectstore import create_s3_object_store
+        with self._lock:
+            if self._store is None:
+                from apptheory.objectstore import create_s3_object_store
 
-            self._store = create_s3_object_store()
-        return self._store
+                self._store = create_s3_object_store()
+            return self._store
 
     def put(self, key: str, data: bytes, expires_at: int, sha256: str) -> None:
         from apptheory.objectstore import ObjectRef, ObjectStorePutInput

@@ -1535,18 +1535,25 @@ class _FrontDoorSecretCache:
 
 # _front_door_ssm_client_instance is the boto3 SSM client for this execution
 # environment, created on the first parameter read.
+#
+# The guard makes creation one-shot across overlapping requests. botocore
+# documents client creation as not thread-safe, so two concurrent first reads in
+# a Web Function could otherwise build two clients (one leaking its socket pool,
+# or observing a half-registered component set).
 _front_door_ssm_client_instance: Any = None
+_front_door_ssm_client_lock = threading.Lock()
 
 
 def _front_door_ssm_client() -> Any:
     global _front_door_ssm_client_instance
-    if _front_door_ssm_client_instance is None:
-        try:
-            import boto3  # type: ignore[import-not-found]
-        except ImportError as exc:
-            raise RuntimeError("apptheory: boto3 is required to read a front-door secret parameter") from exc
-        _front_door_ssm_client_instance = boto3.client("ssm")
-    return _front_door_ssm_client_instance
+    with _front_door_ssm_client_lock:
+        if _front_door_ssm_client_instance is None:
+            try:
+                import boto3  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise RuntimeError("apptheory: boto3 is required to read a front-door secret parameter") from exc
+            _front_door_ssm_client_instance = boto3.client("ssm")
+        return _front_door_ssm_client_instance
 
 
 def _default_front_door_secret_reader(parameter_name: str) -> str:

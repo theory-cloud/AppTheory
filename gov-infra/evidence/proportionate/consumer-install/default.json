@@ -6,16 +6,16 @@
         "scripts/verify-consumer-install.sh",
         "ts"
       ],
-      "durationSeconds": 8.969,
+      "durationSeconds": 8.626,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T05:53:01Z",
+      "finishedAt": "2026-11-26T16:31:23Z",
       "id": "consumer-install-ts",
-      "inputsDigest": "sha256:099a174acd3a3a39a77e8d4486e29eb27a07b8a5e8c73bb4286259f58c3027b9",
-      "logDigest": "sha256:a4512f041c01da333a94c07e7f45e70a3c5b4b28d5eb73ce1e7351e812181b66",
-      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-ts-20261126T055252Z-2036.log",
+      "inputsDigest": "sha256:61cbb91d006b7620230a67a3a6a48c0480fc25829542241321c3889314b27463",
+      "logDigest": "sha256:3c831f88db1713b3d75d039f0c1ab5eb36b9bbb674dc7046f7ab9bc500ef2d7a",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-ts-20261126T163115Z-89022.log",
       "reused": false,
-      "startedAt": "2026-11-26T05:52:52Z"
+      "startedAt": "2026-11-26T16:31:15Z"
     },
     {
       "argv": [
@@ -23,16 +23,16 @@
         "scripts/verify-consumer-install.sh",
         "py"
       ],
-      "durationSeconds": 11.433,
+      "durationSeconds": 12.125,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T05:53:12Z",
+      "finishedAt": "2026-11-26T16:31:36Z",
       "id": "consumer-install-py",
-      "inputsDigest": "sha256:56f6aca1c5b5c61aa926e36b13c3d5f4dd580f615df9c91a2d97c3cfb38b14e0",
+      "inputsDigest": "sha256:c2898bad8d9807b00701f477bcee3c50d4e6e4cd12048b428b4280dc3c1e3c40",
       "logDigest": "sha256:4b03ff6e815a830d9b45583558ceaf3b1e8858aace99b51b155b1329b7192be1",
-      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-py-20261126T055301Z-2036.log",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-py-20261126T163123Z-89022.log",
       "reused": false,
-      "startedAt": "2026-11-26T05:53:01Z"
+      "startedAt": "2026-11-26T16:31:23Z"
     },
     {
       "argv": [
@@ -40,23 +40,23 @@
         "scripts/verify-consumer-install.sh",
         "cdk"
       ],
-      "durationSeconds": 27.786,
+      "durationSeconds": 28.577,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T05:53:40Z",
+      "finishedAt": "2026-11-26T16:32:04Z",
       "id": "consumer-install-cdk",
-      "inputsDigest": "sha256:bc862461416466f78c7934d3b50daa3461e59fae3f1b078a922ca7c76975ed5e",
-      "logDigest": "sha256:c1b46388b185d70557d8d3c5f271a5dcd5f27b0f60f782ecaaf92c25b490f25e",
-      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-cdk-20261126T055312Z-2036.log",
+      "inputsDigest": "sha256:6d8afcf99e4cab8f49ea8e4a704b9e69a930037c0a3aa2a4a707b226ec317278",
+      "logDigest": "sha256:e1441891d1fa99a6578c94b6c4aa6f88b2fa73d358e31ca22db32f4f38d0d3d4",
+      "logRef": "gov-infra/evidence/proportionate/local/consumer-install-consumer-install-cdk-20261126T163136Z-89022.log",
       "reused": false,
-      "startedAt": "2026-11-26T05:53:12Z"
+      "startedAt": "2026-11-26T16:31:36Z"
     }
   ],
   "consumed": [],
   "description": "Packed TypeScript and CDK artifacts plus the built Python distribution installed into empty consumers, exercised, and bundled into runnable assets by the scaffold bundlers",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -71,7 +71,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T05:53:40Z",
+  "recordedAt": "2026-11-26T16:32:04Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -81,8 +81,8 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:64950ef44c7df81fdbf60c710f3450c3fee6b51078a54eb2df6e4c40a587f19f",
-    "fileCount": 972,
+    "digest": "sha256:eb1662a5863062f156af63767f36004f260671ccf7d0ec07ea1e3ec90002d785",
+    "fileCount": 974,
     "paths": [
       "VERSION",
       "ts/",
@@ -97,8 +97,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
-    "fileCount": 2819
+    "digest": "sha256:d4fd0003a4b34fc1d7dd6f3d0fadb6385362ca878cc12179d5e542d3b3790869",
+    "fileCount": 2823
   },
   "verdict": "PASS"
 }

@@ -5,32 +5,32 @@
         "bash",
         "scripts/verify-ts-dist-drift.sh"
       ],
-      "durationSeconds": 2.052,
+      "durationSeconds": 2.172,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T06:19:23Z",
+      "finishedAt": "2026-11-26T17:21:44Z",
       "id": "ts-dist-drift",
-      "inputsDigest": "sha256:fd2a8afb11335ceaec215dbda93f36218d5592240acbbf46dc07fccdd813a037",
+      "inputsDigest": "sha256:0fa1c625d8a1e67a432f5bda963bbd0aba64dad019140452ee09f131b80080a0",
       "logDigest": "sha256:30073aa0c5546268ad8b8d1c10c69bb84fe6d4cb52b1faf8af05154ebe78451d",
-      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261126T061921Z-30117.log",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261126T172142Z-64345.log",
       "reused": false,
-      "startedAt": "2026-11-26T06:19:21Z"
+      "startedAt": "2026-11-26T17:21:42Z"
     },
     {
       "argv": [
         "bash",
         "scripts/verify-ts-pack.sh"
       ],
-      "durationSeconds": 5.838,
+      "durationSeconds": 6.253,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T06:19:29Z",
+      "finishedAt": "2026-11-26T17:21:50Z",
       "id": "ts-pack",
-      "inputsDigest": "sha256:e0317c662c4c21b6ccacd00b4914f200025558a6a29550d1a9d799d1bca18cec",
+      "inputsDigest": "sha256:bce5b2b2e2c65fee5126a7b238cc23c9545473cfd897370c4edd83744600b553",
       "logDigest": "sha256:cf632e1ce64f22e7b12a9dd8e3a13234b13abf956ad2621f95750ca720388b25",
-      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261126T061923Z-30117.log",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261126T172144Z-64345.log",
       "reused": false,
-      "startedAt": "2026-11-26T06:19:23Z"
+      "startedAt": "2026-11-26T17:21:44Z"
     }
   ],
   "consumed": [],
@@ -42,7 +42,7 @@
       "arch": "arm64",
       "os": "darwin"
     },
-    "python": "3.14.7"
+    "python": "3.12.14"
   },
   "gate": "ts",
   "kind": "source",
@@ -52,7 +52,7 @@
   },
   "profile": "floor-node22",
   "reason": "",
-  "recordedAt": "2026-11-26T06:19:29Z",
+  "recordedAt": "2026-11-26T17:21:50Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -62,8 +62,8 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:5a206e16a0e0f4903f7a5f1a2fbd02ab5e5974ba93a46198e192b3ccae4e1499",
-    "fileCount": 464,
+    "digest": "sha256:2a50dd4df57d6994fa70b1f54d17de308751efa536183755b046f9b3f3d119af",
+    "fileCount": 465,
     "paths": [
       "ts/",
       "scripts/verify-ts-dist-drift.sh",
@@ -77,8 +77,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
-    "fileCount": 2819
+    "digest": "sha256:d4fd0003a4b34fc1d7dd6f3d0fadb6385362ca878cc12179d5e542d3b3790869",
+    "fileCount": 2823
   },
   "verdict": "PASS"
 }

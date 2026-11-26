@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 4.086,
+      "durationSeconds": 4.315,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T06:19:41Z",
+      "finishedAt": "2026-11-26T17:21:55Z",
       "id": "py-build",
-      "inputsDigest": "sha256:bb0c3db8c3271f5071f42b89613398c62542f9a75f44130442d44abeb547903b",
+      "inputsDigest": "sha256:9501bb29fc9b7b25b2da40edf88b6f86d7bed4180e311af5591d99348b260e22",
       "logDigest": "sha256:c0f06a96aecf4c509afd4824e65b849c2664e132b51a2ed5449a79e2c9fdfccc",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T061937Z-30698.log",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T172151Z-64689.log",
       "reused": false,
-      "startedAt": "2026-11-26T06:19:37Z"
+      "startedAt": "2026-11-26T17:21:51Z"
     }
   ],
   "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,7 +36,7 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-26T06:19:41Z",
+  "recordedAt": "2026-11-26T17:21:55Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -46,8 +46,8 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:f8ff0343d4b506c84212acc55b2251a7a68012bfb47e79d2885ba99eba1ef489",
-    "fileCount": 133,
+    "digest": "sha256:d01f78b9b3a0eb0b49ef0af1d5c0a037a47dad2e8f97bdb0a5e7ff2665a6e3b2",
+    "fileCount": 134,
     "paths": [
       "py/",
       "scripts/verify-python-build.sh",
@@ -56,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
-    "fileCount": 2819
+    "digest": "sha256:d4fd0003a4b34fc1d7dd6f3d0fadb6385362ca878cc12179d5e542d3b3790869",
+    "fileCount": 2823
   },
   "verdict": "PASS"
 }
