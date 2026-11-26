@@ -171,9 +171,10 @@ concurrent requests in one environment.
 
 Isolation is measured on delivery, not on the calls. Every chunk carries the instant it arrived, on one clock shared
 by both streams, so a server that answers the second request only after the first stream has finished does not pass
-for overlapping: the row fails unless each response delivered chunks while the other one was still open. The exact
-interleave counts move with scheduling; what it requires is at least two chunks from each stream before the other
-finishes. `scripts/local/test_examples_local.py` runs that assertion against three loopback control servers on every
+for overlapping: the row fails unless each response delivered chunks while the other one was still open. The seconds
+and the interleave counts move between runs — a four-worker sweep of the same row reports 0.48 s and the same
+4 + 5 — and what the row requires is at least two chunks from each stream before the other finishes.
+`scripts/local/test_examples_local.py` runs that assertion against three loopback control servers on every
 `make examples-local`: an interleaved one, which must pass, a serial one, and one that keeps the request tag in
 module state. The serial control fails the row with
 

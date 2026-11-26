@@ -71,8 +71,8 @@ two concurrent streams in one environment each carry only their own tag and thei
 Concurrency is measured on delivery, not on the two client calls. Each chunk records the instant it arrived, both
 streams record on one clock, and the row fails unless each response delivered chunks while the other was still open —
 so a server that answers the second request only after the first stream ends is refused, even though the two calls
-overlap. The exact interleave counts move with scheduling; the requirement is at least two chunks from each stream
-before the other finishes.
+overlap. The seconds and the interleave counts move between runs; the requirement is at least two chunks from each
+stream before the other finishes.
 
 Both directions of that assertion are pinned in `scripts/local/test_examples_local.py`, which runs on every
 `make examples-local` against three loopback control servers:
