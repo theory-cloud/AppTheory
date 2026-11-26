@@ -395,12 +395,19 @@ def http_stream_request(
     headers: dict | None = None,
     body: bytes | None = None,
     timeout: float = 120,
+    origin: float | None = None,
 ) -> tuple[int, bytes, dict, list[tuple[float, bytes]]]:
     """Read a response incrementally and record each chunk's arrival time.
 
     The row asserts a timing boundary: the first chunk must arrive before the
     handler finishes writing the last one. ``read1`` returns the bytes that are
     available, so a buffered origin returns everything at the end.
+
+    ``origin`` moves the recorded instants onto a caller's ``time.monotonic``
+    clock. Chunk times are otherwise relative to the response, which cannot be
+    compared across two requests; a caller that drives concurrent streams passes
+    the instant it started them, so every chunk in both responses lands on one
+    clock and the two deliveries can be ordered against each other.
     """
     parsed = urlsplit(url)
     host = parsed.hostname or "127.0.0.1"
@@ -414,12 +421,13 @@ def http_stream_request(
         response = connection.getresponse()
         header = normalized_headers(response.headers)
         started = time.monotonic()
+        clock = started if origin is None else origin
         chunks: list[tuple[float, bytes]] = []
         while True:
             data = response.read1(65536)
             if not data:
                 break
-            chunks.append((time.monotonic() - started, data))
+            chunks.append((time.monotonic() - clock, data))
         return response.status, b"".join(data for _, data in chunks), header, chunks
     except OSError as exc:
         raise HarnessFailure(f"{method} {url} failed while streaming: {exc}") from exc
@@ -1345,15 +1353,21 @@ def _exercise_rate_limit(base: str) -> tuple[int, int]:
     return allowed, status
 
 
-def _wait_for_tcp(process: subprocess.Popen, port: int, seconds: int = 180) -> None:
+def _wait_for_tcp(
+    process: subprocess.Popen,
+    port: int,
+    seconds: int = 180,
+    *,
+    label: str = "rate-limited-http server",
+) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise HarnessFailure(f"rate-limited-http server exited early (code {process.returncode})")
+            raise HarnessFailure(f"{label} exited early (code {process.returncode})")
         if port_open("127.0.0.1", port, timeout=0.25):
             return
         time.sleep(0.1)
-    raise HarnessFailure(f"rate-limited-http server did not listen on 127.0.0.1:{port}")
+    raise HarnessFailure(f"{label} did not listen on 127.0.0.1:{port}")
 
 
 def _stop_process(process: subprocess.Popen) -> None:
@@ -1373,6 +1387,227 @@ def _stop_process(process: subprocess.Popen) -> None:
             # SIGKILL then has no target, which is the outcome it was sent for.
             pass
         process.wait(timeout=15)
+
+
+# --- web function -----------------------------------------------------------
+#
+# A Lambda Web Function serves HTTP directly: the application starts its own HTTP server and the
+# Lambda service tells it where to listen through AWS_LAMBDA_HTTP_ENDPOINT. That is the same code
+# path locally, so this row starts the example's server exactly as a Web Function environment
+# would, with the variable set to the lane's port, and drives it with real HTTP clients. Nothing
+# is simulated: no AWS call, no container, no adapter.
+
+WEB_FUNCTION_SERVER = "examples/cdk/web-function/app/server.mjs"
+WEB_FUNCTION_TICKS = 4
+WEB_FUNCTION_TICK_SECONDS = 0.12
+# How many chunks each of two concurrent streams must deliver before the other one finishes. One
+# is the minimum the delivery assertion needs to see; requiring two keeps the row from passing on a
+# pair that merely start together and then serialize.
+WEB_FUNCTION_INTERLEAVED_CHUNKS = 2
+
+
+def run_web_function(harness: Harness) -> str:
+    port = harness.port_base
+    base = f"http://127.0.0.1:{port}"
+    env = dict(harness.env)
+    env["AWS_LAMBDA_HTTP_ENDPOINT"] = f"127.0.0.1:{port}"
+    log = tempfile.NamedTemporaryFile(prefix="apptheory-web-function-", suffix=".log", delete=False)
+    try:
+        process = subprocess.Popen(
+            ["node", WEB_FUNCTION_SERVER],
+            cwd=str(ROOT),
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            _wait_for_tcp(process, port, label="web-function server")
+            page = _assert_web_function_page(base)
+            stream = _assert_web_function_stream(base)
+            overlap = _assert_web_function_overlap(base)
+        finally:
+            _stop_process(process)
+            log.close()
+        with open(log.name, encoding="utf-8", errors="replace") as handle:
+            server_log = handle.read()
+        expect_output(
+            server_log,
+            [f"web-function listening on 127.0.0.1:{port}"],
+            "web-function server startup",
+        )
+        return f"{page}; {stream}; {overlap}"
+    finally:
+        try:
+            os.unlink(log.name)
+        except FileNotFoundError:
+            pass
+
+
+def _assert_web_function_page(base: str) -> str:
+    """A page, a readiness route, and a real 404 from the application's own router."""
+    status, body, headers = http_request("GET", f"{base}/")
+    if status != 200:
+        raise HarnessFailure(f"the page answered {status}, not 200")
+    if headers.get("content-type") != "text/html; charset=utf-8":
+        raise HarnessFailure(f"the page content type is {headers.get('content-type')!r}")
+    if "AppTheory Web Function" not in body:
+        raise HarnessFailure("the page body does not carry the example's marker")
+
+    status, body, _ = http_request("GET", f"{base}/health")
+    if status != 200 or body != "ok":
+        raise HarnessFailure(f"the health route answered {status} {body!r}")
+
+    status, _, _ = http_request("GET", f"{base}/missing")
+    if status != 404:
+        raise HarnessFailure(f"an unknown route answered {status}, not 404")
+
+    return "page 200 text/html, health 200, unknown route 404"
+
+
+def _sse_events(chunks: list[tuple[float, bytes]]) -> list[tuple[float, str, dict]]:
+    """Return (arrival seconds, event name, data) for every server-sent event."""
+    events: list[tuple[float, str, dict]] = []
+    name = ""
+    pending: list[str] = []
+    for at, chunk in chunks:
+        for line in chunk.decode("utf-8", "replace").split("\n"):
+            if line.startswith("event:"):
+                name = line[len("event:") :].strip()
+            elif line.startswith("data:"):
+                pending.append(line[len("data:") :].strip())
+            elif not line.strip() and pending:
+                events.append((at, name, json.loads("".join(pending))))
+                name = ""
+                pending = []
+    if pending:
+        # A truncated tail means the stream did not deliver a complete event; surfacing it as a
+        # parse failure is better than silently accepting a short stream.
+        raise HarnessFailure(f"the stream ended mid-event: {''.join(pending)!r}")
+    return events
+
+
+def _assert_web_function_stream(base: str) -> str:
+    """The response is delivered incrementally, with no content-length to buffer it.
+
+    ``http_stream_request`` records when each chunk arrives, so a response that is assembled and
+    sent in one write fails here: its first and last chunks share a timestamp.
+    """
+    status, _, headers, chunks = http_stream_request(
+        "GET", f"{base}/stream?tag=solo&ticks=3", timeout=60
+    )
+    if status != 200:
+        raise HarnessFailure(f"the stream answered {status}, not 200")
+    if headers.get("content-type") != "text/event-stream":
+        raise HarnessFailure(f"the stream content type is {headers.get('content-type')!r}")
+    if "content-length" in headers:
+        raise HarnessFailure("the stream declared content-length, so it was buffered")
+
+    events = _sse_events(chunks)
+    ticks = [data for _, name, data in events if name == "tick"]
+    if [data["tick"] for data in ticks] != [1, 2, 3]:
+        raise HarnessFailure(f"the stream delivered ticks {[data['tick'] for data in ticks]}")
+    if len(set(data["tag"] for data in ticks)) != 1 or ticks[0]["tag"] != "solo":
+        raise HarnessFailure("the stream mixed tags in a single request")
+    if [name for _, name, _ in events][-1:] != ["done"]:
+        raise HarnessFailure("the stream did not close with its done event")
+
+    first = first_chunk_seconds(chunks)
+    last = chunks[-1][0]
+    if first > 3 * WEB_FUNCTION_TICK_SECONDS:
+        raise HarnessFailure(f"the first chunk arrived at {first:.3f}s, so nothing streamed early")
+    if last - first < 2 * WEB_FUNCTION_TICK_SECONDS:
+        raise HarnessFailure(
+            f"the whole stream arrived within {last - first:.3f}s, so it was not delivered incrementally"
+        )
+    return f"3 events over {last - first:.2f}s, first at {first:.2f}s, chunked"
+
+
+def _assert_web_function_overlap(base: str) -> str:
+    """Two streams delivered concurrently, each seeing only its own request state.
+
+    Overlap is measured on delivery, not on the calls. Every chunk carries the instant it arrived,
+    on one clock shared by both streams, so time a client spends waiting for a response counts for
+    nothing: a server that answers the second request only after the first stream has finished
+    still shows two overlapping calls, and the row refuses it. ``SerialDeliveryControlTests`` in
+    ``test_examples_local.py`` is exactly that server, and it must keep failing.
+
+    What the row requires instead is that both responses made progress while the other one was
+    still open — two chunks each, at least — so the streams were genuinely interleaved on the wire.
+    One execution environment answers both: if the application kept the tag or the tick counter in
+    module state, the second request would overwrite the first and each stream would echo the other
+    request's values, which the payload assertions below turn into a failure.
+    """
+    tags = ("first", "second")
+    origin = time.monotonic()
+    results: dict[str, tuple[int, dict, list[tuple[float, bytes]]]] = {}
+
+    def drive(tag: str) -> None:
+        status, _, headers, chunks = http_stream_request(
+            "GET",
+            f"{base}/stream?tag={tag}&ticks={WEB_FUNCTION_TICKS}",
+            timeout=60,
+            origin=origin,
+        )
+        results[tag] = (status, headers, chunks)
+
+    threads = [threading.Thread(target=drive, args=(tag,), daemon=True) for tag in tags]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    for thread in threads:
+        if thread.is_alive():
+            raise HarnessFailure("an overlapping stream never finished")
+
+    if set(results) != set(tags):
+        raise HarnessFailure("both overlapping streams did not answer")
+
+    for tag in tags:
+        status, headers, chunks = results[tag]
+        if status != 200:
+            raise HarnessFailure(f"the {tag} stream answered {status}, not 200")
+        if headers.get("content-type") != "text/event-stream":
+            raise HarnessFailure(f"the {tag} stream content type is {headers.get('content-type')!r}")
+        ticks = [data for _, name, data in _sse_events(chunks) if name == "tick"]
+        if [data["tick"] for data in ticks] != list(range(1, WEB_FUNCTION_TICKS + 1)):
+            raise HarnessFailure(
+                f"the {tag} stream delivered ticks {[data['tick'] for data in ticks]}, "
+                "so its counter was not request-scoped"
+            )
+        foreign = [data["tag"] for data in ticks if data["tag"] != tag]
+        if foreign:
+            raise HarnessFailure(
+                f"the {tag} stream carried {foreign}, so one request read another's state"
+            )
+
+    first = {tag: first_chunk_seconds(results[tag][2]) for tag in tags}
+    last = {tag: results[tag][2][-1][0] for tag in tags}
+
+    # Concurrent delivery: each stream has to have delivered chunks while the other one was still
+    # open. Counting the chunks that arrived before the other stream's last chunk is what separates
+    # an interleaved pair of responses from one response delivered after the other had finished.
+    delivered: dict[str, int] = {}
+    for tag, other in (tags, tags[::-1]):
+        delivered[tag] = sum(1 for at, _ in results[tag][2] if at < last[other])
+        if delivered[tag] < WEB_FUNCTION_INTERLEAVED_CHUNKS:
+            raise HarnessFailure(
+                f"the {tag} stream delivered {delivered[tag]} chunk(s) before the {other} stream "
+                f"finished at {last[other]:.3f}s (its own first chunk arrived at {first[tag]:.3f}s), "
+                "so the two responses were not delivered concurrently"
+            )
+
+    overlap_seconds = min(last.values()) - max(first.values())
+    if overlap_seconds < (WEB_FUNCTION_TICKS - 1) * WEB_FUNCTION_TICK_SECONDS:
+        raise HarnessFailure(
+            f"the two streams were delivered concurrently for only {overlap_seconds:.3f}s, "
+            "so they were mostly serial"
+        )
+    return (
+        f"2 streams overlapped {overlap_seconds:.2f}s of delivery, "
+        f"{delivered['first']} + {delivered['second']} chunks interleaved before either finished, "
+        "each saw only its own tag"
+    )
 
 
 # --- local runner -----------------------------------------------------------
@@ -8882,6 +9117,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "mcp-go-resumable-sse": run_mcp_resumable_sse,
     "cdk-synth-all": run_cdk_synth_all,
     "rate-limited-http": run_rate_limited_http,
+    "web-function": run_web_function,
     "local-runner-go": run_local_runner_go,
     "local-runner-ts": run_local_runner_ts,
     "local-runner-py": run_local_runner_py,
@@ -9094,6 +9330,7 @@ STANDALONE_ROWS: dict[str, tuple[str, ...]] = {
     "testkit:ts": ("testkit-ts", "testkit-ts-streaming"),
     "testkit:py": ("testkit-py",),
     "table:rate-limits": ("rate-limited-http",),
+    "web-function:local": ("web-function",),
     "runtime:conformance": ("runtime-api-conformance",),
 }
 

@@ -90,11 +90,11 @@ execution environment serves at once: that is the AWS execution model for the ru
 | --- | --- | --- |
 | Go | **One.** Go is absent from the Lambda Managed Instances runtime list and from the Web Function runtime list. | [Lambda Managed Instances runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-runtimes.html) |
 | Node.js | Many: Managed Instances (worker threads, asynchronous) and Web Functions (one event loop, many suspended requests). | Same page, and the Lambda Web Function runtimes page. |
-| Python | Many: Managed Instances runs each concurrent request in a **separate process**. | Same page. |
+| Python | Many, and only the Managed Instances way: each concurrent request runs in a **separate process**. A Python Web Function would instead keep one ASGI event loop, or a WSGI worker-thread pool, per environment; that is upstream's public-preview model and AppTheory does not compose it. | Same page, and the Lambda Web Function runtimes page. |
 
 **Go serves one invocation at a time, and that is an upstream gap, not an AppTheory one.** Lambda Managed Instances
 lists Java, Python, Node.js, .NET and Rust (through the OS-only `provided.al2023` runtime); Go is not among them, and
-the Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. So AppTheory's Go runtime is built for one
+the Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. [Lambda Web Functions](../features/web-functions.md) composes the two Node.js runtimes and refuses the Python one, because a Python Web Function serves an ASGI or WSGI application and AppTheory's Python runtime is not one. So AppTheory's Go runtime is built for one
 invocation per environment, which is exactly what AWS provides for Go.
 
 AppTheory keeps parity everywhere upstream allows it. Nothing in the Go surface is removed, weakened or marked

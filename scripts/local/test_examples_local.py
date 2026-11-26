@@ -7,8 +7,11 @@ when an entrypoint is unclassified, when a row names a file that does not
 exist, and when the local profile drifts onto a reserved port.
 
 Every case is pure validation over the real tree or a throwaway tree under the
-system temp directory, except ``DockerImageStoreTests``: it reads the image
-store of a local daemon, skips when none answers, and removes what it builds.
+system temp directory, with two exceptions. ``DockerImageStoreTests`` reads the
+image store of a local daemon, skips when none answers, and removes what it
+builds. ``WebFunctionDeliveryControlTests`` binds two loopback-only streaming
+servers on an ephemeral port, because the web-function row's concurrent-delivery
+claim is only worth what its negative control proves.
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -189,7 +194,7 @@ class RealTreeTests(unittest.TestCase):
         # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
         # executing), and the two LOCAL-W3-X6 rows with the versioning handler
         # they cover.
-        self.assertEqual(146, len(classified))
+        self.assertEqual(148, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -530,6 +535,115 @@ class LocalRunnerHelperTests(unittest.TestCase):
         harness._assert_request_id({"request_id": "7f08dd02-7030-4ecc-9c60-0cd609076abf"}, "uuid")
         with self.assertRaises(harness.HarnessFailure):
             harness._assert_request_id({"request_id": ""}, "empty")
+
+
+def _control_handler(serial: bool, shared_tag: bool):
+    """Build a request handler that streams one event per tick, in one of three control modes.
+
+    ``serial`` holds a lock for the whole stream, so the second request gets no response — not even
+    its headers — until the first stream has ended. That is strictly serial delivery: the two client
+    calls still overlap, and nothing in either response is interleaved with the other.
+
+    ``shared_tag`` is the module-level-state mutation the example must avoid: the tag lives in one
+    place outside the request, each request assigns to it, and every tick reads whatever is there
+    when it is written. Two concurrent streams then carry each other's tag.
+    """
+    gate = threading.Lock()
+    module_state = {"tag": ""}
+
+    class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.0 semantics on purpose: the handler returns, the connection closes, and the client
+        # learns the stream ended from EOF. No content-length and no chunked framing take part, which
+        # is the shape the row asserts against.
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
+            parts = urllib.parse.urlsplit(self.path)
+            if parts.path != "/stream":
+                self.send_error(404)
+                return
+            query = urllib.parse.parse_qs(parts.query)
+            tag = (query.get("tag") or ["anonymous"])[0]
+            ticks = int((query.get("ticks") or [str(harness.WEB_FUNCTION_TICKS)])[0])
+            if serial:
+                gate.acquire()
+            try:
+                if shared_tag:
+                    module_state["tag"] = tag
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                for tick in range(1, ticks + 1):
+                    carried = module_state["tag"] if shared_tag else tag
+                    self._event("tick", {"tag": carried, "tick": tick, "ticks": ticks})
+                    time.sleep(harness.WEB_FUNCTION_TICK_SECONDS)
+                carried = module_state["tag"] if shared_tag else tag
+                self._event("done", {"tag": carried, "ticks": ticks})
+            finally:
+                if serial:
+                    gate.release()
+
+        def _event(self, name: str, data: dict) -> None:
+            self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+    return Handler
+
+
+class ControlServer:
+    """A loopback-only streaming server, on an ephemeral port, for one delivery mode."""
+
+    def __init__(self, *, serial: bool = False, shared_tag: bool = False) -> None:
+        self.serial = serial
+        self.shared_tag = shared_tag
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _control_handler(serial, shared_tag))
+        self.base = f"http://127.0.0.1:{self._server.server_address[1]}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "ControlServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=10)
+
+
+class WebFunctionDeliveryControlTests(unittest.TestCase):
+    """Run the web-function row's assertions against three test-only servers.
+
+    The row used to time the two client calls, which includes the wait for a response: a server
+    that delivered the second stream only after the first had finished still reported half a second
+    of "overlap". ``serial`` is that server, and the row must keep failing it. The interleaved
+    control holds the other end honest — the same assertion must pass it, so an assertion that
+    simply failed everything could not pass for proof. ``shared_tag`` is the module-level-state
+    mutation, reproduced at the server rather than mocked.
+    """
+
+    def test_an_interleaved_delivery_passes_the_assertion(self) -> None:
+        with ControlServer() as server:
+            summary = harness._assert_web_function_overlap(server.base)
+        self.assertIn("chunks interleaved before either finished", summary)
+        self.assertIn("each saw only its own tag", summary)
+
+    def test_a_serial_delivery_fails_the_assertion(self) -> None:
+        with ControlServer(serial=True) as server:
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness._assert_web_function_overlap(server.base)
+        message = str(raised.exception)
+        self.assertIn("so the two responses were not delivered concurrently", message)
+        print(f"\nserial-delivery control output: {message}")
+
+    def test_a_module_level_request_tag_still_fails_the_assertion(self) -> None:
+        with ControlServer(shared_tag=True) as server:
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness._assert_web_function_overlap(server.base)
+        message = str(raised.exception)
+        self.assertIn("so one request read another's state", message)
+        print(f"\nmodule-level-tag control output: {message}")
 
 
 class AwsCLIRequirementTests(unittest.TestCase):

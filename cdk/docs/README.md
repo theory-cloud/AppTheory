@@ -94,6 +94,9 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
   `AppTheoryLambdaRole`.
 - MicroVM and frontend delivery: `AppTheoryMicrovmController`, `AppTheoryMicrovmImage`,
   `AppTheoryMicrovmNetworkConnector`, path-routed frontends, media CDN, and `AppTheorySsrSite`.
+- Web Function serving: `AppTheoryWebFunction` composes a function that serves HTTP through its own
+  endpoint, `IamAuth` by default and `ApplicationManaged` only on an explicit opt-in, with weighted
+  revision splits through the endpoint's L1 escape hatch.
 
 <!-- apptheory-api-docs:cdk:start -->
 ## CDK snapshot coverage index
@@ -101,7 +104,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>192 exported top-level symbols</summary>
+<summary>195 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps,
@@ -160,7 +163,10 @@ AppTheoryResourceNaming,
 AppTheoryVisibilityManifest,
 AppTheoryVisibilityManifestTier,
 AppTheoryVisibilityPreview,
-AppTheoryVisibilityRules
+AppTheoryVisibilityRules,
+AppTheoryWebFunction,
+AppTheoryWebFunctionEndpointProps,
+AppTheoryWebFunctionProps
 ```
 
 </details>

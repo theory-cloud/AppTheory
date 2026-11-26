@@ -15,7 +15,7 @@ properties of the context objects and the middleware chain, not of a particular 
 ## Why this is now a stated guarantee
 
 A classic Lambda invocation handles one event at a time, so an execution environment can serve a second request only
-after the first returned. An AWS Lambda **Web Function** removes that: one environment serves many requests at once
+after the first returned. An AWS Lambda [**Web Function**](web-functions.md) removes that: one environment serves many requests at once
 (64 concurrently by default, up to 128). Lambda **Managed Instances** remove it for event functions: one environment
 processes multiple invocations concurrently instead of sequentially. The runtime therefore cannot rely on "nothing
 else is running" for correctness, and this page records the invariant that replaces that assumption.
@@ -30,7 +30,7 @@ means here.
 |---|---|---|
 | Go | None upstream: one invocation at a time per execution environment | Two Go invocations never overlap in one environment, because AWS offers no multi-concurrency runtime for Go. The runtime is written to the single-invocation model and its request state is per call; see [the Go section](#multi-concurrency-is-not-available-to-go-upstream). |
 | TypeScript | One event loop, N suspended `async` handler bodies | Two requests are "concurrent" when both handler bodies are suspended at an `await`. A synchronous stretch is never pre-empted. |
-| Python | Separate processes, one invocation each | Two Python requests are concurrent when they run in different processes, which share no interpreter memory. One process serves one invocation at a time, so a Python handler is never re-entered: the entry point stays a synchronous `def handler(event, context)`, async work runs only behind it through one `asyncio.run` loop created and closed inside that invocation, and no loop-bound state outlives it. See [Python specifics](#python-specifics). |
+| Python | **Lambda Managed Instances**: separate processes, one invocation each. This is the Managed Instances model, not the Web Function one — see [Python specifics](#python-specifics). | Two Python requests are concurrent when they run in different processes, which share no interpreter memory. One process serves one invocation at a time, so a Python handler is never re-entered: the entry point stays a synchronous `def handler(event, context)`, async work runs only behind it through one `asyncio.run` loop created and closed inside that invocation, and no loop-bound state outlives it. See [Python specifics](#python-specifics). |
 
 The two models differ in a way a reader of the runtime's own code must know: in TypeScript a shared mutable is safe
 exactly when no `await` sits inside its read-modify-write window, whereas a Python process's shared mutable is safe
@@ -117,6 +117,12 @@ entry point. Async runs only **behind** it: when a handler returns an awaitable,
 `asyncio.run` loop, created and closed inside that same invocation. No loop-bound state may outlive an invocation, and
 `asyncio.run` raises if an event loop is already running on the calling thread — a named, fail-closed error rather than
 a shared loop across invocations.
+
+That model is **Lambda Managed Instances**, and it is the one this section — and AppTheory's Python runtime — is
+written against. It is not the model upstream uses for a Python [Web Function](web-functions.md): there, `python3.15`
+(public preview) keeps one ASGI event loop, or a WSGI worker-thread pool, per execution environment and Lambda manages
+the HTTP server itself. AppTheory refuses a Python Web Function at synthesis, so that model is upstream's, not this
+runtime's, and nothing on this page should be read as support for it.
 
 **AppTheory does not serve Python thread-per-request.** No thread pool serves your handler, no thread is created per
 request, and `serve()` is never driven from inside a live event loop. The guarantees on this page are stated for the

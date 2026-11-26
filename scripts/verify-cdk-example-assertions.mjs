@@ -75,6 +75,46 @@ function assertHasActionPrefix(statements, prefix) {
 }
 
 const assertions = {
+  AppTheoryWebFunctionExample() {
+    // The example exists to show both sides of the endpoint authorization decision over one
+    // application, so the template must carry two complete compositions and both auth types.
+    const webFunctions = byType("AWS::Lambda::WebFunction");
+    assert.equal(webFunctions.length, 2, "expected two Web Functions");
+    assert.equal(byType("AWS::Lambda::WebFunctionRevision").length, 2, "expected one revision each");
+    const endpoints = byType("AWS::Lambda::WebFunctionEndpoint");
+    assert.equal(endpoints.length, 2, "expected one endpoint each");
+
+    const authTypes = endpoints.map(([, endpoint]) => endpoint.Properties.AuthType).sort();
+    assert.deepEqual(authTypes, ["ApplicationManaged", "IamAuth"]);
+
+    const endpointNames = endpoints.map(([, endpoint]) => endpoint.Properties.EndpointName).sort();
+    assert.deepEqual(endpointNames, ["private", "public"]);
+
+    for (const [id, endpoint] of endpoints) {
+      const weights = endpoint.Properties.RevisionWeights;
+      assert.equal(weights.length, 1, `${id} must send its traffic to one revision`);
+      assert.equal(weights[0].Weight, 100);
+    }
+
+    // An IamAuth endpoint is only reachable by a signed request, so the example must not lose
+    // the safe default by drifting both endpoints to ApplicationManaged.
+    const privateEndpoint = endpoints.find(([, endpoint]) => endpoint.Properties.EndpointName === "private");
+    assert.equal(privateEndpoint[1].Properties.AuthType, "IamAuth");
+
+    for (const [id, revision] of byType("AWS::Lambda::WebFunctionRevision")) {
+      assert.equal(revision.Properties.BuildConfig.RuntimeConfig.Runtime, "nodejs24.x", `${id} runtime`);
+      // The application reads AWS_LAMBDA_HTTP_ENDPOINT for its listen address; the example sets
+      // only the entry file, which is what the L2 encodes for Node.js runtimes.
+      const environment = revision.Properties.ServiceConfig.EnvironmentVariables;
+      assert.equal(environment.AWS_LAMBDA_NODEJS_ENTRYPOINT, "server.mjs", `${id} entry point`);
+      assert.equal(
+        Object.hasOwn(environment, "AWS_LAMBDA_HTTP_ENDPOINT"),
+        false,
+        `${id} must not set the variable the Lambda service owns`,
+      );
+    }
+  },
+
   AppTheoryCodeBuildJobRunnerExample() {
     const projects = byType("AWS::CodeBuild::Project");
     assert.equal(projects.length, 1, "expected one CodeBuild project");

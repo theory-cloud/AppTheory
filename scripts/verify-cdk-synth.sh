@@ -48,6 +48,7 @@ examples=(
   "examples/cdk/local-iam|local-iam|"
   "examples/cdk/local-iam-peer|local-iam-peer|"
   "examples/cdk/local-mcp-auth-facade|AppTheoryLocalMcpAuthFacade|"
+  "examples/cdk/web-function|AppTheoryWebFunctionExample|"
 )
 
 # Stacks whose template is also checked for the resources the example exists to
@@ -62,6 +63,7 @@ asserted_stacks=(
   "RestV1RouterExample"
   "LambdaPackagingExample"
   "SqsQueueExample"
+  "AppTheoryWebFunctionExample"
 )
 
 if ! command -v node >/dev/null 2>&1; then

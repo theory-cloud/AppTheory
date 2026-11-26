@@ -910,6 +910,17 @@
    "gap": "The edge network and IAM policy evaluation are docs/125 true limits (real network properties; IAM policy evaluation in general).",
    "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row. s3proxy serves the objects without bucket policies or IAM."
   },
+  "examples/cdk/web-function/app/server.mjs": {
+   "run": "web-function",
+   "class": "L2",
+   "gap": "The application runs as a host process on the lane's port with AWS_LAMBDA_HTTP_ENDPOINT set, not under the Lambda Web Function service: endpoint TLS termination on 443, the lambda-web-request-id correlation header, the 10-second startup bound, the 2 GB environment memory, and the service's enforcement of maxConcurrencyPerEnvironment are not reproduced. Isolation is exercised by two overlapping streams inside one process, which is the unit the runtime contract is written against, not by the service's full fan-out.",
+   "description": "AppTheory Web Function application: the real Node HTTP server starts exactly as a Web Function environment starts it (it reads the address from AWS_LAMBDA_HTTP_ENDPOINT), serves the page with text/html and a no-store cache header, answers health 200 and an unknown route 404, streams a response chunk by chunk with no content-length (the row observes the first event 0.24s before the last), and answers two overlapping streams in one environment where each stream carries only its own tag and its own 1..4 tick sequence."
+  },
+  "examples/cdk/web-function/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Web Function CDK app, synthesized and hash-checked with focused assertions: two compositions over one application, an IamAuth endpoint and an ApplicationManaged opt-in, each with its own revision and a single-revision weight of 100."
+  },
   "examples/mcp/resumable-sse/main.go": {
    "run": "mcp-go-resumable-sse",
    "class": "L2",
