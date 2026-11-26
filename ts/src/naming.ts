@@ -75,6 +75,9 @@ export const LOG_SOURCE_PREFIX = "theorycloud";
 /** The aggregate inline role policy quota, in characters. */
 export const ROLE_POLICY_MAX = 10240;
 
+/** The longest hosted namespace label, in characters (contract section 1, r5 rev1). */
+export const HOSTED_NAMESPACE_MAX = 12;
+
 const SEGMENT_PATTERN = "[a-z0-9]+(?:-[a-z0-9]+)*";
 const LOGICAL_RE = new RegExp(`^${SEGMENT_PATTERN}(?:/${SEGMENT_PATTERN})*$`);
 const APP_RE = new RegExp(`^${SEGMENT_PATTERN}$`);
@@ -105,6 +108,15 @@ export interface NamingContext {
   readonly region: string;
   /** `derived` (default) or `legacy`. */
   readonly naming_profile?: NamingProfile;
+  /**
+   * `true` for a deployment TheoryCloud.ai places on a tenant's behalf
+   * (contract section 1, r5). A hosted deployment always supplies its
+   * namespace, never uses the reserved platform namespace, and carries the
+   * namespace in every derived name (contract section 2). Only first-party
+   * platform apps omit it.
+   * @default false
+   */
+  readonly hosted?: boolean;
   /** Generated-name entries keyed `{type}:{logical}`; valid only under `legacy`. */
   readonly generated?: string[];
 }
@@ -249,8 +261,86 @@ export function validateNamingContext(context: NamingContext): void {
   if (!STAGE_RE.test(context.stage)) fail("stage");
   if (!ACCOUNT_RE.test(context.account)) fail("account");
   if (!REGION_RE.test(context.region)) fail("region");
-  if (!NAMESPACE_RE.test(context.namespace ?? LOG_SOURCE_PREFIX))
-    fail("namespace");
+  // r5 rev1: a hosted deployment always supplies its namespace; it never
+  // defaults to the platform form.
+  if (context.hosted === true && !context.namespace) {
+    fail("a hosted deployment must supply its namespace");
+  }
+  const namespace = context.namespace ?? LOG_SOURCE_PREFIX;
+  if (!NAMESPACE_RE.test(namespace)) fail("namespace");
+  // r5 rev1: `theorycloud` is reserved for first-party platform apps. A hosted
+  // deployment may never use it, because its names would then collide with the
+  // platform app's in a pooled account.
+  if (context.hosted === true && namespace === LOG_SOURCE_PREFIX) {
+    fail(
+      `namespace ${LOG_SOURCE_PREFIX} is reserved for first-party platform apps`,
+    );
+  }
+  validateHostedNamespace(namespace);
+}
+
+/**
+ * Apply the hosted namespace label rule (contract section 1, r5 rev1): a
+ * namespace other than the reserved platform one is at most
+ * `HOSTED_NAMESPACE_MAX` characters and never starts with `aws` or `ssm`. Those
+ * two prefixes are reserved by AWS, so a name carrying them cannot be created.
+ */
+export function validateHostedNamespace(namespace: string): void {
+  if (namespace === LOG_SOURCE_PREFIX) return;
+  if (namespace.length > HOSTED_NAMESPACE_MAX) {
+    fail("hosted namespace longer than 12 characters");
+  }
+  if (namespace.startsWith("aws") || namespace.startsWith("ssm")) {
+    fail("hosted namespace must not start with aws or ssm");
+  }
+}
+
+/**
+ * Whether every derived name carries the namespace (contract section 2, r5):
+ * true for a hosted deployment and for any namespace other than the reserved
+ * platform one. The platform namespace keeps the compatibility form byte for
+ * byte, so the live hard gate (contract section 4) is unchanged.
+ */
+export function namespacedContext(context: NamingContext): boolean {
+  return (
+    context.hosted === true ||
+    (context.namespace ?? LOG_SOURCE_PREFIX) !== LOG_SOURCE_PREFIX
+  );
+}
+
+/**
+ * The `{namespace}-{app}-{stage}-{logical}` stem of a `dash` name or an S3
+ * account-regional prefix, with `/` in the logical name replaced by `-`.
+ */
+export function dashStem(context: NamingContext, logical: string): string {
+  const parts = [context.app, context.stage, logical.replace(/\//g, "-")];
+  if (namespacedContext(context)) parts.unshift(context.namespace as string);
+  return parts.join("-");
+}
+
+/**
+ * The `{namespace}/{app}/{stage}/{logical}` stem of a `path` name.
+ */
+export function pathStem(context: NamingContext, logical: string): string {
+  const parts = [context.app, context.stage, logical];
+  if (namespacedContext(context)) parts.unshift(context.namespace as string);
+  return parts.join("/");
+}
+
+/**
+ * The leading namespace component a hosted pin must carry, exactly where the
+ * derived form puts it (contract section 4, r5 rev1, rev2). Containing the
+ * namespace elsewhere is not enough: `shop-lab-events` is not a pin for
+ * namespace `hop`.
+ */
+export function hostedPinLead(
+  context: NamingContext,
+  rule: ResourceNameRule,
+): string {
+  const namespace = context.namespace as string;
+  if (rule.kind === "path") return `${rule.lead ?? ""}${namespace}/`;
+  if (rule.kind === "log") return `${LOG_SOURCE_PREFIX}_${namespace}_`;
+  return `${namespace}-`;
 }
 
 function sha256Hex(text: string): string {
@@ -301,7 +391,14 @@ export function logGroupName(context: NamingContext, logical: string): string {
   return logSourcePrefix(context) + logical.replace(/\//g, "_");
 }
 
-/** Compose the physical name of one resource. Pins are returned verbatim. */
+/**
+ * Compose the physical name of one resource. Pins are returned verbatim.
+ *
+ * A hosted deployment (`hosted: true`, or any namespace other than the platform
+ * one) carries the namespace as the first component of every derived name, its
+ * S3 prefix included, and takes no pin whose name does not start with that
+ * namespace component (contract sections 2 and 4, r5).
+ */
 export function physicalResourceName(
   context: NamingContext,
   resourceType: string,
@@ -314,6 +411,13 @@ export function physicalResourceName(
   const rule = namingRule(resourceType);
   if (!rule) fail(`resource type ${resourceType}`);
   const legacy = (context.naming_profile ?? "derived") === "legacy";
+  // r5 rev2: the legacy profile and generated entries are first-party
+  // live-compatibility tools only. A hosted deployment takes neither, because a
+  // pinned or CloudFormation-generated name carries no namespace and would
+  // collide across tenants in a pooled account.
+  if (namespacedContext(context) && (legacy || generated.length > 0)) {
+    fail("a hosted deployment takes no legacy profile or generated entries");
+  }
   if (generated.length > 0 && !legacy) {
     fail("generated entries are only valid under the legacy naming profile");
   }
@@ -328,7 +432,18 @@ export function physicalResourceName(
   if (pin !== undefined && keepGenerated) {
     fail("a resource has both a pin and a generated entry");
   }
-  if (pin !== undefined) return { name: pin, pinned: true };
+  if (pin !== undefined) {
+    // r5 rev2: a hosted pin starts with its namespace component, as the derived
+    // form does. A namespace that merely appears somewhere in the name is not
+    // the namespace component.
+    if (
+      namespacedContext(context) &&
+      !pin.startsWith(hostedPinLead(context, rule))
+    ) {
+      fail("a hosted pin must start with the namespace component");
+    }
+    return { name: pin, pinned: true };
+  }
   if (keepGenerated) return { generated: true };
   if (legacy) {
     fail(
@@ -340,24 +455,16 @@ export function physicalResourceName(
   if (rule.kind === "s3ar") {
     const suffix = s3AccountRegionalSuffix(context);
     const budget = rule.max - suffix.length;
-    const prefix = shortenResourceName(
-      `${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`,
-      budget,
-    );
+    const prefix = shortenResourceName(dashStem(context, logical), budget);
     out = {
       name: prefix + suffix,
       bucket_name_prefix: prefix,
       bucket_namespace: "account-regional",
     };
   } else if (rule.kind === "dash") {
-    out = {
-      name: shortenResourceName(
-        `${context.app}-${context.stage}-${logical.replace(/\//g, "-")}`,
-        rule.max,
-      ),
-    };
+    out = { name: shortenResourceName(dashStem(context, logical), rule.max) };
   } else if (rule.kind === "path") {
-    const full = `${rule.lead ?? ""}${context.app}/${context.stage}/${logical}`;
+    const full = `${rule.lead ?? ""}${pathStem(context, logical)}`;
     if (resourceType === "secret" && SECRET_TAIL_RE.test(full)) {
       fail("secret name must not end with a hyphen and six characters");
     }

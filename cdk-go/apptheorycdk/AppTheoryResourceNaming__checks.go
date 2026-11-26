@@ -93,6 +93,17 @@ func validateAppTheoryResourceNaming_ManifestJsonParameters(manifest *AppTheoryV
 	return nil
 }
 
+func validateAppTheoryResourceNaming_NamespacedParameters(values *AppTheoryNamingContextValues) error {
+	if values == nil {
+		return fmt.Errorf("parameter values is required, but nil was provided")
+	}
+	if err := _jsii_.ValidateStruct(values, func() string { return "parameter values" }); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func validateAppTheoryResourceNaming_NamingScopeParameters(resourceType *string) error {
 	if resourceType == nil {
 		return fmt.Errorf("parameter resourceType is required, but nil was provided")
@@ -188,6 +199,14 @@ func validateAppTheoryResourceNaming_ValidateContextParameters(values *AppTheory
 	}
 	if err := _jsii_.ValidateStruct(values, func() string { return "parameter values" }); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateAppTheoryResourceNaming_ValidateHostedNamespaceParameters(namespace *string) error {
+	if namespace == nil {
+		return fmt.Errorf("parameter namespace is required, but nil was provided")
 	}
 
 	return nil

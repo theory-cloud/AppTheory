@@ -85,6 +85,24 @@ export interface AppTheoryNamingContextProps {
   readonly generated?: string[];
 
   /**
+   * `true` for a deployment TheoryCloud.ai places on a tenant's behalf
+   * (contract section 1, r5): a pooled, isolated or dedicated managed-account
+   * placement.
+   *
+   * TheoryCloud.ai sets this flag and the tenant `namespace` on every deployment
+   * it places, and injects `account` and `region` from its own placement logic.
+   * Only first-party platform apps omit it; for them the platform default
+   * (namespace `theorycloud`, the r4 forms) is unchanged.
+   *
+   * A hosted context always supplies a `namespace`, never uses the reserved
+   * platform namespace, carries the namespace in every derived name, and takes
+   * no legacy naming profile and no generated entries. A context that breaks any
+   * of these fails synthesis.
+   * @default false
+   */
+  readonly hosted?: boolean;
+
+  /**
    * Naming profile.
    * @default AppTheoryNamingProfile.DERIVED
    */
@@ -173,6 +191,12 @@ export class AppTheoryNamingContext extends Construct {
   private readonly declared: AppTheoryNameDeclaration[] = [];
 
   /**
+   * Whether this context is a hosted deployment TheoryCloud.ai places
+   * (contract section 1, r5).
+   */
+  public readonly hosted: boolean;
+
+  /**
    * Naming profile.
    */
   public readonly namingProfile: AppTheoryNamingProfile;
@@ -199,6 +223,15 @@ export class AppTheoryNamingContext extends Construct {
       throw new Error("AppTheoryNamingContext requires a concrete region; an unresolved token cannot be validated at synthesis");
     }
 
+    this.hosted = props.hosted === true;
+    // r5 rev1: a hosted deployment always supplies its namespace; it never
+    // defaults to the platform form. Refused here rather than after defaulting,
+    // because an absent namespace and the reserved one are different mistakes.
+    if (this.hosted && !props.namespace) {
+      throw new Error(
+        "AppTheoryNamingContext requires a namespace for a hosted deployment; a hosted deployment never defaults to the platform namespace",
+      );
+    }
     this.namespace = props.namespace ?? "theorycloud";
     this.app = props.app;
     this.stage = props.stage;
@@ -334,6 +367,7 @@ export class AppTheoryNamingContext extends Construct {
       region: this.region,
       pins: this.pins,
       generated: this.generated,
+      hosted: this.hosted,
       namingProfile: this.namingProfile,
       loggingProfile: this.loggingProfile,
       retentionDays: this.retentionDays,
@@ -364,8 +398,15 @@ export class AppTheoryNamingContext extends Construct {
    * `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
    * stack declares its own resource.
    *
-   * A `log_group` type declares a log-source name (contract section 3): a log
+     * A `log_group` type declares a log-source name (contract section 3): a log
    * group takes no pin or generated entry.
+   *
+   * The emitted derived-name artifact carries the hosted names of a hosted
+   * context verbatim, because every declaration composes through this context
+   * (contract section 11.4, r5). The artifact's `context.namespace` is the
+   * tenant namespace for a hosted deployment and `theorycloud` for a platform
+   * app, so the reader can tell the two apart; the wire schema is unchanged and
+   * a platform app's artifact stays byte-identical.
    */
   public declareName(resourceType: string, logical: string, resource: IConstruct): void {
     this.assertSameStage(resourceType, resource);

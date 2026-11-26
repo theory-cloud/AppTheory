@@ -20,6 +20,8 @@ type AppTheoryNamingContext interface {
 	App() *string
 	// Generated-name entries keyed `{type}:{logical}`.
 	Generated() *[]*string
+	// Whether this context is a hosted deployment TheoryCloud.ai places (contract section 1, r5).
+	Hosted() *bool
 	// Logging profile.
 	LoggingProfile() AppTheoryLoggingProfile
 	// Namespace segment.
@@ -79,8 +81,15 @@ type AppTheoryNamingContext interface {
 	// `AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that
 	// stack declares its own resource.
 	//
-	// A `log_group` type declares a log-source name (contract section 3): a log
+	//  A `log_group` type declares a log-source name (contract section 3): a log
 	// group takes no pin or generated entry.
+	//
+	// The emitted derived-name artifact carries the hosted names of a hosted
+	// context verbatim, because every declaration composes through this context
+	// (contract section 11.4, r5). The artifact's `context.namespace` is the
+	// tenant namespace for a hosted deployment and `theorycloud` for a platform
+	// app, so the reader can tell the two apart; the wire schema is unchanged and
+	// a platform app's artifact stays byte-identical.
 	DeclareName(resourceType *string, logical *string, resource constructs.IConstruct)
 	// The physical log-group name of a logical source under this context.
 	LogGroupName(logical *string) *string
@@ -133,6 +142,16 @@ func (j *jsiiProxy_AppTheoryNamingContext) Generated() *[]*string {
 	_jsii_.Get(
 		j,
 		"generated",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryNamingContext) Hosted() *bool {
+	var returns *bool
+	_jsii_.Get(
+		j,
+		"hosted",
 		&returns,
 	)
 	return returns

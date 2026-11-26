@@ -20,6 +20,10 @@ type AppTheoryNamingContextValues struct {
 	// Default: [].
 	//
 	Generated *[]*string `field:"optional" json:"generated" yaml:"generated"`
+	// `true` for a deployment TheoryCloud.ai places on a tenant's behalf (contract section 1, r5). A hosted deployment always supplies its namespace, never uses the reserved platform namespace, and carries the namespace in every derived name (contract section 2). Only first-party platform apps omit it.
+	// Default: false.
+	//
+	Hosted *bool `field:"optional" json:"hosted" yaml:"hosted"`
 	// Logging profile.
 	// Default: AppTheoryLoggingProfile.LEGACY
 	//

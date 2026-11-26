@@ -7,6 +7,8 @@ export declare const RESOURCE_NAMING_CONTRACT = "theorycloud_resource_naming.v0.
 export declare const LOG_SOURCE_PREFIX = "theorycloud";
 /** The aggregate inline role policy quota, in characters. */
 export declare const ROLE_POLICY_MAX = 10240;
+/** The longest hosted namespace label, in characters (contract section 1, r5 rev1). */
+export declare const HOSTED_NAMESPACE_MAX = 12;
 /** Naming profile values accepted by a naming context. */
 export type NamingProfile = "derived" | "legacy";
 /** Logging profile values accepted by a naming context. */
@@ -25,6 +27,15 @@ export interface NamingContext {
     readonly region: string;
     /** `derived` (default) or `legacy`. */
     readonly naming_profile?: NamingProfile;
+    /**
+     * `true` for a deployment TheoryCloud.ai places on a tenant's behalf
+     * (contract section 1, r5). A hosted deployment always supplies its
+     * namespace, never uses the reserved platform namespace, and carries the
+     * namespace in every derived name (contract section 2). Only first-party
+     * platform apps omit it.
+     * @default false
+     */
+    readonly hosted?: boolean;
     /** Generated-name entries keyed `{type}:{logical}`; valid only under `legacy`. */
     readonly generated?: string[];
 }
@@ -95,6 +106,36 @@ export interface VisibilityManifest {
 export type KeeperAnswer = "events" | "allowed_no_events" | "not_shared";
 /** Enforce the bound-context grammar. */
 export declare function validateNamingContext(context: NamingContext): void;
+/**
+ * Apply the hosted namespace label rule (contract section 1, r5 rev1): a
+ * namespace other than the reserved platform one is at most
+ * `HOSTED_NAMESPACE_MAX` characters and never starts with `aws` or `ssm`. Those
+ * two prefixes are reserved by AWS, so a name carrying them cannot be created.
+ */
+export declare function validateHostedNamespace(namespace: string): void;
+/**
+ * Whether every derived name carries the namespace (contract section 2, r5):
+ * true for a hosted deployment and for any namespace other than the reserved
+ * platform one. The platform namespace keeps the compatibility form byte for
+ * byte, so the live hard gate (contract section 4) is unchanged.
+ */
+export declare function namespacedContext(context: NamingContext): boolean;
+/**
+ * The `{namespace}-{app}-{stage}-{logical}` stem of a `dash` name or an S3
+ * account-regional prefix, with `/` in the logical name replaced by `-`.
+ */
+export declare function dashStem(context: NamingContext, logical: string): string;
+/**
+ * The `{namespace}/{app}/{stage}/{logical}` stem of a `path` name.
+ */
+export declare function pathStem(context: NamingContext, logical: string): string;
+/**
+ * The leading namespace component a hosted pin must carry, exactly where the
+ * derived form puts it (contract section 4, r5 rev1, rev2). Containing the
+ * namespace elsewhere is not enough: `shop-lab-events` is not a pin for
+ * namespace `hop`.
+ */
+export declare function hostedPinLead(context: NamingContext, rule: ResourceNameRule): string;
 /** Apply the deterministic over-budget form (contract section 2.2). */
 export declare function shortenResourceName(full: string, limit: number): string;
 /** The CloudFormation-appended account-regional suffix. */
@@ -103,7 +144,14 @@ export declare function s3AccountRegionalSuffix(context: NamingContext): string;
 export declare function logSourcePrefix(context: NamingContext): string;
 /** Map a logical log source to its physical log-group name. */
 export declare function logGroupName(context: NamingContext, logical: string): string;
-/** Compose the physical name of one resource. Pins are returned verbatim. */
+/**
+ * Compose the physical name of one resource. Pins are returned verbatim.
+ *
+ * A hosted deployment (`hosted: true`, or any namespace other than the platform
+ * one) carries the namespace as the first component of every derived name, its
+ * S3 prefix included, and takes no pin whose name does not start with that
+ * namespace component (contract sections 2 and 4, r5).
+ */
 export declare function physicalResourceName(context: NamingContext, resourceType: string, logical: string, pins?: NamingPins, generated?: string[]): ComposedName;
 /** Enforce the selector grammar (contract section 5). */
 export declare function validateVisibilitySelector(selector: string): void;

@@ -28,6 +28,10 @@ func validateAppTheoryResourceNaming_ManifestJsonParameters(manifest *AppTheoryV
 	return nil
 }
 
+func validateAppTheoryResourceNaming_NamespacedParameters(values *AppTheoryNamingContextValues) error {
+	return nil
+}
+
 func validateAppTheoryResourceNaming_NamingScopeParameters(resourceType *string) error {
 	return nil
 }
@@ -57,6 +61,10 @@ func validateAppTheoryResourceNaming_SynthCheckParameters(entries *[]*AppTheoryD
 }
 
 func validateAppTheoryResourceNaming_ValidateContextParameters(values *AppTheoryNamingContextValues) error {
+	return nil
+}
+
+func validateAppTheoryResourceNaming_ValidateHostedNamespaceParameters(namespace *string) error {
 	return nil
 }
 

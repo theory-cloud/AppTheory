@@ -1108,6 +1108,7 @@ func init() {
 			_jsii_.MemberMethod{JsiiMethod: "declareFixedName", GoMethod: "DeclareFixedName"},
 			_jsii_.MemberMethod{JsiiMethod: "declareName", GoMethod: "DeclareName"},
 			_jsii_.MemberProperty{JsiiProperty: "generated", GoGetter: "Generated"},
+			_jsii_.MemberProperty{JsiiProperty: "hosted", GoGetter: "Hosted"},
 			_jsii_.MemberProperty{JsiiProperty: "loggingProfile", GoGetter: "LoggingProfile"},
 			_jsii_.MemberMethod{JsiiMethod: "logGroupName", GoMethod: "LogGroupName"},
 			_jsii_.MemberMethod{JsiiMethod: "logSourcePrefix", GoMethod: "LogSourcePrefix"},

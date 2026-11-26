@@ -31,6 +31,20 @@ type AppTheoryNamingContextProps struct {
 	// Default: [].
 	//
 	Generated *[]*string `field:"optional" json:"generated" yaml:"generated"`
+	// `true` for a deployment TheoryCloud.ai places on a tenant's behalf (contract section 1, r5): a pooled, isolated or dedicated managed-account placement.
+	//
+	// TheoryCloud.ai sets this flag and the tenant `namespace` on every deployment
+	// it places, and injects `account` and `region` from its own placement logic.
+	// Only first-party platform apps omit it; for them the platform default
+	// (namespace `theorycloud`, the r4 forms) is unchanged.
+	//
+	// A hosted context always supplies a `namespace`, never uses the reserved
+	// platform namespace, carries the namespace in every derived name, and takes
+	// no legacy naming profile and no generated entries. A context that breaks any
+	// of these fails synthesis.
+	// Default: false.
+	//
+	Hosted *bool `field:"optional" json:"hosted" yaml:"hosted"`
 	// Logging profile.
 	//
 	// `standard` opts every construct that receives the context

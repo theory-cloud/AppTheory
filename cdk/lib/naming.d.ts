@@ -94,6 +94,15 @@ export interface AppTheoryNamingContextValues {
      */
     readonly generated?: string[];
     /**
+     * `true` for a deployment TheoryCloud.ai places on a tenant's behalf
+     * (contract section 1, r5). A hosted deployment always supplies its
+     * namespace, never uses the reserved platform namespace, and carries the
+     * namespace in every derived name (contract section 2). Only first-party
+     * platform apps omit it.
+     * @default false
+     */
+    readonly hosted?: boolean;
+    /**
      * Naming profile.
      * @default AppTheoryNamingProfile.DERIVED
      */
@@ -301,6 +310,19 @@ export declare class AppTheoryResourceNaming {
      */
     static validateContext(values: AppTheoryNamingContextValues): void;
     /**
+     * Apply the hosted namespace label rule to one namespace (contract section 1,
+     * r5 rev1): a namespace other than the reserved platform one is at most 12
+     * characters and never starts with `aws` or `ssm`. Throws on a namespace
+     * outside it.
+     */
+    static validateHostedNamespace(namespace: string): void;
+    /**
+     * Whether every derived name under these values carries the namespace
+     * (contract section 2, r5): true for a hosted deployment and for any namespace
+     * other than the reserved platform one.
+     */
+    static namespaced(values: AppTheoryNamingContextValues): boolean;
+    /**
      * The CloudFormation-appended account-regional bucket suffix.
      */
     static s3AccountRegionalSuffix(values: AppTheoryNamingContextValues): string;
@@ -317,6 +339,13 @@ export declare class AppTheoryResourceNaming {
      * entry means CloudFormation generates the name today and the construct sets
      * no physical-name property. Generated entries are legacy-only; a legacy
      * profile needs exactly one of a pin or a generated entry.
+     *
+     * A hosted deployment (`hosted: true`, or any namespace other than the
+     * platform one) carries the namespace as the first component of every derived
+     * name, its S3 bucket-name prefix included, so it reaches the shortened
+     * over-budget form sooner (contract section 2.4). It takes no generated entry
+     * and no legacy profile, and a pin must start with its namespace component
+     * (contract sections 2 and 4, r5).
      */
     static physicalName(values: AppTheoryNamingContextValues, resourceType: string, logical: string): AppTheoryPhysicalName;
     /**
