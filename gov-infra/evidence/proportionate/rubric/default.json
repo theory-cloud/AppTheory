@@ -5,25 +5,19 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 277.459,
+      "durationSeconds": 723.182,
       "executed": true,
-      "exitCode": 2,
-      "finishedAt": "2026-11-26T10:37:02Z",
+      "exitCode": 0,
+      "finishedAt": "2026-11-26T11:11:10Z",
       "id": "rubric",
       "inputsDigest": "sha256:bc2491366f0fa090e9e4fcc48d086fc4400f1501dab7ad45f61263e5de7aabe2",
-      "logDigest": "sha256:d969c06520c4ea923416a01efec520ed3ed79f97b4573cb6554175c37d4a871e",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261126T103224Z-44711.log",
+      "logDigest": "sha256:402c13f373ab43c14a478b0264648fd6168523437fa4fe23f1b3eeaa5640a370",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261126T105907Z-10399.log",
       "reused": false,
-      "startedAt": "2026-11-26T10:32:24Z"
+      "startedAt": "2026-11-26T10:59:07Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:6ad33f7433b216347239703c8879900bf222ea9ff37ecab56c037069c3d881d3",
-      "gate": "cdk-go-drift",
-      "recordedAt": "2026-11-26T05:52:52Z"
-    }
-  ],
+  "consumed": [],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
   "environment": {
     "go": "go1.27.4",
@@ -41,8 +35,8 @@
     "tool": "scripts/evidence/validation_evidence.py"
   },
   "profile": "default",
-  "reason": "command failed: rubric exit=2",
-  "recordedAt": "2026-11-26T10:37:02Z",
+  "reason": "",
+  "recordedAt": "2026-11-26T11:11:10Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -63,5 +57,5 @@
     "digest": "sha256:23a607183e2377d3dbdd2473a9e11ab42b8330855772e73207135e139dd4a4f9",
     "fileCount": 2823
   },
-  "verdict": "FAIL"
+  "verdict": "PASS"
 }
