@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json as jsonlib
 import os
+import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
@@ -76,17 +77,36 @@ def _registry_record_listable(record: MicroVMSessionRegistryRecord, subject: str
 
 
 class MemoryMicroVMSessionRegistry:
+    """An execution environment's in-memory micro:vm session registry.
+
+    One instance is constructed per process and shared by every request that
+    drives a session, so ``put``/``get``/``delete``/``list`` run on different
+    request threads. ``list`` is the shape CPython makes reproducible: it walks
+    the record maps while another request mutates them, and without a lock the
+    iteration aborts with ``RuntimeError: dictionary changed size during
+    iteration``. ``get`` can also move a pre-M1 entry (write the canonical key,
+    drop the legacy one), so it is a read-modify-write spanning several calls.
+    One reentrant lock serializes every access; it is reentrant because the
+    legacy fallback reads the map from inside ``get``'s guarded section.
+    """
+
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._records: dict[tuple[str, str], MicroVMSessionRegistryRecord] = {}
         self._clock = clock or time.time
+        self._lock = threading.RLock()
 
     def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
         registry = microvm_session_record_to_registry_record(record)
-        self._records[_registry_record_key(registry)] = _clone_session_registry_record(registry)
+        with self._lock:
+            self._records[_registry_record_key(registry)] = _clone_session_registry_record(registry)
         return microvm_session_from_registry_record(registry)
 
     def get(self, key: _MicroVMSessionRegistryKeyInput) -> MicroVMSessionRecord:
         normalized = _normalize_session_registry_key(key)
+        with self._lock:
+            return self._get_locked(normalized)
+
+    def _get_locked(self, normalized: tuple[str, str, str]) -> MicroVMSessionRecord:
         record = self._records.get(_registry_key_tuple(normalized))
         if record is None:
             record = self._legacy_record(normalized)
@@ -128,11 +148,12 @@ class MemoryMicroVMSessionRegistry:
 
     def delete(self, key: _MicroVMSessionRegistryKeyInput) -> None:
         normalized = _normalize_session_registry_key(key)
-        self._records.pop(_registry_key_tuple(normalized), None)
-        # Also drop the pre-M1 entry so a deleted session cannot be resurrected by the dual-read fallback.
-        legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
-        if legacy_key is not None:
-            self._records.pop(legacy_key, None)
+        with self._lock:
+            self._records.pop(_registry_key_tuple(normalized), None)
+            # Also drop the pre-M1 entry so a deleted session cannot be resurrected by the dual-read fallback.
+            legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
+            if legacy_key is not None:
+                self._records.pop(legacy_key, None)
 
     def list(self, input_: MicroVMSessionListInput | dict[str, Any]) -> list[MicroVMSessionRecord]:
         normalized = _normalize_session_list_input(input_)
@@ -140,31 +161,37 @@ class MemoryMicroVMSessionRegistry:
         now_epoch = float(self._clock())
         out: list[MicroVMSessionRecord] = []
         seen: set[str] = set()
-        for record in self._records.values():
-            if (
-                record.tenant_id != normalized.tenant_id
-                or record.namespace != normalized.namespace
-                or record.pk != canonical_pk
-            ):
-                continue
-            # Canonical precedence is recorded before owner filtering.
-            seen.add(record.session_id)
-            if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
-                continue
-            out.append(microvm_session_from_registry_record(_clone_session_registry_record(record)))
-        for record in self._records.values():
-            if (
-                record.tenant_id != normalized.tenant_id
-                or record.namespace != normalized.namespace
-                or record.pk == canonical_pk
-                or record.session_id in seen
-            ):
-                continue
-            if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
-                continue
-            out.append(
-                _session_from_registry_record_for_read(_clone_session_registry_record(record), allow_legacy_key=True)
-            )
+        # One acquisition covers both passes and the canonical-precedence set they share: the
+        # snapshot has to be consistent with itself, so a peer's put/delete may land before or
+        # after it but never inside it.
+        with self._lock:
+            for record in self._records.values():
+                if (
+                    record.tenant_id != normalized.tenant_id
+                    or record.namespace != normalized.namespace
+                    or record.pk != canonical_pk
+                ):
+                    continue
+                # Canonical precedence is recorded before owner filtering.
+                seen.add(record.session_id)
+                if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
+                    continue
+                out.append(microvm_session_from_registry_record(_clone_session_registry_record(record)))
+            for record in self._records.values():
+                if (
+                    record.tenant_id != normalized.tenant_id
+                    or record.namespace != normalized.namespace
+                    or record.pk == canonical_pk
+                    or record.session_id in seen
+                ):
+                    continue
+                if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
+                    continue
+                out.append(
+                    _session_from_registry_record_for_read(
+                        _clone_session_registry_record(record), allow_legacy_key=True
+                    )
+                )
         out.sort(key=lambda record: record.session_id)
         return out
 
