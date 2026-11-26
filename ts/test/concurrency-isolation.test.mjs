@@ -1372,6 +1372,10 @@ function rotationRecoveryPublication(issuer, stale, neighbor, rotated) {
   return {
     state,
     publish: () => running.resolve(Response.json(publishedDocument())),
+    publishWithoutRotated: () =>
+      running.resolve(
+        Response.json({ keys: [...stale.jwksDocument().keys, ...neighbor.jwksDocument().keys] }),
+      ),
     failRunning: (error) => running.reject(error),
     build: async (overrides = {}) =>
       await newJwksValidator({
@@ -1457,6 +1461,23 @@ test("a kid whose own window settled still follows the fetch that publishes it",
   const repeated = await settled(validate(validatorContext(), stranger));
   assert.equal(repeated.ok, false, "a repeat unknown kid was authorized");
   assert.equal(recovery.state.fetches, afterStranger, "a repeat unknown kid inside the cooldown fetched again");
+
+  // Control: following the running fetch does not authorize a kid that fetch
+  // does not publish. The caller waits for the fetch that was in flight and is
+  // still refused, with no fetch of its own.
+  const partial = rotationRecoveryPublication(issuer, stale, neighbor, rotated);
+  const partialValidate = await partial.build({ maxRefreshPerKid: 1, maxUnknownKidFetches: 8 });
+  await settled(partialValidate(validatorContext(), minted(rotated, "partial-before")));
+  const partialPublisher = settled(partialValidate(validatorContext(), minted(neighbor, "partial-publisher")));
+  await partial.state.runningStarted.promise;
+  const partialWaiter = settled(partialValidate(validatorContext(), minted(rotated, "partial-waiter")));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  partial.publishWithoutRotated();
+  const [partialPublisherOutcome, partialWaiterOutcome] = await Promise.all([partialPublisher, partialWaiter]);
+  assert.equal(partialPublisherOutcome.ok, true, `the neighbouring key's caller was refused: ${partialPublisherOutcome.reason}`);
+  assert.equal(partialWaiterOutcome.ok, false, "a fetch that never published the kid authorized its caller");
+  assert.match(partialWaiterOutcome.reason, /unknown_kid/);
+  assert.equal(partial.state.fetches, 3, "the caller following the running fetch fetched again");
 
   // Control: the running fetch failing releases the cooldown caller as a
   // fail-closed refusal, and neither caller is stranded.

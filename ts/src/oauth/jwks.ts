@@ -487,10 +487,17 @@ export async function newJwksValidator(
    * a different `kid`, its own retry only starts after that fetch clears, and a
    * peer watching only the slot finds it empty in between and refuses a key the
    * window is about to publish. The wait is bounded by the window's own
-   * resolution bound, so a rejecting or hanging resolution releases every peer
-   * and a window that has already settled returns the cache read immediately.
-   * It returns null when the window ended without this `kid`, so the caller
-   * still fails closed.
+   * resolution bound, so a rejecting or hanging resolution releases every peer.
+   * A settled window is not the end of the story: a `kid` that missed stays
+   * inside its cooldown, and the rotation that carries it can reach the shared
+   * key set through a fetch a *different* `kid` opened moments later. That fetch
+   * is already paid for, so following it costs no fetch-budget unit; waiting for
+   * the cache alone would refuse a token whose key it publishes a microtask
+   * later. Each such wait is bounded and at most `maxRefreshPerKid + 1` fetches
+   * are followed, so a rejecting or hanging fetch still releases the caller, and
+   * a fetch that does not publish this `kid` still ends in the refusal. It
+   * returns null when the window ended without this `kid`, so the caller still
+   * fails closed.
    */
   const followWindow = async (
     kid: string,
@@ -500,6 +507,20 @@ export async function newJwksValidator(
       await boundRefreshWait(window.settled, resolutionBoundMs);
     } catch {
       return null;
+    }
+    const deadline = now().getTime() + resolutionBoundMs;
+    for (let followed = 0; followed <= maxRefreshPerKid; followed += 1) {
+      const found = cachedKey(kid, now().getTime());
+      if (found) return found;
+      const running = inFlightRefresh;
+      if (!running) return null;
+      const remaining = deadline - now().getTime();
+      if (remaining <= 0) return null;
+      try {
+        await boundRefreshWait(running, remaining);
+      } catch {
+        return null;
+      }
     }
     return cachedKey(kid, now().getTime());
   };
@@ -530,8 +551,9 @@ export async function newJwksValidator(
       // fail a valid token only because a sibling request was mid-resolution —
       // the failure a burst of first requests produces on a Web Function. So
       // follow that resolution to its end (no fetch of our own, no budget
-      // unit); when the window ended without the key the refusal stands, as it
-      // must.
+      // unit), including a fetch another request is already running when it
+      // ends — the fetch a rotation reaches this `kid` through; when nothing
+      // publishes the key the refusal stands, as it must.
       return await followWindow(kid, window);
     }
     const opened = recordWindow(kid, at);
