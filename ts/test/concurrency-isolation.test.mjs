@@ -1,19 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { SSMClient } from "@aws-sdk/client-ssm";
+
 import { assertDistIsFresh } from "./invocation-scope-dist-freshness.mjs";
 import {
   AppTheoryError,
   LOGGING_PROFILE_CLOUDWATCH_JSON,
+  MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MemoryMcpSessionStore,
   MemoryMcpStreamStore,
   MemoryMcpTaskStore,
+  MicroVMCommand,
+  MicroVMState,
   ProfileLogger,
   createApp,
+  createLambdaFunctionURLStreamingHandler,
+  createMemoryMicroVMSessionRegistry,
   defaultLoggingProfile,
   getLogger,
+  json,
+  newJwksValidator,
+  registerMcpFacade,
   setLogger,
+  supportedEndpointTemplates,
 } from "../dist/index.js";
+import { newAutheoryProvider } from "../dist/oauth/provider.js";
+import { newFakeOAuthProvider } from "../dist/testkit/oauthprovider.js";
 
 // This file proves the multi-concurrency isolation invariant for the TypeScript
 // runtime: an AWS Lambda Web Function serves many overlapping requests on one
@@ -377,3 +390,673 @@ function profileConfig() {
   config.required_fields = ["timestamp", "level", "message"];
   return config;
 }
+
+// ---------------------------------------------------------------------------
+// The micro:vm session registry.
+//
+// MemoryMicroVMSessionRegistry is constructed once per execution environment
+// and shared by every request that drives a micro:vm session, exactly like the
+// MCP stores above. Its methods must complete their read-modify-write inside
+// one synchronous stretch; a future `await` between the read and the write is
+// what these tests exist to catch.
+// ---------------------------------------------------------------------------
+
+const MICROVM_NOW = new Date(1000);
+const MICROVM_EXPIRES = new Date(3_601_000);
+
+function microvmRecord(sessionId, overrides = {}) {
+  return {
+    tenant_id: "tenant-a",
+    namespace: "ns-a",
+    session_id: sessionId,
+    state: MicroVMState.Ready,
+    desired_state: MicroVMState.Ready,
+    provider_id: MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+    provider_microvm_id: sessionId,
+    provider_state: MicroVMState.Ready,
+    aws_lifecycle_state: MicroVMState.Ready,
+    image_ref: "image-ref",
+    image_version: "1",
+    network_connector_ref: "network-ref",
+    controller_id: "controller-1",
+    created_at: MICROVM_NOW,
+    updated_at: MICROVM_NOW,
+    last_observed_at: MICROVM_NOW,
+    expires_at: MICROVM_EXPIRES,
+    generation: 1,
+    last_command_id: "command-1",
+    last_action: MicroVMCommand.Create,
+    auth_subject: "subject-a",
+    ...overrides,
+  };
+}
+
+function microvmListInput(tenant, subject) {
+  return { tenant_id: tenant, namespace: "ns-a", auth_subject: subject };
+}
+
+test("interleaved microvm registry writes never lose a record or cross a tenant", async () => {
+  const registry = createMemoryMicroVMSessionRegistry({
+    now: () => new Date(2000),
+  });
+  const tenants = ["tenant-a", "tenant-b", "tenant-c"];
+  const perTenant = 12;
+  const sessionId = (tenant, index) => `${tenant}-${String(index).padStart(3, "0")}`;
+
+  for (const tenant of tenants) {
+    for (let index = 0; index < perTenant; index += 1) {
+      await registry.put(
+        microvmRecord(sessionId(tenant, index), {
+          tenant_id: tenant,
+          auth_subject: `subject-${tenant}`,
+        }),
+      );
+    }
+  }
+
+  const concurrency = 6;
+  const listings = [];
+  await Promise.all(
+    Array.from({ length: concurrency }, async (_, index) => {
+      const tenant = tenants[index % tenants.length];
+      const subject = `subject-${tenant}`;
+      const touched = sessionId(tenant, index % perTenant);
+      for (let turn = 0; turn < 60; turn += 1) {
+        const listed = await registry.list(microvmListInput(tenant, subject));
+        listings.push(listed.map((session) => session.session_id));
+        for (const session of listed) {
+          assert.equal(session.tenant_id, tenant, `${tenant} listed another tenant's session`);
+        }
+        await registry.put(
+          microvmRecord(touched, { tenant_id: tenant, auth_subject: subject }),
+        );
+        const fetched = await registry.get({
+          tenant_id: tenant,
+          namespace: "ns-a",
+          session_id: touched,
+        });
+        assert.equal(fetched.session_id, touched, "the registry returned another session's record");
+        if (turn % 10 === 0) {
+          await registry.delete({ tenant_id: tenant, namespace: "ns-a", session_id: touched });
+        }
+        if (turn % 5 === 0) await new Promise((resolve) => setImmediate(resolve));
+      }
+    }),
+  );
+
+  for (const ids of listings) {
+    assert.deepEqual(
+      ids,
+      [...ids].sort((left, right) => left.localeCompare(right)),
+      `listing reordered: ${ids.slice(0, 6)}`,
+    );
+    assert.equal(new Set(ids).size, ids.length, "a listing returned the same session twice");
+  }
+
+  for (const tenant of tenants) {
+    const ids = (await registry.list(microvmListInput(tenant, `subject-${tenant}`))).map(
+      (session) => session.session_id,
+    );
+    for (let index = 0; index < perTenant; index += 1) {
+      assert.ok(ids.includes(sessionId(tenant, index)), `${tenant} lost a session record`);
+    }
+  }
+});
+
+test("microvm registry mutations finish inside one synchronous stretch", async () => {
+  const registry = createMemoryMicroVMSessionRegistry({
+    now: () => new Date(2000),
+  });
+  const recordsOf = () => [...registry.records.values()];
+
+  // The TypeScript half of the audit rests on one property: no `await` sits
+  // inside a registry method's critical section. Node cannot pre-empt a
+  // synchronous stretch, so each call's effect must be visible the instant the
+  // call returns, before any microtask could run a peer's method half way.
+  const pendingPut = registry.put(microvmRecord("sync-1"));
+  assert.equal(recordsOf().length, 1, "put() yielded before it stored the record");
+  assert.equal(recordsOf()[0].session_id, "sync-1");
+
+  const pendingDelete = registry.delete({
+    tenant_id: "tenant-a",
+    namespace: "ns-a",
+    session_id: "sync-1",
+  });
+  assert.equal(recordsOf().length, 0, "delete() yielded before it dropped the record");
+  await pendingPut;
+  await pendingDelete;
+
+  // A listing takes its snapshot when it is called: a delete issued immediately
+  // afterwards cannot appear inside an earlier listing.
+  await registry.put(microvmRecord("sync-2"));
+  const listing = registry.list(microvmListInput("tenant-a", "subject-a"));
+  const removal = registry.delete({
+    tenant_id: "tenant-a",
+    namespace: "ns-a",
+    session_id: "sync-2",
+  });
+  assert.deepEqual(
+    (await listing).map((session) => session.session_id),
+    ["sync-2"],
+    "list() yielded in the middle of its snapshot",
+  );
+  await removal;
+  assert.deepEqual(await registry.list(microvmListInput("tenant-a", "subject-a")), []);
+
+  // The stored record is a clone: a caller mutating what it was handed cannot
+  // reach into another request's read.
+  const stored = await registry.put(microvmRecord("sync-3"));
+  stored.state = MicroVMState.Failed;
+  const reread = await registry.get({ tenant_id: "tenant-a", namespace: "ns-a", session_id: "sync-3" });
+  assert.equal(reread.state, MicroVMState.Ready, "the registry handed back its live record");
+});
+
+// ---------------------------------------------------------------------------
+// The AppSync resolver context and the production Function URL response writer.
+// ---------------------------------------------------------------------------
+
+test("overlapping AppSync resolvers keep their own resolver context", async () => {
+  const concurrency = 6;
+  const barrier = rendezvous(concurrency);
+  const app = createApp({ tier: "p2" });
+
+  app.post("/createThing", async (ctx) => {
+    const appsync = ctx.asAppSync();
+    assert.ok(appsync, "an AppSync route must expose its resolver context");
+    const snapshot = {
+      fieldName: appsync.fieldName,
+      parentTypeName: appsync.parentTypeName,
+      arguments: JSON.stringify(appsync.arguments),
+      identity: JSON.stringify(appsync.identity),
+      source: JSON.stringify(appsync.source),
+      variables: JSON.stringify(appsync.variables),
+      stash: JSON.stringify(appsync.stash),
+      headers: JSON.stringify(appsync.requestHeaders),
+      prev: String(appsync.prev),
+      triggerField: String(ctx.get("apptheory.appsync.field_name")),
+    };
+    const requestId = ctx.requestId;
+    await barrier();
+    // Read again after every peer resolved its own event: nothing this resolver
+    // owns may have moved.
+    assert.equal(ctx.asAppSync(), appsync, "the resolver context moved");
+    assert.equal(ctx.requestId, requestId, "the request id moved between resolvers");
+    assert.deepEqual(
+      {
+        fieldName: appsync.fieldName,
+        parentTypeName: appsync.parentTypeName,
+        arguments: JSON.stringify(appsync.arguments),
+        identity: JSON.stringify(appsync.identity),
+        source: JSON.stringify(appsync.source),
+        variables: JSON.stringify(appsync.variables),
+        stash: JSON.stringify(appsync.stash),
+        headers: JSON.stringify(appsync.requestHeaders),
+        prev: String(appsync.prev),
+        triggerField: String(ctx.get("apptheory.appsync.field_name")),
+      },
+      snapshot,
+      "AppSync resolver metadata moved between requests",
+    );
+    return json(200, {
+      field: appsync.fieldName,
+      argument: appsync.arguments.id,
+      identity: appsync.identity.username,
+      variable: appsync.variables.tenantId,
+      header: appsync.requestHeaders["x-appsync"],
+      stash: appsync.stash.marker,
+      trigger: snapshot.triggerField,
+      request_id: requestId,
+    });
+  });
+
+  const results = await Promise.all(
+    Array.from({ length: concurrency }, async (_, index) =>
+      app.serveAppSync({
+        arguments: { id: `thing_${index}` },
+        identity: { username: `user_${index}` },
+        source: { id: `parent_${index}` },
+        request: { headers: { "x-appsync": `header_${index}` } },
+        info: {
+          fieldName: "createThing",
+          parentTypeName: "Mutation",
+          variables: { tenantId: `tenant_${index}` },
+        },
+        prev: `prev_${index}`,
+        stash: { marker: `stash_${index}` },
+      }),
+    ),
+  );
+
+  assert.equal(new Set(results.map((result) => result.request_id)).size, concurrency);
+  results.forEach((result, index) => {
+    assert.equal(result.field, "createThing");
+    assert.equal(result.argument, `thing_${index}`);
+    assert.equal(result.identity, `user_${index}`);
+    assert.equal(result.variable, `tenant_${index}`);
+    assert.equal(result.header, `header_${index}`);
+    assert.equal(result.stash, `stash_${index}`);
+    assert.equal(result.trigger, "createThing");
+  });
+});
+
+class RecordingResponseStream {
+  constructor() {
+    this.statusCode = 0;
+    this.headers = {};
+    this.cookies = [];
+    this.chunks = [];
+    this.ended = false;
+  }
+
+  init(meta) {
+    this.statusCode = Number(meta?.statusCode ?? 0);
+    this.headers = { ...(meta?.headers ?? {}) };
+    this.cookies = [...(meta?.cookies ?? [])];
+  }
+
+  write(chunk) {
+    this.chunks.push(Buffer.from(chunk ?? []));
+    return true;
+  }
+
+  end(chunk) {
+    if (chunk !== undefined) this.write(chunk);
+    this.ended = true;
+  }
+
+  text() {
+    return Buffer.concat(this.chunks).toString("utf8");
+  }
+}
+
+function lambdaFunctionURLEvent(path) {
+  return {
+    version: "2.0",
+    rawPath: path,
+    rawQueryString: "",
+    cookies: [],
+    headers: {},
+    queryStringParameters: null,
+    requestContext: { http: { method: "GET", path } },
+    body: "",
+    isBase64Encoded: false,
+  };
+}
+
+function streamingHandler(app) {
+  globalThis.awslambda = { streamifyResponse: (handler) => handler };
+  return createLambdaFunctionURLStreamingHandler(app);
+}
+
+/** A body stream that yields to its peer before every chunk. */
+function interleavedStream(label, chunks, barrier, failAfter = -1) {
+  return (async function* () {
+    for (const [index, chunk] of chunks.entries()) {
+      if (index < failAfter || failAfter < 0) {
+        await barrier();
+      } else {
+        throw new AppTheoryError("stream.broken", `stream ${label} broke`, { statusCode: 500 });
+      }
+      yield Buffer.from(`${label}:${chunk}`, "utf8");
+    }
+  })();
+}
+
+function streamingApp(streamFor, tier = "p0") {
+  const app = createApp({ tier });
+  for (const path of ["/alpha", "/beta"]) {
+    app.get(path, (ctx) => ({
+      status: 200,
+      headers: { "content-type": ["text/plain"], "x-request-id": [ctx.requestId] },
+      cookies: [],
+      body: Buffer.alloc(0),
+      isBase64: false,
+      bodyStream: streamFor(path.replace("/", ""), ctx.requestId),
+    }));
+  }
+  return app;
+}
+
+test("overlapping function URL streamed responses keep their own transport state", async () => {
+  const concurrency = 2;
+  const barrier = rendezvous(concurrency);
+  const app = streamingApp((label) => interleavedStream(label, ["1", "2", "3"], barrier), "p2");
+  const handler = streamingHandler(app);
+  const alpha = new RecordingResponseStream();
+  const beta = new RecordingResponseStream();
+
+  const codes = await Promise.all([
+    handler(lambdaFunctionURLEvent("/alpha"), alpha, undefined),
+    handler(lambdaFunctionURLEvent("/beta"), beta, undefined),
+  ]);
+
+  assert.deepEqual(codes, ["", ""], "a clean stream must not report an error code");
+  assert.equal(alpha.statusCode, 200);
+  assert.equal(beta.statusCode, 200);
+  assert.notEqual(
+    alpha.headers["x-request-id"],
+    beta.headers["x-request-id"],
+    "two invocations shared one response header set",
+  );
+  assert.equal(alpha.text(), "alpha:1alpha:2alpha:3", "a chunk crossed into another invocation's stream");
+  assert.equal(beta.text(), "beta:1beta:2beta:3", "a chunk crossed into another invocation's stream");
+  assert.ok(alpha.ended && beta.ended, "an invocation ended the other's stream");
+});
+
+test("a broken stream reports only its own invocation's error code", async () => {
+  const concurrency = 2;
+  const barrier = rendezvous(concurrency);
+  const app = streamingApp(
+    (label) =>
+      label === "beta"
+        ? interleavedStream(label, ["1", "2"], barrier, 1)
+        : interleavedStream(label, ["1", "2"], barrier),
+    "p2",
+  );
+  const handler = streamingHandler(app);
+  const alpha = new RecordingResponseStream();
+  const beta = new RecordingResponseStream();
+
+  const [alphaCode, betaCode] = await Promise.all([
+    handler(lambdaFunctionURLEvent("/alpha"), alpha, undefined),
+    handler(lambdaFunctionURLEvent("/beta"), beta, undefined),
+  ]);
+
+  assert.equal(betaCode, "stream.broken", "the failing invocation must report its own error code");
+  assert.equal(alphaCode, "", "the healthy invocation inherited the failing invocation's error code");
+  assert.equal(alpha.text(), "alpha:1alpha:2");
+  assert.equal(beta.text(), "beta:1", "the failed invocation wrote past its failure");
+  assert.equal(alpha.statusCode, 200);
+  assert.notEqual(alpha.headers["x-request-id"], beta.headers["x-request-id"]);
+});
+
+// ---------------------------------------------------------------------------
+// The safe-shared holders the first round of tests reached only indirectly:
+// the default (un-injected) front-door SSM reader and the OAuth provider's
+// discovery/validator caches. Only the network boundary is stubbed.
+// ---------------------------------------------------------------------------
+
+const FRONT_DOOR_PARAMETER = "/apptheory/frontdoor/secret";
+const FRONT_DOOR_SECRET = "front-door-secret-0123456789-abcdefghi";
+const FRONT_DOOR_RESOURCE_METADATA_URL =
+  "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp";
+
+function frontDoorParameterConfig() {
+  const scopes = {};
+  for (const template of supportedEndpointTemplates()) {
+    scopes[template.kind] = ["namespace:use"];
+  }
+  return {
+    issuerURL: "https://issuer.example.com/",
+    jwksURI: "https://issuer.example.com/jwks.json?set=active",
+    urlMode: "public_base_url",
+    publicBaseURL: "https://front.example.com/",
+    scopes,
+    mcpHandler: () => ({
+      status: 204,
+      headers: {},
+      cookies: [],
+      body: Buffer.alloc(0),
+      isBase64: false,
+    }),
+    transportPosture: "runtime-bearer",
+    requireBearerToken: {
+      resourceMetadataURL: FRONT_DOOR_RESOURCE_METADATA_URL,
+      validator: () => {},
+    },
+    originReachability: "fronted",
+    // No frontDoorSecretReader: the read goes through the production default
+    // reader, which lazily imports the SDK and shares one module-level client.
+    frontDoorVerification: {
+      headerName: "x-front-door",
+      secretParameterName: FRONT_DOOR_PARAMETER,
+    },
+  };
+}
+
+test("the default front-door parameter reader shares one SSM client under overlap", async () => {
+  const sends = [];
+  const originalSend = SSMClient.prototype.send;
+  // The network boundary only: the SSM client under test is the real one, and
+  // the recorded receiver identifies which client instance actually sent.
+  SSMClient.prototype.send = async function send(command) {
+    sends.push({
+      client: this,
+      name: command?.input?.Name,
+      decryption: command?.input?.WithDecryption,
+    });
+    return { Parameter: { Value: FRONT_DOOR_SECRET } };
+  };
+
+  try {
+    const concurrency = 6;
+    const barrier = rendezvous(concurrency);
+    const apps = [];
+    for (let index = 0; index < concurrency; index += 1) {
+      // One app per cache, so all N caches are cold at the same time and every
+      // first read really does reach the shared client concurrently.
+      const app = createApp({ tier: "p0" });
+      const inventory = registerMcpFacade(app, frontDoorParameterConfig());
+      apps.push({ app, path: inventory.routes[0].mcpPattern });
+    }
+
+    const responses = await Promise.all(
+      apps.map(async ({ app, path }) => {
+        await barrier();
+        return await app.serve({
+          method: "POST",
+          path,
+          query: {},
+          headers: {
+            "x-front-door": [FRONT_DOOR_SECRET],
+            authorization: ["Bearer admitted-token"],
+          },
+          body: Buffer.alloc(0),
+          isBase64: false,
+        });
+      }),
+    );
+
+    for (const response of responses) {
+      assert.equal(response.status, 204, "a valid front-door secret must be admitted under overlap");
+    }
+    assert.equal(sends.length, concurrency, "an overlapping request skipped its parameter read");
+    assert.equal(
+      new Set(sends.map((send) => send.client)).size,
+      1,
+      "the default reader created more than one SSM client",
+    );
+    for (const send of sends) {
+      assert.equal(send.name, FRONT_DOOR_PARAMETER);
+      assert.equal(send.decryption, true, "the parameter read must ask for decryption");
+    }
+  } finally {
+    SSMClient.prototype.send = originalSend;
+  }
+});
+
+function bridgeFetch(publicBaseUrl, loopbackUrl, paths) {
+  const loopback = new URL(loopbackUrl);
+  const host = new URL(publicBaseUrl).hostname;
+  return async (input, init) => {
+    const target = new URL(String(input));
+    paths.push(target.pathname);
+    if (target.hostname === host) {
+      target.protocol = loopback.protocol;
+      target.host = loopback.host;
+    }
+    return await fetch(target, init);
+  };
+}
+
+const PROVIDER_AUDIENCE = "https://mcp.example.test/acme/mcp";
+
+function validatorContext(pathname = "/acme/mcp") {
+  const values = new Map();
+  return {
+    request: { headers: {}, path: pathname },
+    set: (key, value) => values.set(key, value),
+    get: (key) => values.get(key),
+  };
+}
+
+test("a cold key set serves every overlapping validation", async () => {
+  const issuer = "https://cold-key-set.example.test";
+  const upstream = newFakeOAuthProvider({ issuer, publicBaseUrl: issuer });
+  const loopback = await upstream.start();
+  try {
+    const paths = [];
+    // One validator with one cold cache is exactly what the provider hands to
+    // every request in an execution environment: the first burst of valid
+    // tokens must all be authorized, and none of them may be refused just
+    // because a sibling request was still fetching the key set.
+    const validate = await newJwksValidator({
+      issuer,
+      jwksUri: `${issuer}/.well-known/jwks.json`,
+      fetchImpl: bridgeFetch(issuer, loopback, paths),
+      allowPrivateHosts: true,
+      requiredAudience: PROVIDER_AUDIENCE,
+      requiredScopes: ["namespace:use"],
+    });
+    const token = upstream.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject: "user-1",
+      scope: "namespace:use",
+    });
+    const concurrency = 8;
+
+    const claims = await Promise.all(
+      Array.from({ length: concurrency }, async () => await validate(validatorContext(), token)),
+    );
+    for (const result of claims) {
+      assert.equal(result.subject, "user-1", "a concurrent first request was refused a valid token");
+    }
+    assert.equal(
+      paths.filter((path) => path === "/.well-known/jwks.json").length,
+      1,
+      "the first burst fetched the key set more than once",
+    );
+    // The cooldown still bounds fetch amplification around that first burst: a
+    // genuinely unknown kid is refused and, once its window is open, a repeat
+    // inside the cooldown costs no further fetch.
+    const unknown = upstream.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject: "user-1",
+      scope: "namespace:use",
+      kid: "never-published",
+    });
+    const beforeUnknown = paths.filter((path) => path === "/.well-known/jwks.json").length;
+    await assert.rejects(async () => await validate(validatorContext(), unknown));
+    const afterFirstUnknown = paths.filter((path) => path === "/.well-known/jwks.json").length;
+    assert.ok(
+      afterFirstUnknown - beforeUnknown <= 2,
+      `an unknown kid fetched more than its per-kid bound: ${afterFirstUnknown - beforeUnknown}`,
+    );
+    await assert.rejects(async () => await validate(validatorContext(), unknown));
+    assert.equal(
+      paths.filter((path) => path === "/.well-known/jwks.json").length,
+      afterFirstUnknown,
+      "a repeat unknown kid inside the cooldown fetched again",
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+test("the provider caches discovery and validators under overlap", async () => {
+  const issuer = "https://provider-cache-a.example.test";
+  const otherIssuer = "https://provider-cache-b.example.test";
+  const upstream = newFakeOAuthProvider({ issuer, publicBaseUrl: issuer });
+  const otherUpstream = newFakeOAuthProvider({
+    issuer: otherIssuer,
+    publicBaseUrl: otherIssuer,
+    kid: "fake-provider-key-2",
+  });
+  const loopback = await upstream.start();
+  const otherLoopback = await otherUpstream.start();
+  try {
+    const paths = [];
+    const otherPaths = [];
+    const provider = await newAutheoryProvider({
+      issuer,
+      fetchImpl: bridgeFetch(issuer, loopback, paths),
+      allowPrivateHosts: true,
+    });
+    const otherProvider = await newAutheoryProvider({
+      issuer: otherIssuer,
+      fetchImpl: bridgeFetch(otherIssuer, otherLoopback, otherPaths),
+      allowPrivateHosts: true,
+    });
+    const concurrency = 8;
+
+    const discovered = await Promise.all(
+      Array.from({ length: concurrency }, async () => await provider.discovery()),
+    );
+    assert.equal(new Set(discovered).size, 1, "concurrent callers received different metadata objects");
+    assert.equal(
+      paths.filter((path) => path === "/.well-known/oauth-authorization-server").length,
+      1,
+      "discovery was fetched once per concurrent caller",
+    );
+
+    const token = upstream.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject: "user-1",
+      scope: "namespace:use",
+    });
+    const expected = {
+      expectedIssuer: issuer,
+      expectedAudience: PROVIDER_AUDIENCE,
+      requiredScopes: ["namespace:use"],
+    };
+    const claims = await Promise.all(
+      Array.from({ length: concurrency }, async () => await provider.validateAccessToken(token, expected)),
+    );
+    for (const result of claims) {
+      assert.equal(result.subject, "user-1", "a valid token was refused under overlap");
+      assert.equal(result.audience, PROVIDER_AUDIENCE);
+      assert.deepEqual(result.scopes, ["namespace:use"]);
+    }
+    assert.equal(
+      paths.filter((path) => path === "/.well-known/jwks.json").length,
+      1,
+      "the validator cache was bypassed and the key set refetched per caller",
+    );
+
+    // Two issuers, two keys, interleaved: each cached validator must answer only
+    // for its own issuer.
+    const otherToken = otherUpstream.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject: "user-2",
+      scope: "namespace:use",
+    });
+    const otherExpected = {
+      expectedIssuer: otherIssuer,
+      expectedAudience: PROVIDER_AUDIENCE,
+      requiredScopes: ["namespace:use"],
+    };
+    const mixed = await Promise.all(
+      Array.from({ length: 4 }, async (_, index) =>
+        index % 2 === 0
+          ? ["a", (await provider.validateAccessToken(token, expected)).subject]
+          : ["b", (await otherProvider.validateAccessToken(otherToken, otherExpected)).subject],
+      ),
+    );
+    for (const [which, subject] of mixed) {
+      assert.equal(subject, which === "a" ? "user-1" : "user-2", "a cached validator answered for the wrong issuer");
+    }
+    assert.equal(otherPaths.filter((path) => path === "/.well-known/jwks.json").length, 1);
+
+    await assert.rejects(
+      async () => await otherProvider.validateAccessToken(token, otherExpected),
+      "issuer B must not verify issuer A's token",
+    );
+    await assert.rejects(
+      async () => await provider.validateAccessToken(otherToken, expected),
+      "issuer A must not verify issuer B's token",
+    );
+  } finally {
+    await upstream.close();
+    await otherUpstream.close();
+  }
+});
