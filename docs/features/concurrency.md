@@ -157,6 +157,13 @@ between and refuse a token whose key the same resolution is about to publish. Th
 resolution as one window that ends when that whole resolution ends — success, refusal or error — and a follower waits
 for the window it was admitted to.
 
+A settled window is not always the end of the wait either. A `kid` that missed stays inside its refresh cooldown, and
+the rotation that carries it can arrive through a fill another `kid` opened a moment later — the ordinary shape of a
+key rollover, where the request that misses the new key and the request that triggers the new key set are different
+users. When the followed window ends without the key and a fill is already running, the follower follows that fill too,
+under the same deadline: it still starts no fetch and spends no budget unit, it follows at most the `maxRefreshPerKid +
+1` fills one resolution may consist of, and a fill that does not publish the `kid` still ends in `unknown_kid`.
+
 ## Multi-concurrency is not available to Go upstream
 
 AWS decides this, not AppTheory. The

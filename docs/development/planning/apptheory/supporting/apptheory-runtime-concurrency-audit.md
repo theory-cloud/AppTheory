@@ -223,6 +223,12 @@ settles its window in a `finally`. No exported signature, type, constructor opti
 snapshot changed, no fetch is added, and the state machine is not redesigned: the retry loop, the single-flight slot,
 the budget, the cooldown, the per-`kid` bound and the fetch timeout are exactly as they were.
 
+Round 4 adds no state and no knob: `followWindow` gains a bounded loop that, when the followed window ends without the
+`kid` and a fill is already running, waits on that running fill and re-reads the cache. It reads the existing
+`inFlightRefresh` slot, starts nothing, consumes no budget unit, and is bounded twice over — a `resolutionBoundMs`
+deadline for the follow phase and at most `maxRefreshPerKid + 1` followed fills. No exported signature, type,
+constructor option, error code, fixture, construct or snapshot changed, and the refresh state machine is not redesigned.
+
 ## 6. What the tests establish
 
 | Claim | Test |
@@ -239,6 +245,7 @@ the budget, the cooldown, the per-`kid` bound and the fetch timeout are exactly 
 | A burst of overlapping valid tokens is authorized on a cold JWKS cache, and fetch amplification stays bounded (U8) | `a cold key set serves every overlapping validation`; `test_valid_tokens_stay_authorized_under_overlap` |
 | A permitted key-publication retry reaches every overlapping caller, not only the one that opened it, and the refusal controls (unknown kid, 503, hanging fetch, exhausted budget) are unchanged (U8, r2) | `the key-publication retry serves every overlapping valid caller` (TS); `test_key_publication_retry_serves_every_overlapping_caller` (Python) |
 | A window opened behind *another* key's fetch still serves every peer it admits, on exactly the permitted two fetches, and a rejecting or hanging retry releases every peer (U8, r3) | `a window opened behind another key's fetch serves every peer it admits` (TS); `test_mixed_key_window_serves_every_caller_it_admits` (Python) |
+| A `kid` whose own window already settled in its cooldown is still authorized by the running fetch that publishes it, on the same three fetches, while a fetch that does not publish it, a rejecting fetch and a hanging fetch all still refuse it (U8, r4) | `a kid whose own window settled still follows the fetch that publishes it` (TS); `test_settled_window_serves_the_caller_a_rotation_publishes` (Python) |
 | MCP tool invocation contexts stay with their own call across the ordinary, streaming and task routes under overlap (P13, P14, r2) | `overlapping MCP tool calls keep their own invocation context` (TS); `test_overlapping_tool_calls_keep_their_own_invocation_context` (Python) |
 | AppSync resolver metadata and the Function URL writer's per-invocation transport state stay with their request (P11, P12) | `overlapping AppSync resolvers keep their own resolver context`, `overlapping function URL streamed responses keep their own transport state`, `a broken stream reports only its own invocation's error code` |
 | The default front-door reader and the provider's discovery/validator caches are correct under overlap on their production paths (S3, S6) | `the default front-door parameter reader shares one SSM client under overlap`, `the provider caches discovery and validators under overlap` |
@@ -260,6 +267,14 @@ Round 3 adds one TypeScript row and one Python row, both on the mixed-key orderi
 unknown_kid`, while its same-`kid` sibling passes there, which is what makes the round-3 delta exactly the mixed-key
 gap. The Python row is a pin on an unchanged runtime, and it is load-bearing: dropping `_key_for`'s lock makes it and
 its round-2 sibling fail together (`FAILED (errors=4)`).
+
+Round 4 adds one more TypeScript row and one more Python row, both on the rotation-recovery ordering — a `kid` whose own
+window settled in its cooldown while a fetch opened for another `kid` is about to publish it. The TypeScript row fails on
+`9e532151` — the round-3 head — with `the caller whose key the running fetch published was refused: invalid bearer token:
+unknown_kid`, and its controls pin that a fetch which does not publish the `kid`, a rejecting fetch and a hanging fetch
+all still refuse the caller. The Python row is again a pin on an unchanged runtime, load-bearing in the same way: with
+`_key_for`'s lock dropped it fails with the same message shape (`FAILED (failures=1, errors=1)` together with its
+round-3 sibling).
 
 ## 7. Round 1: findings closed
 
@@ -339,3 +354,43 @@ load-bearing: removing that lock turns it and its round-2 sibling into `FAILED (
 Round 3 changes no runtime file other than `ts/src/oauth/jwks.ts` (plus its committed `ts/dist`), no contract fixture, no
 API snapshot, no construct and no version. The drain-worker 0.1 s grace (§3.1) stays the operator's residual, and the
 CodeQL crypto lines stay the operator's disposition.
+
+## 10. Round 4: findings closed
+
+Round 3 was cleared by the adversary and blocked by sanity on one finding. It is a regression the round-3 change
+introduced, and it is closed here without reopening what round 3 verified.
+
+| Finding | Closure |
+|---|---|
+| `SAN-3738-08` (high, R2): a `kid` inside its cooldown is refused while a fetch opened for another `kid` is about to publish it | **The follower follows the fill that is already running.** Round 3 made a peer wait on its resolution window, which fixed the mixed-key ordering but introduced one of its own: a `kid` that missed keeps its window inside the refresh cooldown, and a *later* fetch — the one a rotation arrives through, opened for a different `kid` — is already running when the `kid`'s next caller arrives. `followWindow` awaited a window that had already settled, read the cache before that fetch filled it, and returned null: `unknown_kid` for a valid token, one microtask before the same fetch published its key. `followWindow` (`ts/src/oauth/jwks.ts:502-526`) now reads the cache once the window settles and, while the key is absent and `inFlightRefresh` is set, waits on that running fill and re-reads — the slot the round-2 runtime followed directly. It starts no fetch and consumes no fetch-budget unit, because that fill is already paid for. It is bounded twice: a `resolutionBoundMs` deadline for the follow phase (`:511`) and at most `maxRefreshPerKid + 1` followed fills (`:512`), each wait bounded by the remaining deadline, so a rejecting or hanging fill releases the caller at its bound and a fill that does not publish the `kid` still ends in `unknown_kid`. Cooldown, per-`kid` bound, global unknown-`kid` budget, fetch timeout, `unknown_kid` refusal, single-flight refresh and the retry loop are unchanged. Pinned failing-first by `a kid whose own window settled still follows the fetch that publishes it` (`ts/test/concurrency-isolation.test.mjs`), which **fails on `9e532151`** with `the caller whose key the running fetch published was refused: invalid bearer token: unknown_kid` and passes after, and which carries the controls that must not move: no fetch by the cooldown caller, the post-fetch caller, a `kid` nothing publishes, a repeat inside the cooldown, a running fill that does *not* publish the `kid`, a rejecting fill and a hanging fill. |
+
+**Both orderings hold at the new head.** The round-3 mixed-key row (`a window opened behind another key's fetch serves
+every peer it admits`) still passes, 9 callers on exactly 2 fetches, and the round-3 repro `mixed-kid.mjs` still reports
+`fetches 2 results ['existing','new-opener','new-peer-0'…'new-peer-6']`. The round-4 ordering now matches the round-2
+head: `rotation-pipeline.mjs` through the real HTTP Lambda adapter reports `{"before":401,"publisher":200,
+"overlapping":200,"after":200,"fetches":3}`, the same three fetches as both earlier heads and the same result
+`2bb1a5bd` produced, and `rotation-recovery.mjs` reports `{"publisher":"neighbor","overlap":"overlapping",
+"after":"after-publication","fetches":3}`.
+
+**The attack shapes were re-run at the new head** (staggered 24-peer burst across a whole resolution, mid-retry joiner,
+rejecting retry, hanging retry at `fetchTimeoutSeconds: 0.3` with `maxRefreshPerKid: 2`, 64-peer burst, single-request
+control, a 32-distinct-`kid` flood, and the round-4 shape at pressure — 64 cooldown callers behind the publishing fill,
+plus that fill rejecting and hanging): 24/24, 1+1, refused 8/8 at 0 ms, refused 8/8 at 301 ms, 64/64 and 1/1, all on the
+same 2 fetches as round 3; the 64 cooldown callers are authorized on the same 3 fetches with no fourth fetch, and the
+rejecting and hanging fills release all 8 of theirs as fail-closed refusals at 1 ms and 278 ms. The flood spends the
+budget and no more.
+
+**Python has no such ordering, and round 4 pins that.** `_key_for` (`py/src/apptheory/oauth/jwks.py:397-422`) holds
+`self._lock` across the whole resolution *including the network refresh*, so a cooldown caller cannot read the cache
+between a fill and its publication: it serializes behind the fill and then finds the published key or a settled
+refusal — the same outcome, by serialization rather than by following. `test_settled_window_serves_the_caller_a_rotation_publishes`
+(`py/tests/test_concurrency_isolation.py`) stages the ordering on the unchanged runtime, and the pin is load-bearing:
+with `_key_for`'s lock removed it fails as `refused: invalid bearer token` (and its round-3 sibling errors), i.e.
+`FAILED (failures=1, errors=1)`. No Python source change.
+
+**Go is unchanged** and stays the residual of §8 under the operator's upstream-support ruling: `runtime/oauth/jwks.go`
+still refuses a `kid` whose window is open, and it is unreachable in production because AWS offers no Go runtime with
+multi-concurrency. No Go code, no custom runtime, image or layer, no environment-variable deploy knob.
+
+Round 4 changes `ts/src/oauth/jwks.ts` (plus its committed `ts/dist`), the two concurrency test files, and this record
+with the feature page. No contract fixture, no API snapshot, no construct, no version.
