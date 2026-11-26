@@ -407,4 +407,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 434 vectors: 328 shared runtime fixtures, sixteen nested conformance tables, and 116 resource-naming conformance fixtures <!-- apptheory-fixture-count: 460 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 460 vectors: 328 shared runtime fixtures, sixteen nested conformance tables, and 116 resource-naming conformance fixtures <!-- apptheory-fixture-count: 460 -->
