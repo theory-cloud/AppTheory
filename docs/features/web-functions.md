@@ -5,10 +5,14 @@ description: One composition for a function that serves HTTP through its own end
 
 # Lambda Web Functions
 
-A Lambda **Web Function** serves HTTP directly. The application starts its own HTTP server, Lambda forwards each
-request to it, and one execution environment answers many concurrent requests — 64 by default, up to 128. That is a
-different execution model from the request/response runtime described in [HTTP Runtime (P0–P2)](http-runtime.md), and
-this page covers the deployment surface for it, [`AppTheoryWebFunction`](../cdk/api-reference.md).
+A Lambda **Web Function** serves HTTP directly. On the Node.js runtimes this page is about, the application
+starts its own HTTP server, Lambda forwards each request to it, and one execution environment answers many
+concurrent requests — 64 by default, up to 128. That is the **Node.js** Web Function model, and it is the one
+AppTheory composes. Upstream, the Python model is a different one: Lambda manages the HTTP server and passes each
+request to an ASGI or WSGI application. AppTheory does not compose it, and [Runtime support](#runtime-support) says
+why. Either way, a Web Function is a different execution model from the request/response runtime described in
+[HTTP Runtime (P0–P2)](http-runtime.md), and this page covers the deployment surface for it,
+[`AppTheoryWebFunction`](../cdk/api-reference.md).
 
 ## One composition, three resources
 
