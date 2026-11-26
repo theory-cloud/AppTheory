@@ -243,22 +243,34 @@ export async function newJwksValidator(options) {
         return entry.key;
     };
     /**
-     * Joins a key-set refresh another validation already started, without
-     * starting one and without consuming a fetch-budget unit. Returns false when
-     * nothing is in flight or the fetch it joined failed, so the caller still
-     * fails closed.
+     * Follows the key resolution another validation already started, without
+     * starting a fetch of its own and without consuming a fetch-budget unit.
+     *
+     * It waits on the in-flight fetch, re-reads the cache it filled, and — when
+     * that fetch did not publish `kid` and the request that opened the window is
+     * still inside the same permitted retry — waits on the retry instead of
+     * refusing. The loop cannot outlast the opener's budget: it takes at most the
+     * `maxRefreshPerKid + 1` waits that request may spend on fetches, and every
+     * wait is bounded by the fetch timeout. It returns null when nothing is in
+     * flight, when a joined fetch failed, or when the chain ended without the key,
+     * so the caller still fails closed.
      */
-    const joinInFlightRefresh = async () => {
-        const shared = inFlightRefresh;
-        if (!shared)
-            return false;
-        try {
-            await boundRefreshWait(shared, fetchTimeoutMs);
-            return true;
+    const followInFlightRefresh = async (kid) => {
+        for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
+            const shared = inFlightRefresh;
+            if (!shared)
+                return null;
+            try {
+                await boundRefreshWait(shared, fetchTimeoutMs);
+            }
+            catch {
+                return null;
+            }
+            const found = cachedKey(kid, now().getTime());
+            if (found)
+                return found;
         }
-        catch {
-            return false;
-        }
+        return null;
     };
     /**
      * Resolves a signing key for `kid` from the bounded cache. A `kid` longer than
@@ -266,9 +278,11 @@ export async function newJwksValidator(options) {
      * fetch. An unknown `kid` opens one resolution window per
      * `refreshCooldownSeconds`: the first fetch populates the cache and up to
      * `maxRefreshPerKid` further fetches absorb key publication lag. Every further
-     * unknown-`kid` token inside the cooldown is rejected without another fetch,
-     * and the global unknown-`kid` fetch budget caps the fetches distinct kids can
-     * trigger, so an attacker cannot amplify token traffic into key-set traffic.
+     * unknown-`kid` token inside the cooldown performs no fetch of its own — it
+     * only follows the resolution still in flight, so it reaches the same outcome
+     * the opening request reaches — and the global unknown-`kid` fetch budget caps
+     * the fetches distinct kids can trigger, so an attacker cannot amplify token
+     * traffic into key-set traffic.
      */
     const keyForKid = async (kid) => {
         if (kid.length > maxKidLength)
@@ -280,15 +294,15 @@ export async function newJwksValidator(options) {
         const startedAt = windows.get(kid);
         if (startedAt !== undefined && at - startedAt < refreshCooldownMs) {
             // The window is open, but an open window does not mean the key set has
-            // been seen: a peer that opened it this instant may still be fetching the
-            // document that carries this `kid`. Refusing here would fail a valid
-            // token only because a sibling request was mid-refresh — the failure a
-            // burst of first requests produces on a Web Function. Join that refresh
-            // (no second fetch, no budget unit) and re-read what it published; when
-            // nothing is in flight the cooldown still refuses, as it must.
-            if (!(await joinInFlightRefresh()))
-                return null;
-            return cachedKey(kid, now().getTime());
+            // been seen: the request that opened it may still be fetching the
+            // document that carries this `kid`, and it may still be inside the
+            // publication-lag retry the contract already permits. Refusing here would
+            // fail a valid token only because a sibling request was mid-resolution —
+            // the failure a burst of first requests produces on a Web Function. So
+            // follow that resolution for as long as it stays in flight (no fetch of
+            // our own, no budget unit); when nothing is in flight the cooldown still
+            // refuses, as it must.
+            return followInFlightRefresh(kid);
         }
         recordWindow(kid, at);
         for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {

@@ -963,6 +963,195 @@ test("a cold key set serves every overlapping validation", async () => {
   }
 });
 
+/** A promise the test resolves by hand, so a fetch is held, not raced. */
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((settle, fail) => {
+    resolve = settle;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Settles a validation into an outcome instead of throwing mid-assertion. */
+async function settled(promise) {
+  return await promise.then(
+    (value) => ({ ok: true, value }),
+    (error) => ({ ok: false, reason: String(error?.message ?? error) }),
+  );
+}
+
+/**
+ * One validator whose key-set fetch serves a first document without the
+ * requested key and a second document with it — the publication lag
+ * `unknown-kid-triggers-one-refresh` requires a single request to survive.
+ * Both fetches are held at the transport boundary, so a test arranges the
+ * overlap exactly instead of hoping for it.
+ */
+function stagedKeyPublication(issuer, published, late) {
+  const first = deferred();
+  const retry = deferred();
+  const state = {
+    fetches: 0,
+    firstStarted: deferred(),
+    retryStarted: deferred(),
+  };
+  const fetchImpl = async () => {
+    state.fetches += 1;
+    if (state.fetches === 1) {
+      state.firstStarted.resolve();
+      return await first.promise;
+    }
+    if (state.fetches === 2) {
+      state.retryStarted.resolve();
+      return await retry.promise;
+    }
+    // Every later fetch answers with a steady document, so the negative
+    // controls are refused by the key set rather than by a transport error.
+    return Response.json(published.jwksDocument());
+  };
+  return {
+    state,
+    publishFirst: () => first.resolve(Response.json(published.jwksDocument())),
+    publishLate: () => retry.resolve(Response.json(late.jwksDocument())),
+    build: async (overrides = {}) =>
+      await newJwksValidator({
+        issuer,
+        jwksUri: `${issuer}/jwks`,
+        fetchImpl,
+        allowPrivateHosts: true,
+        requiredAudience: PROVIDER_AUDIENCE,
+        requiredScopes: ["namespace:use"],
+        ...overrides,
+      }),
+  };
+}
+
+test("the key-publication retry serves every overlapping valid caller", async () => {
+  // The shared fixture already promises that a valid token is accepted when its
+  // signing key is published after the first key-set fetch. On a Web Function
+  // that token arrives as a burst, so every caller inside the validator's
+  // bounded retry must reach the outcome the single request reaches — not
+  // `unknown_kid` because a sibling request was mid-resolution. The controls
+  // below keep the refusal paths exactly where they were.
+  const issuer = "https://key-publication.example.test";
+  const published = newFakeOAuthProvider({ issuer, kid: "kid-published" });
+  const late = newFakeOAuthProvider({ issuer, kid: "kid-late" });
+  const minted = (subject, overrides = {}) =>
+    late.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject,
+      scope: "namespace:use",
+      ...overrides,
+    });
+
+  // The single-request control: one caller, one resolution, two fetches.
+  const control = stagedKeyPublication(issuer, published, late);
+  const single = await control.build();
+  const singleRun = settled(single(validatorContext(), minted("single")));
+  await control.state.firstStarted.promise;
+  assert.equal(control.state.fetches, 1, "the control fetched the key set twice at once");
+  control.publishFirst();
+  await control.state.retryStarted.promise;
+  control.publishLate();
+  const singleOutcome = await singleRun;
+  assert.equal(singleOutcome.ok, true, `the single-request control was refused: ${singleOutcome.reason}`);
+  assert.equal(singleOutcome.value.subject, "single");
+  assert.equal(control.state.fetches, 2, "the single-request control outspent its retry");
+
+  // The same retry, arrived at by eight overlapping callers at once. They are
+  // started synchronously, which is how a burst reaches one event loop: every
+  // caller runs into the resolution before the first document is published.
+  const overlap = stagedKeyPublication(issuer, published, late);
+  const validate = await overlap.build({ maxUnknownKidFetches: 4 });
+  const concurrency = 8;
+  const tokens = Array.from({ length: concurrency }, (_, index) => minted(`user-${index}`));
+  const burst = tokens.map(
+    async (token) => await settled(validate(validatorContext(), token)),
+  );
+  assert.equal(overlap.state.fetches, 1, "the first key-set document was fetched more than once");
+  overlap.publishFirst();
+  await overlap.state.retryStarted.promise;
+  // Let the peers observe the first document, so the row covers the retry and
+  // not a lucky single fetch.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  overlap.publishLate();
+  const outcomes = await Promise.all(burst);
+  outcomes.forEach((outcome, index) => {
+    assert.equal(outcome.ok, true, `overlapping caller ${index} was refused a valid token: ${outcome.reason}`);
+    assert.equal(outcome.value.subject, `user-${index}`, "an overlapping caller received another caller's claims");
+  });
+  assert.equal(overlap.state.fetches, 2, "the overlapping burst outspent the single request's retry");
+
+  // Control: an unpublished kid is still refused, inside its per-kid bound.
+  const stranger = minted("stranger", { kid: "never-published" });
+  const strangerOutcome = await settled(validate(validatorContext(), stranger));
+  assert.equal(strangerOutcome.ok, false, "an unpublished kid was authorized");
+  assert.match(strangerOutcome.reason, /unknown_kid/);
+  const afterStranger = overlap.state.fetches;
+  assert.ok(
+    afterStranger - 2 <= 2,
+    `an unknown kid outspent its per-kid bound: ${afterStranger - 2}`,
+  );
+  const repeated = await settled(validate(validatorContext(), stranger));
+  assert.equal(repeated.ok, false, "a repeat unknown kid was authorized");
+  assert.equal(overlap.state.fetches, afterStranger, "a repeat unknown kid inside the cooldown fetched again");
+
+  // Control: the global unknown-kid fetch budget still refuses, without a fetch.
+  const budgeted = await settled(
+    validate(validatorContext(), minted("budgeted", { kid: "never-published-either" })),
+  );
+  assert.equal(budgeted.ok, false, "a kid past the fetch budget was authorized");
+  assert.match(budgeted.reason, /unknown_kid/);
+  assert.equal(overlap.state.fetches, afterStranger, "an exhausted fetch budget still fetched");
+
+  // Control: a failing key set fails closed on one fetch, however many callers.
+  let failures = 0;
+  const failing = await newJwksValidator({
+    issuer,
+    jwksUri: `${issuer}/jwks`,
+    allowPrivateHosts: true,
+    requiredAudience: PROVIDER_AUDIENCE,
+    requiredScopes: ["namespace:use"],
+    fetchImpl: async () => {
+      failures += 1;
+      return new Response(null, { status: 503 });
+    },
+  });
+  const failureOutcomes = await Promise.all(
+    tokens.map(async (token) => await settled(failing(validatorContext(), token))),
+  );
+  for (const outcome of failureOutcomes) {
+    assert.equal(outcome.ok, false, "a 503 key set authorized a valid token");
+  }
+  assert.equal(failures, 1, `a failing key set was fetched ${failures} times`);
+
+  // Control: a hanging key set fails closed on one fetch, however many callers.
+  const hang = deferred();
+  let hangs = 0;
+  const hanging = await newJwksValidator({
+    issuer,
+    jwksUri: `${issuer}/jwks`,
+    allowPrivateHosts: true,
+    fetchTimeoutSeconds: 0.05,
+    requiredAudience: PROVIDER_AUDIENCE,
+    requiredScopes: ["namespace:use"],
+    fetchImpl: async () => {
+      hangs += 1;
+      return await hang.promise;
+    },
+  });
+  const hangOutcomes = await Promise.all(
+    tokens.map(async (token) => await settled(hanging(validatorContext(), token))),
+  );
+  for (const outcome of hangOutcomes) {
+    assert.equal(outcome.ok, false, "a never-resolving key set authorized a valid token");
+  }
+  assert.equal(hangs, 1, `a hanging key set was fetched ${hangs} times`);
+  hang.resolve(new Response(null, { status: 503 }));
+});
+
 test("the provider caches discovery and validators under overlap", async () => {
   const issuer = "https://provider-cache-a.example.test";
   const otherIssuer = "https://provider-cache-b.example.test";

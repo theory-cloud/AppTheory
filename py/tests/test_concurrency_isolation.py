@@ -39,6 +39,7 @@ from apptheory.microvm.model import MicroVMSessionRecord  # noqa: E402
 from apptheory.microvm.registry import (  # noqa: E402
     create_memory_microvm_session_registry,
 )
+from apptheory.oauth import OAuthBearerError  # noqa: E402
 from apptheory.oauth.autheory import (  # noqa: E402
     AutheoryProvider,
     AutheoryProviderOptions,
@@ -809,6 +810,38 @@ class _DocumentTransport:
             return sum(1 for url in self.fetches if url.endswith(suffix))
 
 
+class _StagedKeyPublication:
+    """Serves one key set without the requested kid, then one with it.
+
+    The first response is held for ``hold_seconds`` so every peer reaches the
+    validator while that fetch is still open — the publication lag the shared
+    fixture already lets a single request survive, arrived at by a burst.
+    """
+
+    def __init__(self, jwks_uri: str, first: dict[str, Any], later: dict[str, Any], hold_seconds: float) -> None:
+        self._jwks_uri = jwks_uri
+        self._first = first
+        self._later = later
+        self._hold = hold_seconds
+        self._lock = threading.Lock()
+        self.fetches = 0
+        self.started = threading.Event()
+
+    def __call__(self, url: str) -> tuple[int, dict[str, str], bytes]:
+        if url != self._jwks_uri:
+            return 404, {"content-type": "text/plain"}, b"not found"
+        with self._lock:
+            self.fetches += 1
+            attempt = self.fetches
+        if attempt == 1:
+            self.started.set()
+            time.sleep(self._hold)
+            document = self._first
+        else:
+            document = self._later
+        return 200, {"content-type": "application/json"}, json.dumps(document).encode()
+
+
 class TestBearerValidationStaysAuthorized(unittest.TestCase):
     """SAN-3738-03: the repaired bearer path is pinned by its positive outcome.
 
@@ -906,6 +939,66 @@ class TestBearerValidationStaysAuthorized(unittest.TestCase):
             with self.assertRaises(ProviderError):
                 provider.validate_access_token(token, expected)
             self.assertEqual(len(provider._validators), 1, f"{other}'s foreign token created a validator")
+
+    def test_key_publication_retry_serves_every_overlapping_caller(self) -> None:
+        """SAN-3738-04 parity: the permitted retry reaches every overlapping caller.
+
+        The shared fixture already promises that one request is authorized when
+        its signing key is published after the first key-set fetch. Run that
+        same lag against a burst, because a Web Function never sees it alone.
+        """
+        issuer = "https://key-publication.example.test"
+        published = FakeUpstreamProvider(issuer=issuer, kid="kid-published", key_bits=512)
+        late = FakeUpstreamProvider(issuer=issuer, kid="kid-late", key=generate_rsa_key(512))
+        transport = _StagedKeyPublication(
+            late.jwks_uri,
+            published.jwks_document(),
+            late.jwks_document(),
+            hold_seconds=0.2,
+        )
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=issuer,
+                jwks_uri=late.jwks_uri,
+                http_get=transport,
+                allow_private_hosts=True,
+                required_audience=_OAUTH_AUDIENCE,
+                required_scopes=["namespace:use"],
+                max_unknown_kid_fetches=4,
+            )
+        )
+        ctx = Context(request=_request("/"))
+        concurrency = 8
+        tokens = [
+            late.mint_access_token(audience=_OAUTH_AUDIENCE, subject=f"user-{index}", scope="namespace:use")
+            for index in range(concurrency)
+        ]
+
+        with _RaceProne():
+            claims = _run_concurrently(lambda index: validator(ctx, tokens[index]), concurrency)
+
+        for index, claim in enumerate(claims):
+            self.assertEqual(claim.subject, f"user-{index}", "an overlapping caller was refused a valid token")
+        self.assertEqual(transport.fetches, 2, "the overlapping burst outspent the single request's retry")
+
+        # The refusal controls are unchanged: an unpublished kid is refused
+        # inside its per-kid bound, and an exhausted budget spends no fetch.
+        stranger = FakeUpstreamProvider(
+            issuer=issuer, kid="never-published", key=generate_rsa_key(512)
+        ).mint_access_token(audience=_OAUTH_AUDIENCE, subject="stranger", scope="namespace:use")
+        with self.assertRaises(OAuthBearerError):
+            validator(ctx, stranger)
+        after_stranger = transport.fetches
+        self.assertLessEqual(after_stranger - 2, 2, "an unknown kid outspent its per-kid bound")
+        with self.assertRaises(OAuthBearerError):
+            validator(ctx, stranger)
+        self.assertEqual(transport.fetches, after_stranger, "a repeat unknown kid inside the cooldown fetched again")
+        other = FakeUpstreamProvider(
+            issuer=issuer, kid="never-published-either", key=generate_rsa_key(512)
+        ).mint_access_token(audience=_OAUTH_AUDIENCE, subject="other", scope="namespace:use")
+        with self.assertRaises(OAuthBearerError):
+            validator(ctx, other)
+        self.assertEqual(transport.fetches, after_stranger, "an exhausted fetch budget still fetched")
 
 
 def _unsigned_token(*, kid: str, issuer: str, now: dt.datetime) -> str:
