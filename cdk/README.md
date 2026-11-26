@@ -64,6 +64,7 @@ The inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts
 - `AppTheoryMcpProtectedResource` — exported from `cdk/lib/mcp-protected-resource.ts`.
 - `AppTheoryRemoteMcpServer` — exported from `cdk/lib/remote-mcp-server.ts`.
 - `AppTheoryRestV1ChallengeRestoration` — exported from `cdk/lib/rest-v1-challenge-restoration.ts`.
+- `AppTheoryWebFunction` — exported from `cdk/lib/web-function.ts`.
 <!-- apptheory-cdk-inventory:end -->
 
 ## Minimal example

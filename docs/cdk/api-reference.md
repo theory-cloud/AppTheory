@@ -70,6 +70,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryPathRoutedFrontend`
 - `AppTheoryMediaCdn`
 - `AppTheoryWebSocketApi`
+- `AppTheoryWebFunction`: Lambda Web Function — one composition creates the function, its revision, and
+  the endpoint it serves on, `IamAuth` by default
 
 ## Governed namespace install parameters
 

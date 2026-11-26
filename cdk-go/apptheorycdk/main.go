@@ -1591,6 +1591,33 @@ func init() {
 		reflect.TypeOf((*AppTheoryWafRuleConfig)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryWebFunction",
+		reflect.TypeOf((*AppTheoryWebFunction)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "revisionId", GoGetter: "RevisionId"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "webFunction", GoGetter: "WebFunction"},
+			_jsii_.MemberProperty{JsiiProperty: "webFunctionArn", GoGetter: "WebFunctionArn"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryWebFunction{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryWebFunctionEndpointProps",
+		reflect.TypeOf((*AppTheoryWebFunctionEndpointProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryWebFunctionProps",
+		reflect.TypeOf((*AppTheoryWebFunctionProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi",
 		reflect.TypeOf((*AppTheoryWebSocketApi)(nil)).Elem(),
 		[]_jsii_.Member{

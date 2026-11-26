@@ -8604,3 +8604,183 @@ test("AppTheoryS3VersionedIngress rejects a scope outside a Stack", () => {
     /CfnBucket at 'Root\/Ingress\/Bucket\/Resource' should be created in the scope of a Stack/,
   );
 });
+
+function webFunctionCode(stack) {
+  const bucket = new s3.Bucket(stack, "Code", { versioned: true });
+  return lambda.WebFunctionCode.fromBucket(bucket, "app.zip");
+}
+
+function webFunctionResources(template, type) {
+  return Object.values(template.Resources ?? {}).filter((resource) => resource.Type === type);
+}
+
+function webFunctionWarnings(stack) {
+  const warnings = [];
+  for (const construct of stack.node.findAll()) {
+    for (const metadata of construct.node.metadata) {
+      if (metadata.type === "aws:cdk:warning") warnings.push(String(metadata.data));
+    }
+  }
+  return warnings;
+}
+
+test("AppTheoryWebFunction synthesizes a function, its revision and an IamAuth endpoint", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+    entryPoint: "server.mjs",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("web-function", template);
+  } else {
+    expectSnapshot("web-function", template);
+  }
+
+  const functions = webFunctionResources(template, "AWS::Lambda::WebFunction");
+  const revisions = webFunctionResources(template, "AWS::Lambda::WebFunctionRevision");
+  const endpoints = webFunctionResources(template, "AWS::Lambda::WebFunctionEndpoint");
+  assert.equal(functions.length, 1, "Should synthesize exactly one WebFunction");
+  assert.equal(revisions.length, 1, "Should synthesize exactly one revision");
+  assert.equal(endpoints.length, 1, "Should synthesize exactly one endpoint");
+  assert.equal(endpoints[0].Properties.AuthType, "IamAuth");
+});
+
+test("AppTheoryWebFunction defaults to IamAuth and warns nothing", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const web = new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const endpoints = webFunctionResources(template, "AWS::Lambda::WebFunctionEndpoint");
+  assert.equal(endpoints[0].Properties.AuthType, "IamAuth");
+  assert.equal(web.endpoint.authType, lambda.WebFunctionAuthType.IAM_AUTH);
+  assert.deepEqual(
+    webFunctionWarnings(stack).filter((warning) => /APPLICATION_MANAGED/.test(warning)),
+    [],
+    "an IamAuth endpoint must not warn about a public endpoint",
+  );
+});
+
+test("AppTheoryWebFunction makes an endpoint public only on an explicit ApplicationManaged opt-in", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+    authType: lambda.WebFunctionAuthType.APPLICATION_MANAGED,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const endpoints = webFunctionResources(template, "AWS::Lambda::WebFunctionEndpoint");
+  assert.equal(endpoints[0].Properties.AuthType, "ApplicationManaged");
+  const publicWarnings = webFunctionWarnings(stack).filter((warning) => /APPLICATION_MANAGED/.test(warning));
+  assert.equal(publicWarnings.length, 1, "the documented public-endpoint warning must reach the author");
+  assert.match(publicWarnings[0], /will not enforce authentication/);
+});
+
+test("AppTheoryWebFunction pins all traffic to its own revision by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const endpoints = webFunctionResources(template, "AWS::Lambda::WebFunctionEndpoint");
+  const weights = endpoints[0].Properties.RevisionWeights;
+  assert.equal(weights.length, 1, "the endpoint sends all traffic to one revision");
+  assert.equal(weights[0].Weight, 100);
+});
+
+test("AppTheoryWebFunction shifts traffic between revisions through the L1 escape hatch", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const web = new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+  });
+
+  // WebFunctionTraffic only expresses single(revisionId), so a weighted split is the
+  // documented L1 escape hatch: assign the underlying CfnWebFunctionEndpoint's property.
+  web.endpoint.resource.revisionWeights = [
+    { revisionId: web.revisionId, weight: 90 },
+    { revisionId: "4d0a6f3c-1c66-4d63-9db2-8dbd4a1a9c7e", weight: 10 },
+  ];
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const endpoints = webFunctionResources(template, "AWS::Lambda::WebFunctionEndpoint");
+  const weights = endpoints[0].Properties.RevisionWeights;
+  assert.equal(weights.length, 2);
+  assert.equal(weights[0].Weight, 90);
+  assert.equal(weights[1].Weight, 10);
+  assert.equal(weights[1].RevisionId, "4d0a6f3c-1c66-4d63-9db2-8dbd4a1a9c7e");
+});
+
+test("AppTheoryWebFunction accepts nodejs26.x through the runtime escape", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.of("nodejs26.x"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(webFunctionResources(template, "AWS::Lambda::WebFunction").length, 1);
+});
+
+test("AppTheoryWebFunction refuses the Python Web Function runtime", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryWebFunction(stack, "Web", {
+        code: webFunctionCode(stack),
+        runtime: lambda.WebFunctionRuntime.of("python3.15"),
+      }),
+    /does not compose the "python3\.15" Web Function runtime: a Python Web Function serves an ASGI or WSGI application/,
+  );
+});
+
+test("AppTheoryWebFunction refuses a runtime it cannot compose", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryWebFunction(stack, "Web", {
+        code: webFunctionCode(stack),
+        runtime: lambda.WebFunctionRuntime.of("nodejs18.x"),
+      }),
+    /does not support runtime "nodejs18\.x"; supported runtimes are nodejs24\.x, nodejs26\.x/,
+  );
+});
+
+test("AppTheoryWebFunction refuses to set AWS_LAMBDA_HTTP_ENDPOINT", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryWebFunction(stack, "Web", {
+        code: webFunctionCode(stack),
+        runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+        environment: { AWS_LAMBDA_HTTP_ENDPOINT: "127.0.0.1:3000" },
+      }),
+    /does not accept AWS_LAMBDA_HTTP_ENDPOINT in props\.environment/,
+  );
+});

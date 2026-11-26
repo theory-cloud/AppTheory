@@ -50,3 +50,4 @@ export * from "./install-parameters";
 export * from "./mcp-protected-resource";
 export * from "./remote-mcp-server";
 export * from "./rest-v1-challenge-restoration";
+export * from "./web-function";

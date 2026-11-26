@@ -41,6 +41,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryMicrovmImage` (Lambda MicroVM image; code artifact, base image, hooks, logging, resources, environment variables, and connector references)
 - `AppTheoryPathRoutedFrontend` (CloudFront distribution: multi-SPA routing + API origin + SPA rewrite)
 - `AppTheoryMediaCdn` (CloudFront distribution: S3-backed media CDN; optional private media via key groups)
+- `AppTheoryWebFunction` (Lambda Web Function: HTTP server per execution environment + revision + endpoint, `IamAuth` by default)
 - `AppTheorySsrSite` (FaceTheory-first CloudFront + S3 + Lambda URL SSR/SSG/ISR deployment; see `docs/cdk/ssr-site.md`)
 - Domain/cert helpers (hosted zone, certificate, custom domains)
 - Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
