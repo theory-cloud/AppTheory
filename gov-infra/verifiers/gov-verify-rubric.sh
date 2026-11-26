@@ -833,6 +833,7 @@ gov_cmd_vuln() {
     "examples/cdk/sqs-queue/package-lock.json"
     "examples/cdk/ssr-only-provided-assets-site/package-lock.json"
     "examples/cdk/ssr-site/package-lock.json"
+    "examples/cdk/web-function/package-lock.json"
   )
 
   # Fail closed when a tracked npm lockfile is missing from the scan set: an
