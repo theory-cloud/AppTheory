@@ -1332,6 +1332,173 @@ test("a window opened behind another key's fetch serves every peer it admits", a
   hanging.publishLate();
 });
 
+/**
+ * The rotation-recovery ordering: a request for a rotated key spends its whole
+ * per-kid bound against a key set that does not carry the key yet, so its window
+ * settles with a refusal and stays inside the refresh cooldown. A later request
+ * for a neighbouring key then opens the next fetch — the fetch that is about to
+ * publish the rotated key — and the rotated key's next caller arrives while that
+ * fetch is in flight. Following the settled window alone reads the cache before
+ * the running fetch fills it and refuses a valid token; the caller has to reach
+ * the outcome of the fetch that is already running, as it did when peers joined
+ * the in-flight slot directly.
+ */
+function rotationRecoveryPublication(issuer, stale, neighbor, rotated) {
+  const running = deferred();
+  const state = {
+    fetches: 0,
+    runningStarted: deferred(),
+  };
+  const publishedDocument = () => ({
+    keys: [
+      ...stale.jwksDocument().keys,
+      ...neighbor.jwksDocument().keys,
+      ...rotated.jwksDocument().keys,
+    ],
+  });
+  const fetchImpl = async () => {
+    state.fetches += 1;
+    // The first resolution spends the per-kid bound against the document that
+    // predates the rotation, so the rotated key's window settles with a refusal.
+    if (state.fetches <= 2) return Response.json(stale.jwksDocument());
+    if (state.fetches === 3) {
+      state.runningStarted.resolve();
+      return await running.promise;
+    }
+    // Every later fetch answers the steady document, so the refusal controls are
+    // refused by the key set rather than by a transport error.
+    return Response.json(publishedDocument());
+  };
+  return {
+    state,
+    publish: () => running.resolve(Response.json(publishedDocument())),
+    failRunning: (error) => running.reject(error),
+    build: async (overrides = {}) =>
+      await newJwksValidator({
+        issuer,
+        jwksUri: `${issuer}/jwks`,
+        fetchImpl,
+        allowPrivateHosts: true,
+        requiredAudience: PROVIDER_AUDIENCE,
+        requiredScopes: ["namespace:use"],
+        ...overrides,
+      }),
+  };
+}
+
+test("a kid whose own window settled still follows the fetch that publishes it", async () => {
+  // A key rotation reaches the runtime in a fetch that a *different* key's
+  // request opened. The rotated key's earlier caller spent its own bounded
+  // resolution against the old document and was refused, and that window stays
+  // inside the cooldown — so the next caller for the rotated key finds a settled
+  // window while the running fetch is about to publish it. It must reach that
+  // fetch's outcome: one valid caller, no refusal, and no fetch of its own.
+  const issuer = "https://rotation-recovery.example.test";
+  const stale = newFakeOAuthProvider({ issuer, kid: "kid-still-published" });
+  const neighbor = newFakeOAuthProvider({ issuer, kid: "kid-neighbor" });
+  const rotated = newFakeOAuthProvider({ issuer, kid: "kid-rotated" });
+  const minted = (provider, subject, overrides = {}) =>
+    provider.mintAccessToken({
+      audience: PROVIDER_AUDIENCE,
+      subject,
+      scope: "namespace:use",
+      ...overrides,
+    });
+
+  const recovery = rotationRecoveryPublication(issuer, stale, neighbor, rotated);
+  const validate = await recovery.build({
+    maxRefreshPerKid: 1,
+    maxUnknownKidFetches: 8,
+    refreshCooldownSeconds: 60,
+  });
+
+  // The rotated key misses and its window settles, still inside the cooldown.
+  const missed = await settled(validate(validatorContext(), minted(rotated, "before-publication")));
+  assert.equal(missed.ok, false, "the rotated key was authorized before it was published");
+  assert.match(missed.reason, /unknown_kid/);
+  assert.equal(recovery.state.fetches, 2, "the first resolution did not spend its per-kid bound");
+
+  // A neighbouring key's caller opens the third fetch and holds it.
+  const publishing = settled(validate(validatorContext(), minted(neighbor, "publisher")));
+  await recovery.state.runningStarted.promise;
+  assert.equal(recovery.state.fetches, 3, "the neighbouring key's caller did not open the third fetch");
+
+  // The rotated key's next caller arrives inside the cooldown while that fetch
+  // is in flight. It gets no fetch of its own, and it is not refused: the fetch
+  // that is already running publishes its key.
+  const overlapping = settled(validate(validatorContext(), minted(rotated, "overlapping")));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(recovery.state.fetches, 3, "the caller in cooldown fetched the key set itself");
+  recovery.publish();
+  const [publisherOutcome, overlapOutcome] = await Promise.all([publishing, overlapping]);
+  assert.equal(publisherOutcome.ok, true, `the neighbouring key's caller was refused: ${publisherOutcome.reason}`);
+  assert.equal(
+    overlapOutcome.ok,
+    true,
+    `the caller whose key the running fetch published was refused: ${overlapOutcome.reason}`,
+  );
+  assert.equal(overlapOutcome.value.subject, "overlapping", "the overlapping caller received another caller's claims");
+  assert.equal(recovery.state.fetches, 3, "the recovery caller outspent the fetch that was already running");
+
+  // A caller arriving after that fetch settled is served from the same cache.
+  const afterwards = await settled(validate(validatorContext(), minted(rotated, "arrived-later")));
+  assert.equal(afterwards.ok, true, `a caller after the fetch settled was refused: ${afterwards.reason}`);
+  assert.equal(recovery.state.fetches, 3, "a caller after the fetch settled fetched again");
+
+  // Control: a kid in neither document is still refused, outspends at most its
+  // own per-kid bound, and a repeat inside the cooldown neither fetches nor
+  // waits on the running fetch.
+  const stranger = minted(rotated, "stranger", { kid: "never-published" });
+  const strangerOutcome = await settled(validate(validatorContext(), stranger));
+  assert.equal(strangerOutcome.ok, false, "an unpublished kid was authorized");
+  assert.match(strangerOutcome.reason, /unknown_kid/);
+  const afterStranger = recovery.state.fetches;
+  assert.ok(afterStranger - 3 <= 2, `an unknown kid outspent its per-kid bound: ${afterStranger - 3}`);
+  const repeated = await settled(validate(validatorContext(), stranger));
+  assert.equal(repeated.ok, false, "a repeat unknown kid was authorized");
+  assert.equal(recovery.state.fetches, afterStranger, "a repeat unknown kid inside the cooldown fetched again");
+
+  // Control: the running fetch failing releases the cooldown caller as a
+  // fail-closed refusal, and neither caller is stranded.
+  const rejecting = rotationRecoveryPublication(issuer, stale, neighbor, rotated);
+  const rejectingValidate = await rejecting.build({ maxRefreshPerKid: 1, maxUnknownKidFetches: 8 });
+  await settled(rejectingValidate(validatorContext(), minted(rotated, "rejected-before")));
+  const rejectingPublisher = settled(rejectingValidate(validatorContext(), minted(neighbor, "rejected-publisher")));
+  await rejecting.state.runningStarted.promise;
+  const rejectingWaiter = settled(rejectingValidate(validatorContext(), minted(rotated, "rejected-waiter")));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const rejectingAt = Date.now();
+  rejecting.failRunning(new Error("upstream down"));
+  const [rejectingPublisherOutcome, rejectingWaiterOutcome] = await Promise.all([rejectingPublisher, rejectingWaiter]);
+  assert.ok(Date.now() - rejectingAt < 1000, "a rejecting fetch stranded the caller following it");
+  assert.equal(
+    rejectingPublisherOutcome.ok,
+    false,
+    "a failed fetch authorized the caller that opened it",
+  );
+  assert.equal(rejectingWaiterOutcome.ok, false, "a failed fetch authorized the caller following it");
+
+  // Control: the same ordering with a hanging fetch is released at the fetch
+  // timeout, so no caller is stranded behind a fetch that never finishes.
+  const hanging = rotationRecoveryPublication(issuer, stale, neighbor, rotated);
+  const hangingValidate = await hanging.build({
+    maxRefreshPerKid: 1,
+    maxUnknownKidFetches: 8,
+    fetchTimeoutSeconds: 0.05,
+  });
+  await settled(hangingValidate(validatorContext(), minted(rotated, "hanging-before")));
+  const hangingPublisher = settled(hangingValidate(validatorContext(), minted(neighbor, "hanging-publisher")));
+  await hanging.state.runningStarted.promise;
+  const hangingWaiter = settled(hangingValidate(validatorContext(), minted(rotated, "hanging-waiter")));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const hangingAt = Date.now();
+  const [hangingPublisherOutcome, hangingWaiterOutcome] = await Promise.all([hangingPublisher, hangingWaiter]);
+  assert.ok(Date.now() - hangingAt < 1000, "a hanging fetch held the caller following it past the fetch timeout");
+  assert.equal(hangingPublisherOutcome.ok, false, "a hanging fetch authorized the caller that opened it");
+  assert.equal(hangingWaiterOutcome.ok, false, "a hanging fetch authorized the caller following it");
+  hanging.publish();
+});
+
 const MCP_TOOL_HEADERS = {
   "content-type": ["application/json"],
   accept: ["application/json, text/event-stream"],
