@@ -637,7 +637,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1351 exported top-level symbols</summary>
+<summary>1353 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -836,6 +836,7 @@ Contract,
 DerivedName,
 ErrUnknownNamingScope,
 FutureRules,
+HostedNamespaceMax,
 KeeperActionsGroup,
 KeeperActionsStream,
 KeeperAllowedNoEvents,
@@ -869,6 +870,7 @@ ShortenName,
 Statement,
 SynthCheck,
 ValidateContext,
+ValidateHostedNamespace,
 ValidateSelector,
 Visible
 ```
