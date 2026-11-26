@@ -35,9 +35,22 @@ from apptheory.mcp import (  # noqa: E402
     MemoryMcpStreamStore,
     MemoryMcpTaskStore,
 )
-from apptheory.oauth.autheory import AutheoryProvider, AutheoryProviderOptions  # noqa: E402
-from apptheory.oauth.fake_provider import shared_rsa_key  # noqa: E402
+from apptheory.microvm.model import MicroVMSessionRecord  # noqa: E402
+from apptheory.microvm.registry import (  # noqa: E402
+    create_memory_microvm_session_registry,
+)
+from apptheory.oauth.autheory import (  # noqa: E402
+    AutheoryProvider,
+    AutheoryProviderOptions,
+    new_autheory_provider,
+)
+from apptheory.oauth.fake_provider import (  # noqa: E402
+    FakeUpstreamProvider,
+    generate_rsa_key,
+    shared_rsa_key,
+)
 from apptheory.oauth.jwks import JWKSValidatorOptions, new_jwks_validator  # noqa: E402
+from apptheory.oauth.provider import ProviderError, TokenExpectations  # noqa: E402
 from apptheory.request import Request  # noqa: E402
 from apptheory.response import Response  # noqa: E402
 
@@ -606,6 +619,293 @@ class TestSafeSharedState(unittest.TestCase):
     def test_shared_rsa_key_returns_one_keypair_under_overlap(self) -> None:
         keys = _run_concurrently(lambda _index: shared_rsa_key(512), 8)
         self.assertEqual(len(set(keys)), 1, "the shared key cache produced two keypairs")
+
+
+_MICROVM_NOW = 1_764_216_000.0
+_MICROVM_EXPIRES_AT = 4_102_444_800.0
+
+
+def _microvm_record(
+    session_id: str,
+    *,
+    tenant_id: str = "tenant-a",
+    namespace: str = "ns-a",
+    auth_subject: str = "subject-a",
+) -> MicroVMSessionRecord:
+    return MicroVMSessionRecord(
+        tenant_id=tenant_id,
+        namespace=namespace,
+        session_id=session_id,
+        state="running",
+        desired_state="running",
+        image_ref="img",
+        controller_id="controller-1",
+        created_at=_MICROVM_NOW,
+        updated_at=_MICROVM_NOW,
+        expires_at=_MICROVM_EXPIRES_AT,
+        generation=1,
+        last_command_id="command-1",
+        auth_subject=auth_subject,
+        network_connector_ref="network-connector-1",
+        provider_id="aws",
+        provider_microvm_id=session_id,
+        provider_state="running",
+        aws_lifecycle_state="running",
+        last_observed_at=_MICROVM_NOW,
+        last_action="create",
+    )
+
+
+class TestMicrovmSessionRegistryStaysCorrect(unittest.TestCase):
+    """The microvm session registry is a process-wide store, like the MCP stores.
+
+    ``MemoryMicroVMSessionRegistry`` is constructed once per execution
+    environment and shared by every request that drives a micro:vm session, so
+    its ``put``/``get``/``delete``/``list`` run on different request threads.
+    ``list`` walks the record maps twice and derives the canonical-precedence
+    set in between, which is exactly the *structure mutated while another thread
+    iterates it* shape the audit classifies as reproducible: without a lock the
+    iteration aborts with ``RuntimeError: dictionary changed size during
+    iteration`` and the request fails instead of listing its sessions.
+    """
+
+    def test_microvm_session_registry_survives_concurrent_put_delete_list(self) -> None:
+        registry = create_memory_microvm_session_registry()
+        stable = [f"stable-{index:03d}" for index in range(64)]
+        for session_id in stable:
+            registry.put(_microvm_record(session_id))
+
+        writers = 2
+        churn_turns = 120
+        # Writer ``turn`` deletes the record it wrote three turns earlier, so the
+        # surviving set is exactly churn_turns minus the deleted targets.
+        deleted_turns = {turn - 3 for turn in range(3, churn_turns) if turn % 3 == 0}
+        deleted_per_writer = len(deleted_turns)
+        list_input = {"tenant_id": "tenant-a", "namespace": "ns-a", "auth_subject": "subject-a"}
+        listings: list[list[str]] = []
+        listings_lock = threading.Lock()
+
+        def worker(index: int) -> None:
+            if index < writers:
+                for turn in range(churn_turns):
+                    registry.put(_microvm_record(f"churn-{index}-{turn:03d}"))
+                    if turn >= 3 and turn % 3 == 0:
+                        registry.delete(
+                            {
+                                "tenant_id": "tenant-a",
+                                "namespace": "ns-a",
+                                "session_id": f"churn-{index}-{turn - 3:03d}",
+                            }
+                        )
+                return
+            if index < writers + 2:
+                for _ in range(churn_turns):
+                    session_ids = [session.session_id for session in registry.list(dict(list_input))]
+                    with listings_lock:
+                        listings.append(session_ids)
+                return
+            for turn in range(churn_turns):
+                session_id = stable[turn % len(stable)]
+                record = registry.get(("tenant-a", "ns-a", session_id))
+                if record.session_id != session_id:
+                    raise AssertionError(f"registry returned {record.session_id!r} for {session_id!r}")
+
+        with _RaceProne():
+            _run_concurrently(worker, writers + 4)
+
+        for session_ids in listings:
+            self.assertEqual(session_ids, sorted(session_ids), f"listing reordered: {session_ids[:8]}")
+            self.assertEqual(
+                len(set(session_ids)),
+                len(session_ids),
+                "a listing returned the same session twice",
+            )
+
+        expected = set(stable)
+        for writer in range(writers):
+            expected.update(
+                f"churn-{writer}-{turn:03d}" for turn in range(churn_turns) if turn not in deleted_turns
+            )
+        listed = [session.session_id for session in registry.list(dict(list_input))]
+        self.assertEqual(listed, sorted(expected), "a concurrent put or delete was lost")
+        self.assertEqual(
+            len(expected),
+            len(stable) + writers * (churn_turns - deleted_per_writer),
+        )
+
+    def test_microvm_session_registry_keeps_tenants_apart_under_overlap(self) -> None:
+        registry = create_memory_microvm_session_registry()
+        tenants = ("tenant-a", "tenant-b", "tenant-c")
+        per_tenant = 24
+        for tenant in tenants:
+            for index in range(per_tenant):
+                registry.put(
+                    _microvm_record(
+                        f"{tenant}-{index:03d}",
+                        tenant_id=tenant,
+                        auth_subject=f"subject-{tenant}",
+                    )
+                )
+
+        def worker(index: int) -> list[str]:
+            tenant = tenants[index % len(tenants)]
+            touched = f"{tenant}-{index % per_tenant:03d}"
+            for turn in range(60):
+                sessions = registry.list(
+                    {"tenant_id": tenant, "namespace": "ns-a", "auth_subject": f"subject-{tenant}"}
+                )
+                for session in sessions:
+                    if session.tenant_id != tenant:
+                        raise AssertionError(f"tenant {tenant} listed tenant {session.tenant_id}")
+                registry.put(_microvm_record(touched, tenant_id=tenant, auth_subject=f"subject-{tenant}"))
+                registry.get((tenant, "ns-a", touched))
+                if turn % 10 == 0:
+                    registry.delete({"tenant_id": tenant, "namespace": "ns-a", "session_id": touched})
+            return [session.session_id for session in registry.list({"tenant_id": tenant, "namespace": "ns-a", "auth_subject": f"subject-{tenant}"})]
+
+        with _RaceProne():
+            results = _run_concurrently(worker, 6)
+
+        for index, session_ids in enumerate(results):
+            tenant = tenants[index % len(tenants)]
+            self.assertEqual(session_ids, sorted(session_ids))
+            self.assertTrue(
+                all(session_id.startswith(f"{tenant}-") for session_id in session_ids),
+                f"{tenant} listed another tenant's session: {session_ids}",
+            )
+
+
+_OAUTH_AUDIENCE = "https://mcp.example.test/acme/mcp"
+
+
+class _DocumentTransport:
+    """Serves one fake upstream's discovery and JWKS documents.
+
+    This is the network boundary only: the adapter, its caches, the validator
+    and its signature check are the production ones.
+    """
+
+    def __init__(self, upstream: FakeUpstreamProvider) -> None:
+        self._upstream = upstream
+        self.fetches: list[str] = []
+        self._lock = threading.Lock()
+
+    def __call__(
+        self, method: str, url: str, headers: dict[str, str], body: bytes | None
+    ) -> tuple[int, dict[str, str], bytes]:
+        del method, headers, body
+        with self._lock:
+            self.fetches.append(url)
+        if url == self._upstream.discovery_document()["issuer"] + "/.well-known/oauth-authorization-server":
+            document = self._upstream.discovery_document()
+        elif url == self._upstream.jwks_uri:
+            document = self._upstream.jwks_document()
+        else:
+            return 404, {"content-type": "text/plain"}, b"not found"
+        return 200, {"content-type": "application/json"}, json.dumps(document).encode()
+
+    def count(self, suffix: str) -> int:
+        with self._lock:
+            return sum(1 for url in self.fetches if url.endswith(suffix))
+
+
+class TestBearerValidationStaysAuthorized(unittest.TestCase):
+    """SAN-3738-03: the repaired bearer path is pinned by its positive outcome.
+
+    The failure-first rows prove the shared JWKS cache no longer corrupts under
+    overlap, but an unknown key only shows that a request fails closed. These
+    rows run the production adapter and validator on *valid* tokens at the same
+    time: every request must stay authorized, the validator must be reused
+    instead of rebuilt per caller, and two upstream keys must stay separated.
+    """
+
+    def _provider(self, upstream: FakeUpstreamProvider) -> tuple[AutheoryProvider, _DocumentTransport]:
+        transport = _DocumentTransport(upstream)
+        provider = new_autheory_provider(
+            AutheoryProviderOptions(
+                issuer=upstream.discovery_issuer,
+                http_get=transport,
+                allow_private_hosts=True,
+            )
+        )
+        return provider, transport
+
+    def test_valid_tokens_stay_authorized_under_overlap(self) -> None:
+        upstream = FakeUpstreamProvider(issuer="https://auth-a.example.test", key_bits=512)
+        provider, transport = self._provider(upstream)
+        token = upstream.mint_access_token(audience=_OAUTH_AUDIENCE, subject="user-1", scope="namespace:use")
+        expected = TokenExpectations(
+            expected_issuer=upstream.discovery_issuer,
+            expected_audience=_OAUTH_AUDIENCE,
+            required_scopes=["namespace:use"],
+        )
+
+        with _RaceProne():
+            claims = _run_concurrently(lambda _index: provider.validate_access_token(token, expected), 8)
+
+        for result in claims:
+            self.assertEqual(result.subject, "user-1")
+            self.assertEqual(result.audience, _OAUTH_AUDIENCE)
+            self.assertEqual(result.scopes, ["namespace:use"])
+        self.assertEqual(transport.count("/.well-known/jwks.json"), 1, "a validator was rebuilt per caller")
+        self.assertEqual(len(provider._validators), 1, "the adapter cached more than one validator")
+
+        # The same adapter keeps serving after the overlap: reuse, not a one-off.
+        again = provider.validate_access_token(token, expected)
+        self.assertEqual(again.subject, "user-1")
+        self.assertEqual(transport.count("/.well-known/jwks.json"), 1, "the cached validator refetched its key set")
+        self.assertEqual(len(provider._validators), 1)
+
+    def test_two_issuer_keys_stay_separated_under_overlap(self) -> None:
+        upstream_a = FakeUpstreamProvider(issuer="https://auth-a.example.test", kid="kid-a", key_bits=512)
+        upstream_b = FakeUpstreamProvider(
+            issuer="https://auth-b.example.test",
+            kid="kid-b",
+            key=generate_rsa_key(512),
+        )
+        provider_a, transport_a = self._provider(upstream_a)
+        provider_b, transport_b = self._provider(upstream_b)
+        token_a = upstream_a.mint_access_token(audience=_OAUTH_AUDIENCE, subject="user-a", scope="namespace:use")
+        token_b = upstream_b.mint_access_token(audience=_OAUTH_AUDIENCE, subject="user-b", scope="namespace:use")
+        expected_a = TokenExpectations(
+            expected_issuer=upstream_a.discovery_issuer,
+            expected_audience=_OAUTH_AUDIENCE,
+            required_scopes=["namespace:use"],
+        )
+        expected_b = TokenExpectations(
+            expected_issuer=upstream_b.discovery_issuer,
+            expected_audience=_OAUTH_AUDIENCE,
+            required_scopes=["namespace:use"],
+        )
+
+        def worker(index: int) -> Any:
+            for turn in range(12):
+                if (index + turn) % 2 == 0:
+                    result = provider_a.validate_access_token(token_a, expected_a)
+                    if result.subject != "user-a":
+                        raise AssertionError(f"issuer A authorized {result.subject!r}")
+                else:
+                    result = provider_b.validate_access_token(token_b, expected_b)
+                    if result.subject != "user-b":
+                        raise AssertionError(f"issuer B authorized {result.subject!r}")
+            return None
+
+        with _RaceProne():
+            _run_concurrently(worker, 8)
+
+        self.assertEqual(transport_a.count("/.well-known/jwks.json"), 1, "issuer A fetched its key set per caller")
+        self.assertEqual(transport_b.count("/.well-known/jwks.json"), 1, "issuer B fetched its key set per caller")
+        self.assertEqual(len(provider_a._validators), 1)
+        self.assertEqual(len(provider_b._validators), 1)
+
+        # Each issuer's key only verifies its own token: the caches did not mix.
+        for provider, expected, token, other in (
+            (provider_a, expected_a, token_b, "issuer B"),
+            (provider_b, expected_b, token_a, "issuer A"),
+        ):
+            with self.assertRaises(ProviderError):
+                provider.validate_access_token(token, expected)
+            self.assertEqual(len(provider._validators), 1, f"{other}'s foreign token created a validator")
 
 
 def _unsigned_token(*, kid: str, issuer: str, now: dt.datetime) -> str:
