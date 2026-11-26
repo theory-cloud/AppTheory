@@ -51,9 +51,10 @@ hope" with an enumerable sweep, run over both runtimes, whose hits were then cla
 | Registration-time tables | `add_*`/`register*` writers vs. serving reads | MCP tool/resource/prompt registry indexes (`mcp/index.ts:646,755,840`; `py …/mcp/__init__.py:610,693,757`) are written only by registration and read by index during serving — the S9 shape (new: S20). |
 | Test doubles and process-global fakes | `fake*.py`, `testkit*.py`, `testkit/`, `microvm/fake.*` | Already covered as X2 for Python; the TypeScript siblings (`testkit/oauthprovider.ts:158-163`, `microvm/fake.ts:68,270`) are now named in X2 as well. |
 
-The sweep found three items the round-0 tables did not list: the Python `MemoryMicroVMSessionRegistry` (U7, a real
-defect), its TypeScript sibling (S19, correct today but unlisted and untested), and the two TypeScript per-invocation
-holders (P11, P12) the sanity review named. It found nothing else outside a bounded fix.
+The sweep found the items the round-0 tables did not list: the Python `MemoryMicroVMSessionRegistry` (U7, a real
+defect), its TypeScript sibling (S19, correct today but unlisted and untested), the two TypeScript per-invocation
+holders the sanity review named (P11, P12), the registration-time MCP registry indexes (S20), and the TypeScript test
+doubles (X2). Everything it found is a bounded fix or a classification row; nothing required a redesign.
 
 ## 2. Classification
 
