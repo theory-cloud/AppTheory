@@ -286,3 +286,139 @@ func TestNamingContextBindingStackAttribution(t *testing.T) {
 		}
 	}
 }
+
+// hostedNamingTestContext is a hosted deployment's context: TheoryCloud.ai has
+// set `hosted` and the tenant namespace, and injected the account and Region
+// from its own placement (contract section 1, r5).
+func hostedNamingTestContext(stack awscdk.Stack) AppTheoryNamingContext {
+	return NewAppTheoryNamingContext(stack, jsii.String("Naming"), &AppTheoryNamingContextProps{
+		Namespace: jsii.String("acme"),
+		Hosted:    jsii.Bool(true),
+		App:       jsii.String("shop"),
+		Stage:     jsii.String("lab"),
+		Account:   jsii.String("998115851393"),
+		Region:    jsii.String("us-east-1"),
+	})
+}
+
+func TestNamingContextBindingHostedNames(t *testing.T) {
+	// R5: the hosted surface reaches Go through the jsii binding, so a Go CDK
+	// consumer derives the namespaced names and emits the artifact that carries
+	// them (contract sections 2 and 11.4, r5).
+	outdir, synthErr := synthNamingApp(t, func(stack awscdk.Stack) {
+		context := hostedNamingTestContext(stack)
+		namingTestFunction(stack, "Worker", "worker", context)
+	})
+	if synthErr != nil {
+		t.Fatalf("a hosted context must synthesize: %v", synthErr)
+	}
+
+	documents := artifactDocuments(t, filepath.Join(outdir, "Stack.metadata.json"))
+	if len(documents) != 1 {
+		t.Fatalf("want exactly one derived-name document, got %d", len(documents))
+	}
+	document := documents[0]
+	context, ok := document["context"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact has no context: %v", document)
+	}
+	if got := context["namespace"]; got != "acme" {
+		t.Fatalf("the artifact records the tenant namespace, got %v", got)
+	}
+
+	var lambdaRow, roleRow map[string]any
+	for _, row := range artifactRows(t, document) {
+		switch row["type"] {
+		case "lambda_function":
+			lambdaRow = row
+		case "iam_role":
+			roleRow = row
+		}
+	}
+	if lambdaRow == nil || roleRow == nil {
+		t.Fatalf("the artifact must carry the Lambda function and its role: %v", document)
+	}
+	if got := lambdaRow["name"]; got != "acme-shop-lab-worker" {
+		t.Fatalf("hosted Lambda name = %v", got)
+	}
+	if got := roleRow["name"]; got != "acme-shop-lab-worker" {
+		t.Fatalf("hosted role name = %v", got)
+	}
+
+	// The template carries the same names, so the artifact and the resources
+	// agree.
+	template := stackTemplate(t, filepath.Join(outdir, "Stack.template.json"))
+	for _, raw := range template.Resources {
+		var resource struct {
+			Type       string `json:"Type"`
+			Properties struct {
+				FunctionName any `json:"FunctionName"`
+				RoleName     any `json:"RoleName"`
+			} `json:"Properties"`
+		}
+		if err := json.Unmarshal(raw, &resource); err != nil {
+			t.Fatalf("parse a template resource: %v", err)
+		}
+		switch resource.Type {
+		case "AWS::Lambda::Function":
+			if resource.Properties.FunctionName != "acme-shop-lab-worker" {
+				t.Fatalf("FunctionName = %v", resource.Properties.FunctionName)
+			}
+		case "AWS::IAM::Role":
+			if resource.Properties.RoleName != "acme-shop-lab-worker" {
+				t.Fatalf("RoleName = %v", resource.Properties.RoleName)
+			}
+		}
+	}
+}
+
+func TestNamingContextBindingHostedRefusals(t *testing.T) {
+	// R2 in Go through the binding: each broken hosted context is refused at
+	// synthesis, and the refusal names its reason.
+	cases := map[string]struct {
+		props   *AppTheoryNamingContextProps
+		pattern string
+	}{
+		"missing namespace": {
+			props: &AppTheoryNamingContextProps{
+				Hosted: jsii.Bool(true), App: jsii.String("shop"), Stage: jsii.String("lab"),
+				Account: jsii.String("998115851393"), Region: jsii.String("us-east-1"),
+			},
+			pattern: "requires a namespace for a hosted deployment",
+		},
+		"namespace over 12 characters": {
+			props: &AppTheoryNamingContextProps{
+				Namespace: jsii.String("northwind-trade"), Hosted: jsii.Bool(true), App: jsii.String("shop"),
+				Stage: jsii.String("lab"), Account: jsii.String("998115851393"), Region: jsii.String("us-east-1"),
+			},
+			pattern: "longer than 12 characters",
+		},
+		"namespace starts with ssm": {
+			props: &AppTheoryNamingContextProps{
+				Namespace: jsii.String("ssmtools"), Hosted: jsii.Bool(true), App: jsii.String("shop"),
+				Stage: jsii.String("lab"), Account: jsii.String("998115851393"), Region: jsii.String("us-east-1"),
+			},
+			pattern: "must not start with aws or ssm",
+		},
+		"reserved platform namespace": {
+			props: &AppTheoryNamingContextProps{
+				Namespace: jsii.String("theorycloud"), Hosted: jsii.Bool(true), App: jsii.String("shop"),
+				Stage: jsii.String("lab"), Account: jsii.String("998115851393"), Region: jsii.String("us-east-1"),
+			},
+			pattern: "reserved for first-party platform apps",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, synthErr := synthNamingApp(t, func(stack awscdk.Stack) {
+				NewAppTheoryNamingContext(stack, jsii.String("Naming"), tc.props)
+			})
+			if synthErr == nil {
+				t.Fatalf("%s: a broken hosted context must fail synthesis", name)
+			}
+			if !regexp.MustCompile(tc.pattern).MatchString(synthErr.Error()) {
+				t.Fatalf("%s: refusal %q does not name the reason %q", name, synthErr.Error(), tc.pattern)
+			}
+		})
+	}
+}
