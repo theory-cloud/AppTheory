@@ -48,8 +48,9 @@ Expected output:
 ```text
   PASS  example ports are free (http 8151, aux 8152)
   [ 1/1] examples/cdk/web-function/app/server.mjs   L2  PASS  page 200 text/html, health 200,
-         unknown route 404; 3 events over 0.37s, first at 0.00s, chunked; 2 streams overlapped 0.49s,
-         each saw only its own tag
+         unknown route 404; 3 events over 0.37s, first at 0.00s, chunked; 2 streams overlapped
+         0.49s of delivery, 4 + 5 chunks interleaved before either finished, each saw only its
+         own tag
 
 counts: 1 passed, 0 failed, 0 pending-milestone
 RESULT: PASS
@@ -57,11 +58,26 @@ RESULT: PASS
 
 The row starts the real server on the lane's port with `AWS_LAMBDA_HTTP_ENDPOINT` set and drives it with real HTTP
 clients. It asserts status codes and headers, that the response is delivered incrementally (the first of three events
-arrives 0.24 s before the last, and no `content-length` is declared), and that two overlapping streams in one
-environment each carry only their own tag and their own tick sequence.
+arrives as soon as the response opens and the last about 0.37 s later, with no `content-length` declared), and that
+two concurrent streams in one environment each carry only their own tag and their own tick sequence.
 
-The isolation assertion is load-bearing: moving the request's tag into a module-level variable makes the row fail with
-`the second stream carried ['first', 'first', 'first'], so one request read another's state`.
+Concurrency is measured on delivery, not on the two client calls. Each chunk records the instant it arrived, both
+streams record on one clock, and the row fails unless each response delivered chunks while the other was still open —
+so a server that answers the second request only after the first stream ends is refused, even though the two calls
+overlap. The exact interleave counts move with scheduling; the requirement is at least two chunks from each stream
+before the other finishes.
+
+Both directions of that assertion are pinned in `scripts/local/test_examples_local.py`, which runs on every
+`make examples-local` against three loopback control servers:
+
+| Control | Delivery | The row |
+| --- | --- | --- |
+| Interleaved | both streams write chunks as they go | passes |
+| Serial | the second response starts only after the first stream ends | fails: `the first stream delivered 0 chunk(s) before the second stream finished at 0.515s (its own first chunk arrived at 0.515s), so the two responses were not delivered concurrently` |
+| Module-level tag | the request tag lives outside the request | fails: `the first stream carried ['second', 'second', 'second'], so one request read another's state` |
+
+The third control is the same mutation as editing this example: moving the tag out of the request's closure makes
+the real row fail with `the second stream carried ['first', 'first', 'first'], so one request read another's state`.
 
 ## Synthesize the stack
 

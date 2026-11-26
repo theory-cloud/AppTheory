@@ -395,12 +395,19 @@ def http_stream_request(
     headers: dict | None = None,
     body: bytes | None = None,
     timeout: float = 120,
+    origin: float | None = None,
 ) -> tuple[int, bytes, dict, list[tuple[float, bytes]]]:
     """Read a response incrementally and record each chunk's arrival time.
 
     The row asserts a timing boundary: the first chunk must arrive before the
     handler finishes writing the last one. ``read1`` returns the bytes that are
     available, so a buffered origin returns everything at the end.
+
+    ``origin`` moves the recorded instants onto a caller's ``time.monotonic``
+    clock. Chunk times are otherwise relative to the response, which cannot be
+    compared across two requests; a caller that drives concurrent streams passes
+    the instant it started them, so every chunk in both responses lands on one
+    clock and the two deliveries can be ordered against each other.
     """
     parsed = urlsplit(url)
     host = parsed.hostname or "127.0.0.1"
@@ -414,12 +421,13 @@ def http_stream_request(
         response = connection.getresponse()
         header = normalized_headers(response.headers)
         started = time.monotonic()
+        clock = started if origin is None else origin
         chunks: list[tuple[float, bytes]] = []
         while True:
             data = response.read1(65536)
             if not data:
                 break
-            chunks.append((time.monotonic() - started, data))
+            chunks.append((time.monotonic() - clock, data))
         return response.status, b"".join(data for _, data in chunks), header, chunks
     except OSError as exc:
         raise HarnessFailure(f"{method} {url} failed while streaming: {exc}") from exc
@@ -1392,6 +1400,10 @@ def _stop_process(process: subprocess.Popen) -> None:
 WEB_FUNCTION_SERVER = "examples/cdk/web-function/app/server.mjs"
 WEB_FUNCTION_TICKS = 4
 WEB_FUNCTION_TICK_SECONDS = 0.12
+# How many chunks each of two concurrent streams must deliver before the other one finishes. One
+# is the minimum the delivery assertion needs to see; requiring two keeps the row from passing on a
+# pair that merely start together and then serialize.
+WEB_FUNCTION_INTERLEAVED_CHUNKS = 2
 
 
 def run_web_function(harness: Harness) -> str:
@@ -1512,21 +1524,32 @@ def _assert_web_function_stream(base: str) -> str:
 
 
 def _assert_web_function_overlap(base: str) -> str:
-    """Two overlapping streams, each seeing only its own request state.
+    """Two streams delivered concurrently, each seeing only its own request state.
 
-    One execution environment answers both. If the application kept the tag or the tick counter in
+    Overlap is measured on delivery, not on the calls. Every chunk carries the instant it arrived,
+    on one clock shared by both streams, so time a client spends waiting for a response counts for
+    nothing: a server that answers the second request only after the first stream has finished
+    still shows two overlapping calls, and the row refuses it. ``SerialDeliveryControlTests`` in
+    ``test_examples_local.py`` is exactly that server, and it must keep failing.
+
+    What the row requires instead is that both responses made progress while the other one was
+    still open — two chunks each, at least — so the streams were genuinely interleaved on the wire.
+    One execution environment answers both: if the application kept the tag or the tick counter in
     module state, the second request would overwrite the first and each stream would echo the other
-    request's values; the assertions below are what make that a failure instead of a pass.
+    request's values, which the payload assertions below turn into a failure.
     """
     tags = ("first", "second")
-    results: dict[str, tuple[float, float, tuple]] = {}
+    origin = time.monotonic()
+    results: dict[str, tuple[int, dict, list[tuple[float, bytes]]]] = {}
 
     def drive(tag: str) -> None:
-        started = time.monotonic()
-        response = http_stream_request(
-            "GET", f"{base}/stream?tag={tag}&ticks={WEB_FUNCTION_TICKS}", timeout=60
+        status, _, headers, chunks = http_stream_request(
+            "GET",
+            f"{base}/stream?tag={tag}&ticks={WEB_FUNCTION_TICKS}",
+            timeout=60,
+            origin=origin,
         )
-        results[tag] = (started, time.monotonic(), response)
+        results[tag] = (status, headers, chunks)
 
     threads = [threading.Thread(target=drive, args=(tag,), daemon=True) for tag in tags]
     for thread in threads:
@@ -1541,7 +1564,7 @@ def _assert_web_function_overlap(base: str) -> str:
         raise HarnessFailure("both overlapping streams did not answer")
 
     for tag in tags:
-        _, _, (status, _, headers, chunks) = results[tag]
+        status, headers, chunks = results[tag]
         if status != 200:
             raise HarnessFailure(f"the {tag} stream answered {status}, not 200")
         if headers.get("content-type") != "text/event-stream":
@@ -1558,15 +1581,33 @@ def _assert_web_function_overlap(base: str) -> str:
                 f"the {tag} stream carried {foreign}, so one request read another's state"
             )
 
-    (first_start, first_end, _), (second_start, second_end, _) = (results[tag] for tag in tags)
-    overlap_seconds = min(first_end, second_end) - max(first_start, second_start)
-    if overlap_seconds <= 0:
-        raise HarnessFailure("the two streams did not overlap, so isolation was not exercised")
+    first = {tag: first_chunk_seconds(results[tag][2]) for tag in tags}
+    last = {tag: results[tag][2][-1][0] for tag in tags}
+
+    # Concurrent delivery: each stream has to have delivered chunks while the other one was still
+    # open. Counting the chunks that arrived before the other stream's last chunk is what separates
+    # an interleaved pair of responses from one response delivered after the other had finished.
+    delivered: dict[str, int] = {}
+    for tag, other in (tags, tags[::-1]):
+        delivered[tag] = sum(1 for at, _ in results[tag][2] if at < last[other])
+        if delivered[tag] < WEB_FUNCTION_INTERLEAVED_CHUNKS:
+            raise HarnessFailure(
+                f"the {tag} stream delivered {delivered[tag]} chunk(s) before the {other} stream "
+                f"finished at {last[other]:.3f}s (its own first chunk arrived at {first[tag]:.3f}s), "
+                "so the two responses were not delivered concurrently"
+            )
+
+    overlap_seconds = min(last.values()) - max(first.values())
     if overlap_seconds < (WEB_FUNCTION_TICKS - 1) * WEB_FUNCTION_TICK_SECONDS:
         raise HarnessFailure(
-            f"the two streams overlapped for only {overlap_seconds:.3f}s, so they were mostly serial"
+            f"the two streams were delivered concurrently for only {overlap_seconds:.3f}s, "
+            "so they were mostly serial"
         )
-    return f"2 streams overlapped {overlap_seconds:.2f}s, each saw only its own tag"
+    return (
+        f"2 streams overlapped {overlap_seconds:.2f}s of delivery, "
+        f"{delivered['first']} + {delivered['second']} chunks interleaved before either finished, "
+        "each saw only its own tag"
+    )
 
 
 # --- local runner -----------------------------------------------------------

@@ -142,8 +142,9 @@ Expected output:
 ```text
   PASS  example ports are free (http 8151, aux 8152)
   [ 1/1] examples/cdk/web-function/app/server.mjs   L2  PASS  page 200 text/html, health 200,
-         unknown route 404; 3 events over 0.37s, first at 0.00s, chunked; 2 streams overlapped 0.49s,
-         each saw only its own tag
+         unknown route 404; 3 events over 0.37s, first at 0.00s, chunked; 2 streams overlapped
+         0.49s of delivery, 4 + 5 chunks interleaved before either finished, each saw only its
+         own tag
 
 counts: 1 passed, 0 failed, 0 pending-milestone
 RESULT: PASS
@@ -157,8 +158,22 @@ curl -sS -D- http://127.0.0.1:3000/          # text/html page
 curl -sS -N http://127.0.0.1:3000/stream     # chunked events, one every 120 ms
 ```
 
-The row asserts status codes, headers, incremental delivery (the first of three events arrives 0.24 s before the last,
-with no `content-length` to buffer it), and isolation between two overlapping requests in one environment.
+The row asserts status codes, headers, incremental delivery (the first of three events arrives as soon as the
+response opens and the last about 0.37 s later, with no `content-length` to buffer it), and isolation between two
+concurrent requests in one environment.
+
+Isolation is measured on delivery, not on the calls. Every chunk carries the instant it arrived, on one clock shared
+by both streams, so a server that answers the second request only after the first stream has finished does not pass
+for overlapping: the row fails unless each response delivered chunks while the other one was still open. The exact
+interleave counts move with scheduling; what it requires is at least two chunks from each stream before the other
+finishes. `scripts/local/test_examples_local.py` runs that assertion against three loopback control servers on every
+`make examples-local`: an interleaved one, which must pass, a serial one, and one that keeps the request tag in
+module state. The serial control fails the row with
+
+```text
+the first stream delivered 0 chunk(s) before the second stream finished at 0.515s (its own first chunk
+arrived at 0.515s), so the two responses were not delivered concurrently
+```
 
 ## Proof boundary
 
