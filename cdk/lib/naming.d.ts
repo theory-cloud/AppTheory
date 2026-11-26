@@ -307,6 +307,13 @@ export declare class AppTheoryResourceNaming {
     private constructor();
     /**
      * Validate the bound context grammar. Throws on an invalid context.
+     *
+     * The naming profile and the context's own generated entries are properties of
+     * the context, so a namespaced context that carries either is refused here —
+     * when the context is validated, at construction — and not only as a side
+     * effect of composing a physical name (contract sections 1 and 4, r5;
+     * SAN-AT-N5-01). A hosted context that declares nothing yet would otherwise
+     * stand as a valid context whose every future name could carry no namespace.
      */
     static validateContext(values: AppTheoryNamingContextValues): void;
     /**
@@ -332,6 +339,10 @@ export declare class AppTheoryResourceNaming {
     static logSourcePrefix(values: AppTheoryNamingContextValues): string;
     /**
      * Map a logical log source to its physical log-group name.
+     *
+     * The context is validated first, so resolving one log-source name is enough
+     * to refuse a context that breaks a rule: a forbidden naming profile must not
+     * survive on the log-only path (contract sections 1 and 4, r5; SAN-AT-N5-01).
      */
     static logGroupName(values: AppTheoryNamingContextValues, logical: string): string;
     /**

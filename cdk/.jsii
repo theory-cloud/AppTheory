@@ -29252,7 +29252,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 604
+        "line": 614
       },
       "methods": [
         {
@@ -29262,7 +29262,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 974
+            "line": 1002
           },
           "name": "compileVisibilityPolicyJson",
           "parameters": [
@@ -29292,7 +29292,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 903
+            "line": 931
           },
           "name": "derivedNamesJson",
           "parameters": [
@@ -29317,7 +29317,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 1056
+            "line": 1084
           },
           "name": "keeperDecision",
           "parameters": [
@@ -29349,11 +29349,12 @@
         },
         {
           "docs": {
+            "remarks": "The context is validated first, so resolving one log-source name is enough\nto refuse a context that breaks a rule: a forbidden naming profile must not\nsurvive on the log-only path (contract sections 1 and 4, r5; SAN-AT-N5-01).",
             "summary": "Map a logical log source to its physical log-group name."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 667
+            "line": 694
           },
           "name": "logGroupName",
           "parameters": [
@@ -29383,7 +29384,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 660
+            "line": 683
           },
           "name": "logSourcePrefix",
           "parameters": [
@@ -29407,7 +29408,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 1044
+            "line": 1072
           },
           "name": "manifestJson",
           "parameters": [
@@ -29431,7 +29432,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 646
+            "line": 669
           },
           "name": "namespaced",
           "parameters": [
@@ -29455,7 +29456,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 771
+            "line": 799
           },
           "name": "namingScope",
           "parameters": [
@@ -29480,7 +29481,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 685
+            "line": 713
           },
           "name": "physicalName",
           "parameters": [
@@ -29516,7 +29517,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 965
+            "line": 993
           },
           "name": "ruleVersion",
           "parameters": [
@@ -29540,7 +29541,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 653
+            "line": 676
           },
           "name": "s3AccountRegionalSuffix",
           "parameters": [
@@ -29565,7 +29566,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 948
+            "line": 976
           },
           "name": "selectorMatches",
           "parameters": [
@@ -29595,7 +29596,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 956
+            "line": 984
           },
           "name": "sourceVisible",
           "parameters": [
@@ -29626,7 +29627,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 875
+            "line": 903
           },
           "name": "synthCheck",
           "parameters": [
@@ -29656,12 +29657,12 @@
         },
         {
           "docs": {
-            "remarks": "Throws on an invalid context.",
-            "summary": "Validate the bound context grammar."
+            "remarks": "The naming profile and the context's own generated entries are properties of\nthe context, so a namespaced context that carries either is refused here —\nwhen the context is validated, at construction — and not only as a side\neffect of composing a physical name (contract sections 1 and 4, r5;\nSAN-AT-N5-01). A hosted context that declares nothing yet would otherwise\nstand as a valid context whose every future name could carry no namespace.",
+            "summary": "Validate the bound context grammar. Throws on an invalid context."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 610
+            "line": 627
           },
           "name": "validateContext",
           "parameters": [
@@ -29681,7 +29682,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 637
+            "line": 660
           },
           "name": "validateHostedNamespace",
           "parameters": [
@@ -29701,7 +29702,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 800
+            "line": 828
           },
           "name": "validatePhysicalName",
           "parameters": [
@@ -29727,7 +29728,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 936
+            "line": 964
           },
           "name": "validateSelector",
           "parameters": [
@@ -29746,7 +29747,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 1032
+            "line": 1060
           },
           "name": "visibilityManifest",
           "parameters": [
@@ -29787,7 +29788,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 1012
+            "line": 1040
           },
           "name": "visibilityPreview",
           "parameters": [
@@ -35407,5 +35408,5 @@
     }
   },
   "version": "7.5.0",
-  "fingerprint": "Hg3K2TC+rAKr+ka6XMypUJjPSkZm/7LK53LhGkqTZvI="
+  "fingerprint": "UyAAp6shsAABfCm0OPxYZbQZbrROhbglOqVFymT4lC8="
 }

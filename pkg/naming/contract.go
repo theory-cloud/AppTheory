@@ -30,6 +30,13 @@ const RolePolicyMax = 10240
 // (contract section 1, r5 rev1).
 const HostedNamespaceMax = 12
 
+// errHostedProfile is the refusal contract sections 1 and 4 state for the two
+// live-compatibility naming tools on a namespaced context: a deployment whose
+// names carry the tenant namespace takes neither the legacy profile nor a
+// generated entry, because either would produce a name with no namespace and
+// collide across tenants in a pooled account.
+const errHostedProfile = "a hosted deployment takes no legacy profile or generated entries"
+
 const (
 	segmentPattern = `[a-z0-9]+(?:-[a-z0-9]+)*`
 	stripSet       = "-_./"
@@ -175,7 +182,15 @@ func ValidateContext(ctx Context) error {
 	if ctx.Hosted && ns == LogPrefix {
 		return errors.New("namespace " + LogPrefix + " is reserved for first-party platform apps")
 	}
-	return ValidateHostedNamespace(ns)
+	if err := ValidateHostedNamespace(ns); err != nil {
+		return err
+	}
+	// r5 section 4: the naming profile is a property of the context, so a
+	// forbidden one is refused here — when the context is established or
+	// resolved — and not only as a side effect of composing a physical name. A
+	// hosted context that names nothing yet would otherwise stand as a valid
+	// context whose every future name could carry no namespace (SAN-AT-N5-01).
+	return checkHostedProfile(ctx)
 }
 
 // ValidateHostedNamespace applies the hosted namespace label rule (contract
@@ -273,7 +288,15 @@ func LogSourcePrefix(ctx Context) string {
 }
 
 // LogGroupName maps a logical log source to its physical log-group name.
+//
+// The context is validated first, so a context that breaks a rule is refused
+// here as well: resolving one log-source name is enough to establish the
+// context's naming, and a forbidden naming profile must not survive on the
+// log-only path (SAN-AT-N5-01).
 func LogGroupName(ctx Context, logical string) (string, error) {
+	if err := ValidateContext(ctx); err != nil {
+		return "", err
+	}
 	if !strings.HasPrefix(logical, "logs/") {
 		return "", errors.New("log logical must start with logs/")
 	}
@@ -366,6 +389,23 @@ func resolveEntry(ctx Context, resourceType, logical string, rule ResourceRule, 
 	return ComposedName{}, false, nil
 }
 
+// checkHostedProfile refuses the legacy naming profile on a namespaced context
+// when the context itself is validated (contract sections 1 and 4, r5).
+//
+// The legacy profile is a first-party live-compatibility tool: under it every
+// name comes from a pin or from CloudFormation, so nothing carries the tenant
+// namespace and hosted names would collide in a pooled account. The rule is a
+// property of the context, not of one composed name, so it fires even when the
+// caller composes no name at all (SAN-AT-N5-01). Generated entries are a
+// call-level input rather than a context field in this package, so they stay
+// with checkEntryProfile.
+func checkHostedProfile(ctx Context) error {
+	if namespaced(ctx) && ctx.NamingProfile == NamingProfileLegacy {
+		return errors.New(errHostedProfile)
+	}
+	return nil
+}
+
 // checkEntryProfile applies the naming-profile rules that decide whether a
 // stage config may carry entries at all.
 //
@@ -375,7 +415,7 @@ func resolveEntry(ctx Context, resourceType, logical string, rule ResourceRule, 
 // across tenants in a pooled account.
 func checkEntryProfile(ctx Context, legacy bool, generated []string) error {
 	if namespaced(ctx) && (legacy || len(generated) > 0) {
-		return errors.New("a hosted deployment takes no legacy profile or generated entries")
+		return errors.New(errHostedProfile)
 	}
 	if len(generated) > 0 && !legacy {
 		return errors.New("generated entries are only valid under the legacy naming profile")

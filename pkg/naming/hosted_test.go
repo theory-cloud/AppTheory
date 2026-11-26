@@ -424,3 +424,71 @@ func TestHostedContextDecodes(t *testing.T) {
 		}
 	}
 }
+
+// Scenario 3b (SAN-AT-N5-01): the legacy profile is a property of the context,
+// so a hosted context is refused when the context is validated — with no naming
+// declarations at all, and with only a log-source name — not only when a
+// construct composes a physical name. The refusal names the hosted reason, and
+// the two accepting controls stay as they were.
+func TestHostedScenario3bProfileRefusedWithoutAComposedName(t *testing.T) {
+	const want = "a hosted deployment takes no legacy profile or generated entries"
+	legacy := hostedContext("acme")
+	legacy.NamingProfile = NamingProfileLegacy
+
+	// No declarations: the context is the only naming input, and it is refused.
+	if err := ValidateContext(legacy); err == nil || err.Error() != want {
+		t.Fatalf("no declarations: want %q, got %v", want, err)
+	}
+
+	// A log-only declaration: the log-source path refuses too, so a context the
+	// profile rule rejects cannot produce a name there either.
+	if name, err := LogGroupName(legacy, "logs/runtime/api"); err == nil || err.Error() != want {
+		t.Fatalf("log-only declaration: want %q, got %q / %v", want, name, err)
+	}
+
+	// A composed name keeps refusing, on the same reason.
+	if _, err := PhysicalName(legacy, "dynamodb_table", "events", map[string]string{
+		"dynamodb_table:events": "acme-shop-lab-events",
+	}, nil); err == nil || err.Error() != want {
+		t.Fatalf("composed name: want %q, got %v", want, err)
+	}
+
+	// Control: the valid derived hosted context still validates, still resolves a
+	// log source, and still composes the hosted name.
+	derived := hostedContext("acme")
+	if err := ValidateContext(derived); err != nil {
+		t.Fatalf("derived hosted context: %v", err)
+	}
+	logName, err := LogGroupName(derived, "logs/runtime/api")
+	if err != nil {
+		t.Fatalf("derived hosted log source: %v", err)
+	}
+	if logName != "theorycloud_acme_shop_lab_logs_runtime_api" {
+		t.Fatalf("derived hosted log source: %q", logName)
+	}
+	if name, err := PhysicalName(derived, "lambda_function", "worker", nil, nil); err != nil {
+		t.Fatalf("derived hosted name: %v", err)
+	} else if name.Name != "acme-shop-lab-worker" {
+		t.Fatalf("derived hosted name: %+v", name)
+	}
+
+	// Control: the platform app keeps the legacy profile, exactly as r4 allowed
+	// (contract section 4), so the platform path is not narrowed.
+	platform := labContext()
+	platform.NamingProfile = NamingProfileLegacy
+	if err := ValidateContext(platform); err != nil {
+		t.Fatalf("platform legacy context: %v", err)
+	}
+	if name, err := PhysicalName(platform, "dynamodb_table", "events", map[string]string{
+		"dynamodb_table:events": "autheory-lab-events",
+	}, nil); err != nil {
+		t.Fatalf("platform legacy name: %v", err)
+	} else if name.Name != "autheory-lab-events" {
+		t.Fatalf("platform legacy name: %+v", name)
+	}
+	if name, err := LogGroupName(platform, "logs/runtime/api"); err != nil {
+		t.Fatalf("platform log source: %v", err)
+	} else if name != "theorycloud_theorycloud_autheory_lab_logs_runtime_api" {
+		t.Fatalf("platform log source: %q", name)
+	}
+}

@@ -142,7 +142,14 @@ export declare function shortenResourceName(full: string, limit: number): string
 export declare function s3AccountRegionalSuffix(context: NamingContext): string;
 /** The bound prefix shared by every log source of the app. */
 export declare function logSourcePrefix(context: NamingContext): string;
-/** Map a logical log source to its physical log-group name. */
+/**
+ * Map a logical log source to its physical log-group name.
+ *
+ * The context is validated first, so a context that breaks a rule is refused
+ * here as well: resolving one log-source name is enough to establish the
+ * context's naming, and a forbidden naming profile must not survive on the
+ * log-only path (SAN-AT-N5-01).
+ */
 export declare function logGroupName(context: NamingContext, logical: string): string;
 /**
  * Compose the physical name of one resource. Pins are returned verbatim.

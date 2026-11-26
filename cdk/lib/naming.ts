@@ -500,6 +500,16 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+/**
+ * The refusal contract sections 1 and 4 state for the two live-compatibility
+ * naming tools on a namespaced context: a deployment whose names carry the
+ * tenant namespace takes neither the legacy profile nor a generated entry,
+ * because either would produce a name with no namespace and collide across
+ * tenants in a pooled account.
+ */
+const HOSTED_PROFILE_FAILURE =
+  "a hosted deployment takes no legacy profile or generated entries";
+
 function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -606,6 +616,13 @@ export class AppTheoryResourceNaming {
 
   /**
    * Validate the bound context grammar. Throws on an invalid context.
+   *
+   * The naming profile and the context's own generated entries are properties of
+   * the context, so a namespaced context that carries either is refused here —
+   * when the context is validated, at construction — and not only as a side
+   * effect of composing a physical name (contract sections 1 and 4, r5;
+   * SAN-AT-N5-01). A hosted context that declares nothing yet would otherwise
+   * stand as a valid context whose every future name could carry no namespace.
    */
   public static validateContext(values: AppTheoryNamingContextValues): void {
     if (!APP_RE.test(values.app)) fail("app");
@@ -626,6 +643,12 @@ export class AppTheoryResourceNaming {
       fail(`namespace ${LOG_PREFIX} is reserved for first-party platform apps`);
     }
     validateHostedNamespace(namespace);
+    if (namespaced(values)) {
+      const legacy = (values.namingProfile ?? AppTheoryNamingProfile.DERIVED) === AppTheoryNamingProfile.LEGACY;
+      if (legacy || (values.generated ?? []).length > 0) {
+        fail(HOSTED_PROFILE_FAILURE);
+      }
+    }
   }
 
   /**
@@ -663,8 +686,13 @@ export class AppTheoryResourceNaming {
 
   /**
    * Map a logical log source to its physical log-group name.
+   *
+   * The context is validated first, so resolving one log-source name is enough
+   * to refuse a context that breaks a rule: a forbidden naming profile must not
+   * survive on the log-only path (contract sections 1 and 4, r5; SAN-AT-N5-01).
    */
   public static logGroupName(values: AppTheoryNamingContextValues, logical: string): string {
+    AppTheoryResourceNaming.validateContext(values);
     if (!logical.startsWith("logs/")) fail("log logical must start with logs/");
     return logPrefix(values) + logical.replace(/\//g, "_");
   }
@@ -698,7 +726,7 @@ export class AppTheoryResourceNaming {
     // pinned or CloudFormation-generated name carries no namespace and would
     // collide across tenants in a pooled account.
     if (namespaced(values) && (legacy || generated.length > 0)) {
-      fail("a hosted deployment takes no legacy profile or generated entries");
+      fail(HOSTED_PROFILE_FAILURE);
     }
     if (generated.length > 0 && !legacy) {
       fail("generated entries are only valid under the legacy naming profile");

@@ -2925,6 +2925,114 @@ test("N5-3: every broken hosted context fails synthesis, naming its reason", () 
   ]);
 });
 
+// SAN-AT-N5-01: the naming-profile rule is a property of the context, so a
+// hosted context that carries a forbidden profile is refused when the context is
+// created — with no naming declarations at all, and with only a log-source name —
+// and not only when a construct composes a physical name. The gate's
+// reproduction is the regression: a stack whose template holds an ordinary
+// resource, `hosted: true`, namespace `acme` and the legacy profile synthesized
+// before this test existed.
+function synthOrRefuse(build, env = LAB_ENV) {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack", { env });
+  try {
+    build(stack);
+  } catch (error) {
+    // A refused context never reaches synthesis, so it emits no artifact at all.
+    return { error, documents: [] };
+  }
+  const artifact = app.synth().getStackByName("Stack");
+  const documents = [];
+  for (const entries of Object.values(artifact.metadata ?? {})) {
+    for (const entry of entries) {
+      if (entry.type === DERIVED_NAMES_KEY) documents.push(entry.data);
+    }
+  }
+  return { error: undefined, documents };
+}
+
+test("N5-3b: a forbidden profile is refused at the context, not at the first composed name", () => {
+  const want = /a hosted deployment takes no legacy profile or generated entries/;
+  const legacy = { namingProfile: apptheory.AppTheoryNamingProfile.LEGACY };
+
+  const cases = [
+    // No naming declarations: an ordinary resource is the whole stack.
+    [
+      "no declarations",
+      (stack) => {
+        hostedContext(stack, "Naming", legacy);
+        new cdk.aws_sqs.Queue(stack, "Work");
+      },
+    ],
+    // A log-only declaration through the context's own log-source API.
+    [
+      "log-only declaration",
+      (stack) => {
+        const context = hostedContext(stack, "Naming", legacy);
+        const logs = new cdk.aws_logs.LogGroup(stack, "Logs", {
+          logGroupName: context.logGroupName("logs/runtime/api"),
+        });
+        context.declareName("log_group", "logs/runtime/api", logs);
+      },
+    ],
+    // A composed name keeps refusing on the same reason.
+    [
+      "composed name",
+      (stack) => {
+        const context = hostedContext(stack, "Naming", {
+          ...legacy,
+          pins: { "lambda_function:worker": "acme-shop-lab-worker" },
+        });
+        shopFunction(stack, "Worker", "worker", context);
+      },
+    ],
+  ];
+  for (const [name, build] of cases) {
+    const refused = synthOrRefuse(build);
+    assert.match(refused.error?.message ?? "", want, name);
+    assert.deepEqual(refused.documents, [], `${name} must emit no artifact`);
+  }
+
+  // Control: the valid derived hosted context still synthesizes, and its
+  // artifact still carries the hosted name.
+  const derived = synthOrRefuse((stack) => {
+    const context = hostedContext(stack, "Naming");
+    shopFunction(stack, "Worker", "worker", context);
+  });
+  assert.equal(derived.error, undefined);
+  assert.deepEqual(
+    derived.documents[0].entries.map((entry) => [entry.type, entry.name]),
+    [
+      ["iam_role", "acme-shop-lab-worker"],
+      ["lambda_function", "acme-shop-lab-worker"],
+      ["log_group", "/aws/lambda/acme-shop-lab-worker"],
+    ],
+  );
+
+  // Control: a platform app keeps the legacy profile, exactly as r4 allowed, so
+  // the platform path is not narrowed.
+  const platform = synthOrRefuse((stack) => {
+    const context = shopContext(stack, "Naming", {
+      ...legacy,
+      pins: {
+        "lambda_function:worker": "shop-lab-worker",
+        "iam_role:worker": "shop-lab-worker-role",
+      },
+    });
+    shopFunction(stack, "Worker", "worker", context);
+  });
+  assert.equal(platform.error, undefined);
+  assert.deepEqual(
+    platform.documents[0].entries.map((entry) => [entry.type, entry.name]),
+    [
+      ["iam_role", "shop-lab-worker-role"],
+      ["lambda_function", "shop-lab-worker"],
+      // The Lambda service log group keeps its fixed contract name.
+      ["log_group", "/aws/lambda/shop-lab-worker"],
+    ],
+  );
+});
+
 test("N5-4: two hosted namespaces in one account synthesize distinct names", () => {
   const buildFor = (namespace) => (stack) => {
     const context = hostedContext(stack, "Naming", { namespace });

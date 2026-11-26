@@ -113,6 +113,13 @@ KEEPER_EVENTS = "events"
 KEEPER_ALLOWED_NO_EVENTS = "allowed_no_events"
 KEEPER_NOT_SHARED = "not_shared"
 
+# The refusal contract sections 1 and 4 state for the two live-compatibility
+# naming tools on a namespaced context: a deployment whose names carry the tenant
+# namespace takes neither the legacy profile nor a generated entry, because
+# either would produce a name with no namespace and collide across tenants in a
+# pooled account.
+_HOSTED_PROFILE_FAILURE = "a hosted deployment takes no legacy profile or generated entries"
+
 
 def validate_naming_context(context: dict[str, Any]) -> None:
     """Enforce the bound-context grammar (contract section 1)."""
@@ -137,6 +144,16 @@ def validate_naming_context(context: dict[str, Any]) -> None:
     if context.get("hosted") and namespace == LOG_SOURCE_PREFIX:
         raise ValueError(f"namespace {LOG_SOURCE_PREFIX} is reserved for first-party platform apps")
     validate_hosted_namespace(namespace)
+    # r5 section 4: the naming profile and the context's own generated entries are
+    # properties of the context, so a forbidden one is refused here -- when the
+    # context is validated -- and not only as a side effect of composing a
+    # physical name. A hosted context that names nothing yet would otherwise stand
+    # as a valid context whose every future name could carry no namespace
+    # (SAN-AT-N5-01).
+    if namespaced_context(context):
+        legacy = context.get("naming_profile", "derived") == "legacy"
+        if legacy or context.get("generated"):
+            raise ValueError(_HOSTED_PROFILE_FAILURE)
 
 
 def validate_hosted_namespace(namespace: str) -> None:
@@ -222,7 +239,14 @@ def log_source_prefix(context: dict[str, Any]) -> str:
 
 
 def log_group_name(context: dict[str, Any], logical: str) -> str:
-    """Map a logical log source to its physical log-group name."""
+    """Map a logical log source to its physical log-group name.
+
+    The context is validated first, so a context that breaks a rule is refused
+    here as well: resolving one log-source name is enough to establish the
+    context's naming, and a forbidden naming profile must not survive on the
+    log-only path (SAN-AT-N5-01).
+    """
+    validate_naming_context(context)
     if not logical.startswith("logs/"):
         raise ValueError("log logical must start with logs/")
     return log_source_prefix(context) + logical.replace("/", "_")
@@ -259,7 +283,7 @@ def physical_resource_name(
     # pinned or CloudFormation-generated name carries no namespace and would
     # collide across tenants in a pooled account.
     if namespaced_context(context) and (legacy or generated):
-        raise ValueError("a hosted deployment takes no legacy profile or generated entries")
+        raise ValueError(_HOSTED_PROFILE_FAILURE)
     if generated and not legacy:
         raise ValueError("generated entries are only valid under the legacy naming profile")
     key = f"{resource_type}:{logical}"

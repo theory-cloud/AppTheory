@@ -492,6 +492,53 @@ class HostedNamingTests(unittest.TestCase):
                 {"log_group:logs/runtime/api": "/aws/lambda/acme-shop-lab-worker"},
             )
 
+    def test_scenario_3b_forbidden_profile_refused_without_a_composed_name(self) -> None:
+        """SAN-AT-N5-01: the legacy profile is refused at the context.
+
+        The legacy profile is a property of the context, so a hosted context is
+        refused when the context is validated -- with no naming declarations at
+        all, and with only a log-source name -- not only when a construct
+        composes a physical name.
+        """
+        want = "a hosted deployment takes no legacy profile or generated entries"
+        legacy = hosted_context(naming_profile="legacy")
+
+        # No declarations: the context is the only naming input, and it is refused.
+        with self.assertRaisesRegex(ValueError, want):
+            validate_naming_context(legacy)
+
+        # A log-only declaration: the log-source path refuses too.
+        with self.assertRaisesRegex(ValueError, want):
+            log_group_name(legacy, "logs/runtime/api")
+
+        # A composed name keeps refusing, on the same reason.
+        with self.assertRaisesRegex(ValueError, want):
+            physical_resource_name(
+                legacy, "dynamodb_table", "events", {"dynamodb_table:events": "acme-shop-lab-events"}
+            )
+
+        # A generated entry declared on the context is a context property too.
+        with self.assertRaisesRegex(ValueError, want):
+            validate_naming_context(hosted_context(generated=["dynamodb_table:events"]))
+
+        # Control: the valid derived hosted context still validates, still
+        # resolves a log source, and still composes the hosted name.
+        derived = hosted_context()
+        validate_naming_context(derived)
+        self.assertEqual(log_group_name(derived, "logs/runtime/api"), "theorycloud_acme_shop_lab_logs_runtime_api")
+        self.assertEqual(
+            physical_resource_name(derived, "lambda_function", "worker"), {"name": "acme-shop-lab-worker"}
+        )
+
+        # Control: the platform app keeps the legacy profile, exactly as r4
+        # allowed, so the platform path is not narrowed.
+        platform = lab_context(naming_profile="legacy")
+        validate_naming_context(platform)
+        self.assertEqual(
+            physical_resource_name(platform, "dynamodb_table", "events", {"dynamodb_table:events": "autheory-lab-events"}),
+            {"name": "autheory-lab-events", "pinned": True},
+        )
+
     def test_scenario_4_two_namespaces_stay_distinct(self) -> None:
         acme = physical_resource_name(hosted_context(), "lambda_function", "worker")
         globex = physical_resource_name(hosted_context(namespace="globex"), "lambda_function", "worker")

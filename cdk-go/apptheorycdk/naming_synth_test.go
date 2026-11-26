@@ -422,3 +422,88 @@ func TestNamingContextBindingHostedRefusals(t *testing.T) {
 		})
 	}
 }
+
+// SAN-AT-N5-01: the naming profile is a property of the context, so a hosted
+// context that carries the legacy profile is refused when the context is created
+// — with no naming declarations at all, and with only a log-source name — not
+// only when a construct composes a physical name. A refused context emits no
+// artifact, and the derived hosted control still synthesizes.
+func TestNamingContextBindingRefusesHostedLegacyProfileWithoutAComposedName(t *testing.T) {
+	const want = "a hosted deployment takes no legacy profile or generated entries"
+	hostedLegacyProps := func() *AppTheoryNamingContextProps {
+		return &AppTheoryNamingContextProps{
+			Namespace:     jsii.String("acme"),
+			Hosted:        jsii.Bool(true),
+			App:           jsii.String("shop"),
+			Stage:         jsii.String("lab"),
+			Account:       jsii.String("998115851393"),
+			Region:        jsii.String("us-east-1"),
+			NamingProfile: AppTheoryNamingProfile_LEGACY,
+		}
+	}
+
+	cases := map[string]func(stack awscdk.Stack){
+		// No declarations: the context is the only naming input.
+		"no declarations": func(stack awscdk.Stack) {
+			NewAppTheoryNamingContext(stack, jsii.String("Naming"), hostedLegacyProps())
+		},
+		// A log-only declaration through the context's own log-source API.
+		"log-only declaration": func(stack awscdk.Stack) {
+			context := NewAppTheoryNamingContext(stack, jsii.String("Naming"), hostedLegacyProps())
+			context.LogGroupName(jsii.String("logs/runtime/api"))
+		},
+	}
+	for name, build := range cases {
+		t.Run(name, func(t *testing.T) {
+			outdir, synthErr := synthNamingApp(t, build)
+			if synthErr == nil {
+				t.Fatalf("%s: a hosted legacy context must fail synthesis", name)
+			}
+			if !strings.Contains(synthErr.Error(), want) {
+				t.Fatalf("%s: refusal %q does not name the hosted reason", name, synthErr.Error())
+			}
+			// A refused context never reaches synthesis, so it leaves no assembly
+			// and no artifact behind.
+			metadataPath := filepath.Join(outdir, "Stack.metadata.json")
+			if _, statErr := os.Stat(metadataPath); statErr == nil {
+				if documents := artifactDocuments(t, metadataPath); len(documents) != 0 {
+					t.Fatalf("%s: a refused context must emit no artifact, got %v", name, documents)
+				}
+			} else if !os.IsNotExist(statErr) {
+				t.Fatalf("%s: %v", name, statErr)
+			}
+		})
+	}
+
+	// Control: the valid derived hosted context still synthesizes, and its
+	// artifact records the tenant namespace and the hosted names.
+	outdir, synthErr := synthNamingApp(t, func(stack awscdk.Stack) {
+		context := NewAppTheoryNamingContext(stack, jsii.String("Naming"), &AppTheoryNamingContextProps{
+			Namespace: jsii.String("acme"),
+			Hosted:    jsii.Bool(true),
+			App:       jsii.String("shop"),
+			Stage:     jsii.String("lab"),
+			Account:   jsii.String("998115851393"),
+			Region:    jsii.String("us-east-1"),
+		})
+		namingTestFunction(stack, "Worker", "worker", context)
+	})
+	if synthErr != nil {
+		t.Fatalf("derived hosted context: %v", synthErr)
+	}
+	documents := artifactDocuments(t, filepath.Join(outdir, "Stack.metadata.json"))
+	if len(documents) != 1 {
+		t.Fatalf("derived hosted context: want one artifact, got %d", len(documents))
+	}
+	context, ok := documents[0]["context"].(map[string]any)
+	if !ok || context["namespace"] != "acme" {
+		t.Fatalf("derived hosted context: artifact namespace = %v", documents[0]["context"])
+	}
+	names := map[string]string{}
+	for _, row := range artifactRows(t, documents[0]) {
+		names[row["type"].(string)] = row["name"].(string)
+	}
+	if names["lambda_function"] != "acme-shop-lab-worker" {
+		t.Fatalf("derived hosted lambda name = %q", names["lambda_function"])
+	}
+}

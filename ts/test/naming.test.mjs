@@ -466,6 +466,66 @@ test("hosted scenario 3: every broken hosted context is refused at synth", () =>
   );
 });
 
+// SAN-AT-N5-01: the legacy profile is a property of the context, so a hosted
+// context is refused when the context is validated — with no naming declarations
+// at all, and with only a log-source name — not only when a construct composes a
+// physical name.
+test("hosted scenario 3b: a forbidden profile is refused without a composed name", () => {
+  const want = "a hosted deployment takes no legacy profile or generated entries";
+  const legacy = hostedContext({ naming_profile: "legacy" });
+  const same = (error) => error.message === want;
+
+  // No declarations: the context is the only naming input, and it is refused.
+  assert.throws(() => validateNamingContext(legacy), same, "no declarations");
+
+  // A log-only declaration: the log-source path refuses too.
+  assert.throws(
+    () => logGroupName(legacy, "logs/runtime/api"),
+    same,
+    "log-only declaration",
+  );
+
+  // A composed name keeps refusing, on the same reason.
+  assert.throws(
+    () =>
+      physicalResourceName(
+        legacy,
+        "dynamodb_table",
+        "events",
+        { "dynamodb_table:events": "acme-shop-lab-events" },
+        [],
+      ),
+    same,
+    "composed name",
+  );
+
+  // A generated entry declared on the context is a context property too, so it
+  // is refused at the context rather than only where a name is composed.
+  assert.throws(
+    () => validateNamingContext(hostedContext({ naming_profile: "derived", generated: ["dynamodb_table:events"] })),
+    same,
+    "generated entry on the context",
+  );
+
+  // Control: the valid derived hosted context still validates, still resolves a
+  // log source, and still composes the hosted name.
+  const derived = hostedContext();
+  assert.doesNotThrow(() => validateNamingContext(derived));
+  assert.equal(logGroupName(derived, "logs/runtime/api"), "theorycloud_acme_shop_lab_logs_runtime_api");
+  assert.deepEqual(physicalResourceName(derived, "lambda_function", "worker", {}, []), {
+    name: "acme-shop-lab-worker",
+  });
+
+  // Control: the platform app keeps the legacy profile, exactly as r4 allowed, so
+  // the platform path is not narrowed.
+  const platform = labContext({ naming_profile: "legacy" });
+  assert.doesNotThrow(() => validateNamingContext(platform));
+  assert.deepEqual(
+    physicalResourceName(platform, "dynamodb_table", "events", { "dynamodb_table:events": "autheory-lab-events" }, []),
+    { name: "autheory-lab-events", pinned: true },
+  );
+});
+
 test("hosted scenario 4: two namespaces in one account stay distinct", () => {
   const acme = physicalResourceName(hostedContext(), "lambda_function", "worker", {}, []);
   const globex = physicalResourceName(hostedContext({ namespace: "globex" }), "lambda_function", "worker", {}, []);

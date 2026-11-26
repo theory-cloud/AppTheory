@@ -255,6 +255,16 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+/**
+ * The refusal contract sections 1 and 4 state for the two live-compatibility
+ * naming tools on a namespaced context: a deployment whose names carry the
+ * tenant namespace takes neither the legacy profile nor a generated entry,
+ * because either would produce a name with no namespace and collide across
+ * tenants in a pooled account.
+ */
+const HOSTED_PROFILE_FAILURE =
+  "a hosted deployment takes no legacy profile or generated entries";
+
 /** Enforce the bound-context grammar. */
 export function validateNamingContext(context: NamingContext): void {
   if (!APP_RE.test(context.app)) fail("app");
@@ -277,6 +287,18 @@ export function validateNamingContext(context: NamingContext): void {
     );
   }
   validateHostedNamespace(namespace);
+  // r5 section 4: the naming profile and the context's own generated entries are
+  // properties of the context, so a forbidden one is refused here — when the
+  // context is validated — and not only as a side effect of composing a physical
+  // name. A hosted context that names nothing yet would otherwise stand as a
+  // valid context whose every future name could carry no namespace
+  // (SAN-AT-N5-01).
+  if (namespacedContext(context)) {
+    const legacy = (context.naming_profile ?? "derived") === "legacy";
+    if (legacy || (context.generated ?? []).length > 0) {
+      fail(HOSTED_PROFILE_FAILURE);
+    }
+  }
 }
 
 /**
@@ -385,8 +407,16 @@ export function logSourcePrefix(context: NamingContext): string {
   return `${[LOG_SOURCE_PREFIX, context.namespace ?? LOG_SOURCE_PREFIX, context.app, context.stage].join("_")}_`;
 }
 
-/** Map a logical log source to its physical log-group name. */
+/**
+ * Map a logical log source to its physical log-group name.
+ *
+ * The context is validated first, so a context that breaks a rule is refused
+ * here as well: resolving one log-source name is enough to establish the
+ * context's naming, and a forbidden naming profile must not survive on the
+ * log-only path (SAN-AT-N5-01).
+ */
 export function logGroupName(context: NamingContext, logical: string): string {
+  validateNamingContext(context);
   if (!logical.startsWith("logs/")) fail("log logical must start with logs/");
   return logSourcePrefix(context) + logical.replace(/\//g, "_");
 }
@@ -416,7 +446,7 @@ export function physicalResourceName(
   // pinned or CloudFormation-generated name carries no namespace and would
   // collide across tenants in a pooled account.
   if (namespacedContext(context) && (legacy || generated.length > 0)) {
-    fail("a hosted deployment takes no legacy profile or generated entries");
+    fail(HOSTED_PROFILE_FAILURE);
   }
   if (generated.length > 0 && !legacy) {
     fail("generated entries are only valid under the legacy naming profile");
