@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 4.341,
+      "durationSeconds": 4.315,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T15:26:13Z",
+      "finishedAt": "2026-11-26T17:21:55Z",
       "id": "py-build",
-      "inputsDigest": "sha256:5edca2a75ce5f4c8ce5c5a4ec6ea26436010579aa78596859bfbf02ecf52a3e6",
+      "inputsDigest": "sha256:9501bb29fc9b7b25b2da40edf88b6f86d7bed4180e311af5591d99348b260e22",
       "logDigest": "sha256:c0f06a96aecf4c509afd4824e65b849c2664e132b51a2ed5449a79e2c9fdfccc",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T152609Z-63661.log",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T172151Z-64689.log",
       "reused": false,
-      "startedAt": "2026-11-26T15:26:09Z"
+      "startedAt": "2026-11-26T17:21:51Z"
     }
   ],
   "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,7 +36,7 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-26T15:26:13Z",
+  "recordedAt": "2026-11-26T17:21:55Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -46,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:6a154b8fbda10ead368a68a8201af38c08ce5723ba473bab90ed6c2601a34106",
+    "digest": "sha256:d01f78b9b3a0eb0b49ef0af1d5c0a037a47dad2e8f97bdb0a5e7ff2665a6e3b2",
     "fileCount": 134,
     "paths": [
       "py/",
@@ -56,7 +56,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:1d394a20dc16cfd3a9c4306ce19a2703be78d18c41b43b6d7689efbe5053e99c",
+    "digest": "sha256:d4fd0003a4b34fc1d7dd6f3d0fadb6385362ca878cc12179d5e542d3b3790869",
     "fileCount": 2823
   },
   "verdict": "PASS"
