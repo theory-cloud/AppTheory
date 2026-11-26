@@ -81,6 +81,33 @@ bundles one real asset per line through the `apptheory-init` bundlers and loads
 and invokes the handler that landed in the emitted asset directory under the
 matching interpreter.
 
+## Concurrency and the upstream execution model
+
+The support table above states which *lines* AppTheory supports. It does not, and cannot, decide how many requests one
+execution environment serves at once: that is the AWS execution model for the runtime, and it differs per language.
+
+| Runtime | Concurrent requests per execution environment upstream | Source |
+| --- | --- | --- |
+| Go | **One.** Go is absent from the Lambda Managed Instances runtime list and from the Web Function runtime list. | [Lambda Managed Instances runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-runtimes.html) |
+| Node.js | Many: Managed Instances (worker threads, asynchronous) and Web Functions (one event loop, many suspended requests). | Same page, and the Lambda Web Function runtimes page. |
+| Python | Many: Managed Instances runs each concurrent request in a **separate process**. | Same page. |
+
+**Go serves one invocation at a time, and that is an upstream gap, not an AppTheory one.** Lambda Managed Instances
+lists Java, Python, Node.js, .NET and Rust (through the OS-only `provided.al2023` runtime); Go is not among them, and
+the Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. So AppTheory's Go runtime is built for one
+invocation per environment, which is exactly what AWS provides for Go.
+
+AppTheory keeps parity everywhere upstream allows it. Nothing in the Go surface is removed, weakened or marked
+unsupported because Go has no multi-concurrency runtime: the same routes, middleware tiers, error envelope, event
+normalization, constructs, contract fixtures and API snapshots apply, and every contract fixture runs in all three
+runtimes on every commit. Only the *overlap* dimension is unavailable in Go, and it is unavailable upstream. The
+concurrency page states the single recorded consequence (the Go JWKS resolution window) and what changes if AWS adds Go:
+[Multi-concurrency is not available to Go upstream](../features/concurrency.md#multi-concurrency-is-not-available-to-go-upstream).
+
+Working around the gap with a custom runtime is not a direction AppTheory takes: AppTheory deploys managed runtimes
+only, and does not ship or maintain runtime images, container runtimes or custom runtime layers. If AWS adds Go to
+Lambda Managed Instances, AppTheory follows upstream rather than around it.
+
 ## How support is proven
 
 Every line in the table above names a tracked proof profile, and each profile
@@ -106,3 +133,8 @@ not in that matrix, the guard fails the build. The mechanics are documented in
 - Non-Lambda HTTP hosting. AppTheory's runtime contract assumes the Lambda
   execution and concurrency model; there is no Express, Fiber or Flask adapter
   and no plan for one.
+- Multi-concurrent execution in Go. Not offered upstream: Go has neither a Lambda
+  Managed Instances runtime nor a Web Function runtime, so a Go execution
+  environment serves one invocation at a time. Single-concurrency Go features are
+  fully supported; see [Concurrency and the upstream execution
+  model](#concurrency-and-the-upstream-execution-model).

@@ -16,18 +16,28 @@ properties of the context objects and the middleware chain, not of a particular 
 
 A classic Lambda invocation handles one event at a time, so an execution environment can serve a second request only
 after the first returned. An AWS Lambda **Web Function** removes that: one environment serves many requests at once
-(64 concurrently by default, up to 128). The runtime therefore cannot rely on "nothing else is running" for
-correctness, and this page records the invariant that replaces that assumption.
+(64 concurrently by default, up to 128). Lambda **Managed Instances** remove it for event functions: one environment
+processes multiple invocations concurrently instead of sequentially. The runtime therefore cannot rely on "nothing
+else is running" for correctness, and this page records the invariant that replaces that assumption.
+
+**Which runtimes get that overlap upstream** is a fact about AWS, not about AppTheory. Lambda Managed Instances lists
+Java, Python, Node.js, .NET and Rust (through the OS-only `provided.al2023` runtime); Lambda Web Functions offer
+`nodejs24.x`, `nodejs26.x` and `python3.15`. **Go appears in neither list** — see
+[Multi-concurrency is not available to Go upstream](#multi-concurrency-is-not-available-to-go-upstream) for what that
+means here.
 
 | Runtime | Overlap model in one environment | What "concurrent" means |
 |---|---|---|
-| Go | One goroutine per request | Addressed by `context.Context`; Go is out of scope for the Web Function wiring (AWS has no Go Web Function runtime) and unchanged by this note. |
+| Go | None upstream: one invocation at a time per execution environment | Two Go invocations never overlap in one environment, because AWS offers no multi-concurrency runtime for Go. The runtime is written to the single-invocation model and its request state is per call; see [the Go section](#multi-concurrency-is-not-available-to-go-upstream). |
 | TypeScript | One event loop, N suspended `async` handler bodies | Two requests are "concurrent" when both handler bodies are suspended at an `await`. A synchronous stretch is never pre-empted. |
-| Python | Threads, one per request | Two requests are concurrent when two threads run at once. The runtime's entry points are synchronous; the runtime does **not** support asyncio-task concurrency (see [Python specifics](#python-specifics)). |
+| Python | Separate processes, one invocation each | Two Python requests are concurrent when they run in different processes, which share no interpreter memory. One process serves one invocation at a time, so a Python handler is never re-entered: the entry point stays a synchronous `def handler(event, context)`, async work runs only behind it through one `asyncio.run` loop created and closed inside that invocation, and no loop-bound state outlives it. See [Python specifics](#python-specifics). |
 
-The two non-Go models differ in a way that matters when you read the runtime's own code: in TypeScript a shared
-mutable is safe exactly when no `await` sits inside its read-modify-write window, whereas in Python it needs an actual
-lock, because the interpreter can switch threads at any call boundary.
+The two models differ in a way a reader of the runtime's own code must know: in TypeScript a shared mutable is safe
+exactly when no `await` sits inside its read-modify-write window, whereas a Python process's shared mutable is safe
+exactly when nothing else in the same process can run inside that window. AppTheory does not rely on "one invocation
+per process" to make its Python stores correct: they are lock-guarded, and the Python concurrency tests drive them from
+several threads on purpose. That is an **analysis method deliberately stronger than the real serving model**, so a
+store that is correct only because AWS serializes processes still fails those tests rather than a deployment.
 
 ## Per request: never visible to another request
 
@@ -100,16 +110,24 @@ These are the patterns that break the guarantee. They are not runtime options, s
 
 ## Python specifics
 
-The Python runtime's entry points are synchronous. When a handler returns an awaitable, the runtime bridges it with
-`asyncio.run`, which raises if an event loop is already running on the calling thread. That is the documented,
-fail-closed behaviour: a Python AppTheory app is served by a thread-per-request server, never by an asyncio server
-driving `serve()` from inside a live loop. Concurrency in one Python environment therefore means threads, and the
-guarantees above are stated for that model.
+On AWS Lambda, Python concurrency comes from **separate processes**: Lambda Managed Instances runs each concurrent
+request in its own Python process, so two Python invocations in one execution environment share no interpreter memory.
+AppTheory's Python entry point stays a synchronous `def handler(event, context)` under that model, and it is the only
+entry point. Async runs only **behind** it: when a handler returns an awaitable, the runtime bridges it with one
+`asyncio.run` loop, created and closed inside that same invocation. No loop-bound state may outlive an invocation, and
+`asyncio.run` raises if an event loop is already running on the calling thread — a named, fail-closed error rather than
+a shared loop across invocations.
 
-The process-wide members listed above that fill lazily on the request path (the JWKS validator's key cache, windows
-and fetch budget; the Autheory discovery document and validator cache; the front-door SSM client; the MCP stream
-spill object store; the MCP session/stream/task stores) are guarded by a lock, because Python can switch threads
-inside them.
+**AppTheory does not serve Python thread-per-request.** No thread pool serves your handler, no thread is created per
+request, and `serve()` is never driven from inside a live event loop. The guarantees on this page are stated for the
+real serving model — one synchronous invocation per process — and the runtime adds nothing to it.
+
+The process-wide members listed above that fill lazily on the request path (the JWKS validator's key cache, resolution
+windows and fetch budget; the Autheory discovery document and validator cache; the front-door SSM client; the MCP
+stream spill object store; the MCP session/stream/task stores) are still guarded by a lock. That is deliberate defence
+in depth, not a serving model: the Python concurrency tests drive those stores from several threads at once, an
+analysis method stronger than what AWS runs, so a store that is only safe because one invocation holds the process
+fails a test here instead of a deployment.
 
 ## TypeScript specifics
 
@@ -131,6 +149,38 @@ token's `kid`, the validator may refresh once more to absorb key publication lag
 resolution follows the opening request through that permitted retry and reaches the same outcome it reaches — accepted
 when the key is published, refused when it is not. It never starts a fetch of its own, never spends a second unit of the
 unknown-`kid` fetch budget, and is still bounded by the same fetch timeout, per-`kid` bound, cooldown and budget.
+
+Following the *request*, not the fetch, is the precise obligation, and the two differ when a `kid`'s resolution begins
+behind another one's. If the opening request's first step joined a fill that a different `kid` started, its own permitted
+retry cannot begin until that fill clears; a follower that watched only the fill would find nothing in flight in
+between and refuse a token whose key the same resolution is about to publish. The runtime therefore tracks each `kid`'s
+resolution as one window that ends when that whole resolution ends — success, refusal or error — and a follower waits
+for the window it was admitted to.
+
+## Multi-concurrency is not available to Go upstream
+
+AWS decides this, not AppTheory. The
+[Lambda Managed Instances runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-runtimes.html)
+page lists Java 21+, Python 3.13+, Node.js 22+, .NET 8+ and Rust (through the OS-only `provided.al2023` runtime).
+**Go is not listed**, and the Lambda Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15` — there is no
+Go Web Function runtime either. So:
+
+- **AppTheory's Go runtime serves one invocation at a time per execution environment.** That is the upstream execution
+  model for Go on Lambda, and the Go runtime is written to it: request state lives in the call's `context.Context`, and
+  the framework adds no in-process concurrency of its own.
+- **Multi-concurrency for Go is not supported upstream**, so AppTheory cannot offer it without shipping a runtime AWS
+  does not maintain. It does not: AppTheory deploys managed runtimes only, and adding a custom runtime image or runtime
+  layer to work around an upstream gap is not a direction this framework takes.
+- **Parity is preserved wherever upstream allows it.** Nothing in the Go API is weakened or marked unsupported for the
+  features that a single-concurrency environment serves: routing, the middleware tiers, the error envelope, event
+  normalization, the CDK constructs, the contract fixtures and the API snapshots are the same in Go as in TypeScript
+  and Python, and every fixture runs in all three runtimes on every commit. Only the *overlap* dimension is missing, and
+  it is missing because AWS does not offer it for Go.
+- One recorded consequence is the JWKS validator. Its Go implementation refuses a request whose signing-key resolution
+  window another request opened, where TypeScript and Python serve the peer (`runtime/oauth/jwks.go`); the audit records
+  it as a residual tied to this upstream gap rather than as a parity defect. If AWS adds Go to Lambda Managed Instances,
+  that behaviour becomes required parity work: the resolution window has to be published across the whole permitted
+  retry loop, which is a redesign of the JWKS refresh state machine, and this page's Go row changes with it.
 
 ## Where this is proven
 

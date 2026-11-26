@@ -1,15 +1,15 @@
 # Runtime concurrency audit: multi-request isolation in one execution environment
 
-Status: complete, revised in round 2. Audited at `staging` `397ebd591b70aa333820a544f3acbade426dce13`; fixes and tests
+Status: complete, revised in round 3. Audited at `staging` `397ebd591b70aa333820a544f3acbade426dce13`; fixes and tests
 land with the `feat/runtime-multiconcurrency` branch. Scope: the TypeScript and Python runtimes. Go is recorded as
-**N/A** (AWS has no Go Web Function runtime, and the Go runtime is unchanged); §8 states what Go shares and what
-closing it there would cost.
+**N/A for the overlap dimension only** (AWS offers no multi-concurrency runtime for Go, and the Go runtime is unchanged);
+§9 states the upstream fact, what Go shares and what closing it there would cost.
 
 This is the evidence behind [Concurrency and request isolation](../../../features/concurrency.md). Line numbers below
 are the audited (pre-fix) tree, so every citation resolves against `397ebd59`, except the round-1 additions, whose
-citations resolve against the round-0 head `710c1b62` and are marked **(r1)**, and the round-2 additions, whose
-citations resolve against the round-1 head `356e847b` and are marked **(r2)**. §7 and §8 record what each round
-changed and why.
+citations resolve against the round-0 head `710c1b62` and are marked **(r1)**, the round-2 additions, whose citations
+resolve against the round-1 head `356e847b` and are marked **(r2)**, and the round-3 additions, whose citations resolve
+against the round-2 head `2bb1a5bd` and are marked **(r3)**. §7, §8 and §9 record what each round changed and why.
 
 ## 1. Method
 
@@ -21,7 +21,15 @@ safe in one and unsafe in the other:
 | Runtime | Overlap in one environment | When a shared read-modify-write can interleave |
 |---|---|---|
 | TypeScript | One event loop; N suspended `async` bodies | Only if an `await` sits **inside** the window. CPython has no analogue: Node never pre-empts a synchronous stretch. |
-| Python | Threads, one per request | At **any** call boundary, and inside any Python-level loop or comprehension. |
+| Python | **Analysis model: threads.** The real serving model is one invocation per process, because Lambda Managed Instances runs each concurrent Python request in a separate process. | At **any** call boundary, and inside any Python-level loop or comprehension. |
+
+The Python row is the one place this document deliberately analyses a harder model than AWS runs: threads, not
+separate processes. Driving the stores from several threads proves a stronger property than "safe under one invocation
+per process", so a store that is only correct because the platform serializes processes still fails here. What
+AppTheory *owes* is stated against the real model in
+[the feature page](../../../../features/concurrency.md#python-specifics): separate processes, one synchronous
+`def handler(event, context)` per invocation, one `asyncio.run` loop created and closed inside it, no loop-bound state
+outliving it, and no thread-per-request serving.
 
 That distinction is not cosmetic — it decides several classifications below, and it is why the Python fix list is
 longer than the TypeScript one.
@@ -162,7 +170,7 @@ pass unchanged — which is also the evidence that the remaining TypeScript rows
 |---|---|---|---|
 | X1 | `ts/src/testkit/oauthprovider.ts:158`, `:162`, `:163` | `lastToken`, `refreshCalls`, `lastRefreshForm` on the fake OAuth server | `UNSAFE_SHARED`, **test-double only**. Two overlapping token calls in one test can overwrite each other's last-request record. Never constructed by the runtime; not on a request path. Left as-is; a fake that records "the last request" is single-threaded instrumentation by definition, and changing it to a per-call record would add public testkit surface (which the size check forbids). |
 | X2 | `py/src/apptheory/objectstore.py:293-294`, `vectorstore.py:151`, `microvm/fake.py:24`; `ts/src/testkit/oauthprovider.ts:158-163`, `ts/src/microvm/fake.ts:68`, `:270-272`; `py/src/apptheory/testkit.py:590`, `ids.py:39-43`, `clock.py`; the TypeScript doubles `FakeVectorStore`, `FakeEmbedder`, `FakeObjectStore` and `FakeWebSocketManagementClient` (r2, completing the named list) | In-memory fakes and their recorded-call buffers, `ManualIdGenerator`, manual clocks | `UNSAFE_SHARED if shared`, **test-double only**. Deterministic test instrumentation; the runtime never constructs them for a request, and a double that records "the last call" is single-threaded by definition. Documented in the feature page as "not for production concurrency". |
-| X3 | `py/src/apptheory/app.py:77-89`; `bind_handler.py:158-168`; `mcp/__init__.py:3936-3949` | `_resolve` and its siblings bridging an awaitable with `asyncio.run` | Not shared state: a **capability** limit. `asyncio.run` raises inside a live event loop, so the Python runtime supports thread concurrency only, and fails closed with a named message otherwise. Changing this would alter runtime semantics, which is a size-check trigger; recorded for the AT-W1 composition instead. |
+| X3 | `py/src/apptheory/app.py:77-89`; `bind_handler.py:158-168`; `mcp/__init__.py:3936-3949` | `_resolve` and its siblings bridging an awaitable with `asyncio.run` | Not shared state: the **sync-entry-point** contract, corrected in round 3. A Python handler is a synchronous `def handler(event, context)`; async work runs only behind it, through one `asyncio.run` loop created and closed inside that invocation, so `asyncio.run` raising inside a live event loop is the fail-closed answer to an attempt to keep a loop across invocations rather than a limitation to work around. No loop-bound state may outlive an invocation, and AppTheory does not serve Python thread-per-request — concurrency comes from separate processes (Lambda Managed Instances). Runtime semantics unchanged; the round-3 correction is documentation. |
 
 ## 3. Flagged to the owner, deliberately not changed
 
@@ -208,6 +216,13 @@ one call site; it adds no state, no knob, no fetch, and changes no refusal other
 requires. The P13/P14 work adds no runtime change at all: both holders were already per-call, and the round added their
 classification and the overlap tests that pin it.
 
+Round 3 also stays inside the bounded fix, and it is smaller than the round-2 shape it replaces. The window map holds a
+`ResolutionWindow` (`startedAt`, a `settled` promise, its `settle`) instead of a bare start time, `followInFlightRefresh`
+becomes `followWindow` (follow one window to its end, bounded by that window's own resolution bound), and the opener
+settles its window in a `finally`. No exported signature, type, constructor option, error code, fixture, construct or
+snapshot changed, no fetch is added, and the state machine is not redesigned: the retry loop, the single-flight slot,
+the budget, the cooldown, the per-`kid` bound and the fetch timeout are exactly as they were.
+
 ## 6. What the tests establish
 
 | Claim | Test |
@@ -223,6 +238,7 @@ classification and the overlap tests that pin it.
 | The micro:vm session registry loses no record, crosses no tenant, and lists a self-consistent snapshot under overlap (U7, S19) | `test_microvm_session_registry_survives_concurrent_put_delete_list`, `test_microvm_session_registry_keeps_tenants_apart_under_overlap`; `interleaved microvm registry writes never lose a record or cross a tenant`, `microvm registry mutations finish inside one synchronous stretch` |
 | A burst of overlapping valid tokens is authorized on a cold JWKS cache, and fetch amplification stays bounded (U8) | `a cold key set serves every overlapping validation`; `test_valid_tokens_stay_authorized_under_overlap` |
 | A permitted key-publication retry reaches every overlapping caller, not only the one that opened it, and the refusal controls (unknown kid, 503, hanging fetch, exhausted budget) are unchanged (U8, r2) | `the key-publication retry serves every overlapping valid caller` (TS); `test_key_publication_retry_serves_every_overlapping_caller` (Python) |
+| A window opened behind *another* key's fetch still serves every peer it admits, on exactly the permitted two fetches, and a rejecting or hanging retry releases every peer (U8, r3) | `a window opened behind another key's fetch serves every peer it admits` (TS); `test_mixed_key_window_serves_every_caller_it_admits` (Python) |
 | MCP tool invocation contexts stay with their own call across the ordinary, streaming and task routes under overlap (P13, P14, r2) | `overlapping MCP tool calls keep their own invocation context` (TS); `test_overlapping_tool_calls_keep_their_own_invocation_context` (Python) |
 | AppSync resolver metadata and the Function URL writer's per-invocation transport state stay with their request (P11, P12) | `overlapping AppSync resolvers keep their own resolver context`, `overlapping function URL streamed responses keep their own transport state`, `a broken stream reports only its own invocation's error code` |
 | The default front-door reader and the provider's discovery/validator caches are correct under overlap on their production paths (S3, S6) | `the default front-door parameter reader shares one SSM client under overlap`, `the provider caches discovery and validators under overlap` |
@@ -239,6 +255,12 @@ completion. The two MCP rows pass wherever they run, because both holders were a
 they were shown to be load-bearing by mutation: sharing the tool context (TypeScript) or the auth view (Python) makes
 them fail with another caller's session, identity and scopes.
 
+Round 3 adds one TypeScript row and one Python row, both on the mixed-key ordering. The TypeScript row fails on
+`2bb1a5bd` — the round-2 head — with `overlapping caller 2 was refused a valid token: invalid bearer token:
+unknown_kid`, while its same-`kid` sibling passes there, which is what makes the round-3 delta exactly the mixed-key
+gap. The Python row is a pin on an unchanged runtime, and it is load-bearing: dropping `_key_for`'s lock makes it and
+its round-2 sibling fail together (`FAILED (errors=4)`).
+
 ## 7. Round 1: findings closed
 
 Round 0 was blocked by the adversary and sanity gates. Every finding is closed here, and closing them changed two
@@ -254,9 +276,10 @@ classifications in §2 — which is the point of running the tests the findings 
 | The sweep (this document, §1.1) | Both runtimes swept by the six queries in §1.1; the only items outside the round-0 tables were U7, S19, P11, P12, S20 and the TypeScript test doubles now named in X2. Nothing beyond a bounded fix was found. |
 
 Still flagged to the owner, deliberately unchanged in this round: §3.1 (the buffered adapters' abandoned drain worker
-versus the normative contract) and X3 (`asyncio.run`, so Python is thread-concurrent only). Both reviewers agree
-neither leaks state across requests; the drain worker is a fail-closed wording decision and the `asyncio.run` bridge a
-capability boundary for the Web Function composition, not isolation defects. §3.2's two older observations stand.
+versus the normative contract) and X3 (the sync entry point and its per-invocation `asyncio.run` loop, corrected in
+round 3 to the ruled serving model instead of the thread-per-request wording it carried before). Both reviewers agree
+neither leaks state across requests; the drain worker is a fail-closed wording decision and the `asyncio.run` bridge the
+sync-entry-point contract, not an isolation defect. §3.2's two older observations stand.
 
 ## 8. Round 2: findings closed
 
@@ -265,7 +288,7 @@ evidence, and both are closed here.
 
 | Finding | Closure |
 |---|---|
-| `SAN-3738-04` (high): the U8 repair is incomplete — peers of a *permitted* publication-lag retry are refused | **U8 completed.** The cooldown branch now follows the whole bounded resolution (`followInFlightRefresh`, `ts/src/oauth/jwks.ts:458-473`) instead of only the first fetch: it waits, re-reads, and waits again while the opening request is still inside the retry the contract already allows. No fetch is added, no budget unit is consumed, and cooldown, per-kid bound, global fetch budget, fetch timeout and unknown-kid refusal are untouched. Pinned by `the key-publication retry serves every overlapping valid caller`, which fails on `356e847b` (`overlapping caller 1 was refused a valid token: invalid bearer token: unknown_kid`) and passes after, with the single-request control, unknown-kid, 503, hanging-fetch and exhausted-budget controls in the same row. **Python has no such gap** and needs no production change: `_key_for` holds `self._lock` across the whole resolution (`py/src/apptheory/oauth/jwks.py:397-421`), so a peer blocks until the opening request has finished its permitted retry and then finds the published key in the cache — the same outcome by serialization rather than by joining. `test_key_publication_retry_serves_every_overlapping_caller` pins that outcome on the unchanged runtime. |
+| `SAN-3738-04` (high): the U8 repair is incomplete — peers of a *permitted* publication-lag retry are refused | **U8 completed.** The cooldown branch now follows the whole bounded resolution (`followInFlightRefresh`, `ts/src/oauth/jwks.ts:458-473`) instead of only the first fetch: it waits, re-reads, and waits again while the opening request is still inside the retry the contract already allows. No fetch is added, no budget unit is consumed, and cooldown, per-kid bound, global fetch budget, fetch timeout and unknown-kid refusal are untouched. Pinned by `the key-publication retry serves every overlapping valid caller`, which fails on `356e847b` (`overlapping caller 1 was refused a valid token: invalid bearer token: unknown_kid`) and passes after, with the single-request control, unknown-kid, 503, hanging-fetch and exhausted-budget controls in the same row. **Python has no such gap** and needs no production change: `_key_for` holds `self._lock` across the whole resolution (`py/src/apptheory/oauth/jwks.py:397-421`), so a peer blocks until the opening request has finished its permitted retry and then finds the published key in the cache — the same outcome by serialization rather than by joining. `test_key_publication_retry_serves_every_overlapping_caller` pins that outcome on the unchanged runtime. **Superseded in round 3:** this closure covered the same-`kid` ordering only; the mixed-key ordering still refused peers, and §9 replaces `followInFlightRefresh` with a followed window. |
 | `SAN-3738-05` (medium): the round-1 sweep missed the MCP tool invocation contexts | Classified **P13** (TypeScript) and **P14** (Python), and pinned by two overlap tests that rendezvous *inside* the tool across the ordinary, streaming and task routes with six distinct authenticated callers, asserting each call's session id, request id, identity, tenant and scopes. No runtime change was needed: both holders are built per call. §1.1 carries the corrected sweep method and its honest result. |
 
 **Go: N/A, with the reason stated precisely.** Go *does* share the shape of this defect: `keyForKid`
@@ -273,8 +296,12 @@ evidence, and both are closed here.
 worse than round 1's TypeScript — no peer ever benefits from the opening request's permitted retry, and a burst of valid
 tokens on a rolling key is refused outright. It is not fixed here for two reasons, both stated rather than assumed.
 
-1. **It is unreachable in production.** AWS has no Go Web Function runtime: a Go Lambda execution environment handles one
-   invocation at a time, which is the assignment's stated reason for recording Go N/A and for not changing it.
+1. **It is unreachable in production, because AWS does not offer multi-concurrency for Go.** The
+   [Lambda Managed Instances runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-runtimes.html)
+   page lists Java, Python, Node.js, .NET and Rust (OS-only `provided.al2023`); Go is not among them, and the Web
+   Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. A Go execution environment therefore serves one
+   invocation at a time, which is the stated reason for recording Go N/A for the overlap dimension and for not changing
+   it here.
 2. **Closing it is not a bounded change.** Go's single-flight object (`jwksRefreshFlight`) covers *one* fetch and is
    cleared before the retry loop's next iteration, so a peer can sample the gap between two fetches and see nothing in
    flight — a naive join would be both racy and only partially correct. A correct fix has to publish one resolution
@@ -282,9 +309,33 @@ tokens on a rolling key is refused outright. It is not fixed here for two reason
    refresh state machine this round's size check says to report rather than implement.
 
 So Go's overlap behaviour is recorded as a residual for the operator, not silently matched. Everything else in Go is
-untouched: no exported signature, no construct, no fixture, and no runtime file other than this record.
+untouched: no exported signature, no construct, no fixture, and no runtime file other than this record. Round 3 keeps
+that residual and states the upstream fact in the places a reader looks for it (§9).
 
 The `py/weak-sensitive-data-hashing` CodeQL advisory at `py/src/apptheory/oauth/jwks.py:439` and
 `oauth/fake_provider.py:126` stays untouched. Both reviewers independently found it a false positive on pre-existing
 RS256 digest code (the SHA-256 there is the RSASSA-PKCS#1-v1.5 message digest), the flagged lines are unchanged from
 `710c1b62` to this head, and no CodeQL configuration was added: the disposition belongs to the operator.
+
+## 9. Round 3: findings closed
+
+Round 2 was blocked by both gates: the adversary on the Python serving-model documentation, sanity on the TypeScript
+mixed-key interleaving and on the Go parity claim. Round 3 closes all three. It is the last round before every new
+adversary block needs a sanity audit-of-block, so the delta stays minimal and exactly scoped.
+
+| Finding | Closure |
+|---|---|
+| `SAN-3738-04` (high, R2): a window opened behind another key's fetch refuses its own peers | **The window is followed, not the fetch slot.** `windows` now holds a `ResolutionWindow` — the start time, a `settled` promise, and the `settle` that resolves it (`ts/src/oauth/jwks.ts:162-175`) — and the request that opens a window settles it in a `finally` around its whole permitted resolution (`:519-550`). A peer admitted to an open window awaits that window instead of sampling `inFlightRefresh` (`followWindow`, `:495-517`), so it reaches the window's outcome even when the window's *first step joined a different key's fetch* and its own retry could only start after that fetch cleared. That gap was the defect: peers resumed before the opener's continuation re-entered `refresh`, saw the slot empty, and returned from the no-flight branch (`2bb1a5bd:458-473`, `:503`). A rejecting or hanging resolution still releases every peer, because the wait is bounded by the window's own resolution bound (`(maxRefreshPerKid + 1) × fetchTimeout`, `:341`) and `settle()` runs in a `finally`. Nothing else moved: no extra fetch (the mixed-key row spends exactly the 2 fetches the single request spends), no budget unit for a peer, and the per-`kid` bound, global unknown-`kid` budget, cooldown, fetch timeout and `unknown_kid` refusal are unchanged. Pinned by `a window opened behind another key's fetch serves every peer it admits` (`ts/test/concurrency-isolation.test.mjs:1207`), which **fails on `2bb1a5bd`** with `overlapping caller 2 was refused a valid token: invalid bearer token: unknown_kid` while its same-`kid` sibling passes there, and which carries the single-request control, the post-settlement caller, the unknown-`kid`/cooldown/per-`kid`-bound control, and the rejecting and hanging retry controls. The round-2 attack shapes were re-run against the new window (staggered 24-peer burst across the whole resolution, mid-retry joiner, rejecting retry, hanging retry at `fetchTimeoutSeconds: 0.3` with `maxRefreshPerKid: 2`, 64-peer burst, single-request control): all authorized or refused correctly, 2 fetches each, no waiter held beyond its bound (hanging rows released at 304 ms and 301 ms). |
+| `SAN-3738-07` / `ADV-1349-R2-01` (medium, R6): the Python serving-model documentation prescribes thread-per-request | **Corrected to the ruled model; no runtime change.** Operator ruling 2026-11-26: on AWS Lambda, Python concurrency comes from separate processes (Lambda Managed Instances), not threads; the entry point stays a synchronous `def handler(event, context)`; async runs only behind it, with one event loop per invocation created and closed inside it (`asyncio.run`); no loop-bound state may outlive an invocation; AppTheory does not serve Python thread-per-request. Those are now the words of the feature page's Python row and [Python specifics](../../../../features/concurrency.md#python-specifics) section, and §1/§2.4/X3 here state the thread framing as an **analysis method stronger than the real serving model** rather than as the serving model. The Python mixed-key row below is a pin on the unchanged runtime. |
+| `SAN-3738-06` (high, R5): the Go parity claim | **Stated as an upstream gap, not repaired here.** AWS publishes which runtimes get multi-concurrency: the [Lambda Managed Instances runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-runtimes.html) page lists Java, Python, Node.js, .NET and Rust (OS-only `provided.al2023`), and the Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. Go is in neither list, so **AppTheory's Go runtime serves one invocation at a time per execution environment, and multi-concurrency for Go is not supported upstream**. That is now stated in the [feature page](../../../../features/concurrency.md#multi-concurrency-is-not-available-to-go-upstream), the [runtime support matrix](../../../../runtimes/support.md#concurrency-and-the-upstream-execution-model), and §8 here, each linking the AWS page. `runtime/oauth/jwks.go:556-592` keeps its overlap behaviour as a recorded residual tied to this gap, with no Go code added and no refusal introduced. **Parity is preserved everywhere upstream allows it**: no Go surface is removed, weakened or marked unsupported for single-concurrency features, and every contract fixture still runs in all three runtimes on every commit. **If AWS adds Go**, the redesign §8 describes becomes required parity work and these statements change with it. Working around the gap with a custom runtime image or runtime layer is explicitly out of scope: AppTheory deploys managed runtimes only. |
+
+**Python has no such gap, and round 3 pins that under the mixed-key ordering.**
+`test_mixed_key_window_serves_every_caller_it_admits` (`py/tests/test_concurrency_isolation.py:1009`) runs an
+already-published-kid caller beside eight late-kid callers while the first document carries only the published key: every
+caller is authorized on exactly two fetches, whichever request reaches `_key_for` first, because `_key_for` holds
+`self._lock` across the whole resolution — the same outcome by serialization rather than by following. The pin is
+load-bearing: removing that lock turns it and its round-2 sibling into `FAILED (errors=4)`.
+
+Round 3 changes no runtime file other than `ts/src/oauth/jwks.ts` (plus its committed `ts/dist`), no contract fixture, no
+API snapshot, no construct and no version. The drain-worker 0.1 s grace (§3.1) stays the operator's residual, and the
+CodeQL crypto lines stay the operator's disposition.
