@@ -17,6 +17,7 @@ import base64
 import binascii
 import functools
 import json as jsonlib
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -176,13 +177,20 @@ class AutheoryProvider:
         )
         self._metadata: ProviderMetadata | None = None
         self._validators: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
+        # One adapter serves every request, and both members are lazily filled
+        # on the request path: without the lock every overlapping caller misses
+        # the cache and fetches discovery again, and the ordered cache is
+        # mutated while another caller reads it. Reentrant so a future reader
+        # that reaches back into the cache cannot deadlock the adapter.
+        self._lock = threading.RLock()
 
     # -- SPI -----------------------------------------------------------------
 
     def discovery(self) -> ProviderMetadata:
-        if self._metadata is None:
-            self._metadata = self._fetch_metadata()
-        return self._metadata
+        with self._lock:
+            if self._metadata is None:
+                self._metadata = self._fetch_metadata()
+            return self._metadata
 
     def authorization_url(self, req: AuthorizationRequest) -> str:
         """Builds the upstream authorize URL.
@@ -285,10 +293,11 @@ class AutheoryProvider:
             tuple(required_scopes),
             tuple(allowed_parties),
         )
-        validator = self._validators.get(cache_key)
-        if validator is None:
-            validator = self._new_validator(metadata, expected, required_scopes, allowed_parties, op)
-            self._remember_validator(cache_key, validator)
+        with self._lock:
+            validator = self._validators.get(cache_key)
+            if validator is None:
+                validator = self._new_validator(metadata, expected, required_scopes, allowed_parties, op)
+                self._remember_validator(cache_key, validator)
         try:
             claims = validator(_VALIDATION_CONTEXT, token)
         except Exception as exc:

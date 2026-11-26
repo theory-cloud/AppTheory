@@ -17,6 +17,7 @@ import ipaddress
 import json as jsonlib
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -285,6 +286,13 @@ class _JWKSValidator:
         self._windows: dict[str, datetime] = {}
         self._fetch_window_start: datetime | None = None
         self._fetch_budget_used = 0
+        # One validator serves every request in the execution environment, so
+        # its cache, its per-kid windows and its unknown-kid fetch budget are
+        # shared mutable state. Without this lock concurrent validation raises
+        # "dictionary changed size during iteration" (a 500 on a valid token)
+        # and lets every thread spend the same budget unit. The lock is
+        # reentrant because _key_for calls the helpers below.
+        self._lock = threading.RLock()
 
     def validate(self, ctx: Context, token: str) -> BearerTokenClaims:
         header, claims, signing_input, signature = _parse_compact_jws(token)
@@ -397,20 +405,21 @@ class _JWKSValidator:
         # cannot be amplified into key-set traffic.
         if len(kid) > self._max_kid_length:
             return None
-        key = self._cached_key(kid, now)
-        if key is not None:
-            return key
-        started_at = self._windows.get(kid)
-        if started_at is not None and now - started_at < self._cooldown:
-            return None
-        self._record_window(kid, now)
-        for _ in range(self._max_refresh_per_kid + 1):
-            if not self._refresh(now):
-                return None
+        with self._lock:
             key = self._cached_key(kid, now)
             if key is not None:
                 return key
-        return None
+            started_at = self._windows.get(kid)
+            if started_at is not None and now - started_at < self._cooldown:
+                return None
+            self._record_window(kid, now)
+            for _ in range(self._max_refresh_per_kid + 1):
+                if not self._refresh(now):
+                    return None
+                key = self._cached_key(kid, now)
+                if key is not None:
+                    return key
+            return None
 
     def _cached_key(self, kid: str, now: datetime) -> _CachedKey | None:
         entry = self._keys.get(kid)
