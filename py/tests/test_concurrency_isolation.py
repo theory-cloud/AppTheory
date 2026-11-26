@@ -1006,6 +1006,75 @@ class TestBearerValidationStaysAuthorized(unittest.TestCase):
         self.assertEqual(transport.fetches, after_stranger, "an exhausted fetch budget still fetched")
 
 
+    def test_mixed_key_window_serves_every_caller_it_admits(self) -> None:
+        """SAN-3738-04 mixed-key parity: the window's outcome is its peers' outcome.
+
+        The first key-set document carries only the already-published key, so a
+        request for the late key opens its resolution window behind a fetch that
+        cannot serve it and spends the retry the contract permits on the second
+        document. Whichever request reaches the validator first, every caller it
+        admits must reach the same outcome: authorized, on exactly two fetches.
+        """
+        issuer = "https://mixed-key-publication.example.test"
+        published = FakeUpstreamProvider(
+            issuer=issuer, kid="kid-already-published", key_bits=512
+        )
+        late = FakeUpstreamProvider(issuer=issuer, kid="kid-newly-published", key=generate_rsa_key(512))
+        transport = _StagedKeyPublication(
+            late.jwks_uri,
+            published.jwks_document(),
+            late.jwks_document(),
+            hold_seconds=0.2,
+        )
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=issuer,
+                jwks_uri=late.jwks_uri,
+                http_get=transport,
+                allow_private_hosts=True,
+                required_audience=_OAUTH_AUDIENCE,
+                required_scopes=["namespace:use"],
+                max_unknown_kid_fetches=4,
+            )
+        )
+        ctx = Context(request=_request("/"))
+        expected = ["existing", *[f"fresh-{index}" for index in range(8)]]
+        tokens = [
+            published.mint_access_token(
+                audience=_OAUTH_AUDIENCE, subject=expected[0], scope="namespace:use"
+            ),
+            *[
+                late.mint_access_token(
+                    audience=_OAUTH_AUDIENCE, subject=subject, scope="namespace:use"
+                )
+                for subject in expected[1:]
+            ],
+        ]
+
+        with _RaceProne():
+            claims = _run_concurrently(lambda index: validator(ctx, tokens[index]), len(tokens))
+
+        for index, claim in enumerate(claims):
+            self.assertEqual(
+                claim.subject,
+                expected[index],
+                f"mixed-key caller {index} was refused or misattributed",
+            )
+        self.assertEqual(
+            transport.fetches, 2, "the mixed-key burst outspent the single request's retry"
+        )
+
+        # A caller arriving after the windows settled is served from the cache.
+        arrived_later = validator(
+            ctx,
+            late.mint_access_token(
+                audience=_OAUTH_AUDIENCE, subject="arrived-later", scope="namespace:use"
+            ),
+        )
+        self.assertEqual(arrived_later.subject, "arrived-later")
+        self.assertEqual(transport.fetches, 2, "a cached key fetched again")
+
+
 class TestMcpToolInvocationStaysPerCall(unittest.TestCase):
     """SAN-3738-05: the MCP tool invocation contexts are pinned as per-call.
 
