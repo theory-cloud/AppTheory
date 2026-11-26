@@ -82,7 +82,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>868 exported top-level symbols</summary>
+<summary>874 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
@@ -228,6 +228,9 @@ VectorStore, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_F
 VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WebSocketCall,
 WebSocketContext, well_formed_client_request_id, WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error,
 compile_visibility_policy,
+dash_stem,
+HOSTED_NAMESPACE_MAX,
+hosted_pin_lead,
 KEEPER_ACTIONS_GROUP,
 KEEPER_ACTIONS_STREAM,
 KEEPER_ALLOWED_NO_EVENTS,
@@ -241,6 +244,8 @@ naming_scope,
 NAMING_SCOPE_ACCOUNT,
 NAMING_SCOPE_ACCOUNT_REGION,
 NAMING_SCOPE_NOT_UNIQUE,
+namespaced_context,
+path_stem,
 physical_resource_name,
 RESOURCE_NAME_RULES,
 RESOURCE_NAMING_CONTRACT,
@@ -250,6 +255,7 @@ shorten_resource_name,
 source_visible,
 synth_check,
 UNKNOWN_NAMING_SCOPE,
+validate_hosted_namespace,
 validate_naming_context,
 validate_visibility_selector,
 visibility_manifest,

@@ -2,13 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  HOSTED_NAMESPACE_MAX,
   compileVisibilityPolicy,
   keeperDecision,
   logGroupName,
   namingScope,
+  namespacedContext,
   physicalResourceName,
   sourceVisible,
   synthCheck,
+  validateHostedNamespace,
   validateNamingContext,
   visibilityManifest,
   visibilityPreview,
@@ -275,4 +278,311 @@ test("the synth check keeps the same name apart across types and admits a re-dec
     ]).map((row) => row.logical_id),
     ["Worker", "Worker"],
   );
+});
+
+// ---- hosted namespaces (contract sections 1, 2, 2.4 and 4, r5) -------------
+//
+// The five actor/state scenarios of the AT-N5 milestone, one test per scenario,
+// so every runtime surface can be compared line for line.
+
+function hostedContext(overrides = {}) {
+  return {
+    namespace: "acme",
+    app: "shop",
+    stage: "lab",
+    account: "123456789012",
+    region: "us-east-1",
+    hosted: true,
+    ...overrides,
+  };
+}
+
+test("hosted scenario 1: a platform app keeps every r4 name byte for byte", () => {
+  const platform = { app: "theory-mcp-server", stage: "lab", account: "191637461429", region: "us-east-1" };
+  const expected = {
+    "lambda_function:worker": { name: "theory-mcp-server-lab-worker" },
+    "dynamodb_table:events": { name: "theory-mcp-server-lab-events" },
+    "s3_bucket:media": {
+      name: "theory-mcp-server-lab-media-191637461429-us-east-1-an",
+      bucket_name_prefix: "theory-mcp-server-lab-media",
+      bucket_namespace: "account-regional",
+    },
+    "secret:provider/stripe": { name: "theory-mcp-server/lab/provider/stripe" },
+    "ssm_parameter:config": { name: "/theory-mcp-server/lab/config" },
+    "kms_alias:data": { name: "alias/theory-mcp-server/lab/data" },
+    "log_group:logs/runtime/api": {
+      name: "theorycloud_theorycloud_theory-mcp-server_lab_logs_runtime_api",
+    },
+  };
+  for (const [key, want] of Object.entries(expected)) {
+    const [resourceType, logical] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    assert.deepEqual(physicalResourceName(platform, resourceType, logical, {}, []), want, key);
+  }
+
+  // An explicit platform namespace and an omitted one are the same context.
+  assert.equal(namespacedContext(platform), false);
+  assert.equal(namespacedContext({ ...platform, namespace: "theorycloud" }), false);
+  assert.deepEqual(
+    physicalResourceName({ ...platform, namespace: "theorycloud" }, "lambda_function", "worker", {}, []),
+    physicalResourceName(platform, "lambda_function", "worker", {}, []),
+  );
+
+  // The pins and generated entries a platform app relies on today still apply.
+  assert.deepEqual(
+    physicalResourceName({ ...platform, namespace: "theorycloud" }, "lambda_function", "worker",
+      { "lambda_function:worker": "theory-mcp-server-lab-worker-v1" }, []),
+    { name: "theory-mcp-server-lab-worker-v1", pinned: true },
+  );
+  assert.deepEqual(
+    physicalResourceName({ ...platform, namespace: "theorycloud", naming_profile: "legacy" },
+      "dynamodb_table", "events", {}, ["dynamodb_table:events"]),
+    { generated: true },
+  );
+});
+
+test("hosted scenario 2: hosted names carry the namespace in every form", () => {
+  const cases = [
+    [hostedContext(), "lambda_function", "worker", { name: "acme-shop-lab-worker" }],
+    [hostedContext(), "dynamodb_table", "orders", { name: "acme-shop-lab-orders" }],
+    [
+      hostedContext(),
+      "s3_bucket",
+      "uploads",
+      {
+        name: "acme-shop-lab-uploads-123456789012-us-east-1-an",
+        bucket_name_prefix: "acme-shop-lab-uploads",
+        bucket_namespace: "account-regional",
+      },
+    ],
+    [
+      hostedContext({ app: "storefront-checkout" }),
+      "s3_bucket",
+      "customer-uploads-archive",
+      {
+        name: "acme-storefront-checkout-lab-5cs2pek2-123456789012-us-east-1-an",
+        bucket_name_prefix: "acme-storefront-checkout-lab-5cs2pek2",
+        bucket_namespace: "account-regional",
+      },
+    ],
+    [
+      hostedContext({ namespace: "northwind", app: "customer-portal-analytics" }),
+      "iam_role",
+      "keeper-reader-cross-account",
+      { name: "northwind-customer-portal-analytics-lab-keeper-reader-c-r3njssl4" },
+    ],
+    [hostedContext(), "secret", "provider/stripe", { name: "acme/shop/lab/provider/stripe" }],
+    [hostedContext(), "ssm_parameter", "config/feature-flags", { name: "/acme/shop/lab/config/feature-flags" }],
+    [hostedContext(), "kms_alias", "data", { name: "alias/acme/shop/lab/data" }],
+    [hostedContext(), "log_group", "logs/runtime/api", { name: "theorycloud_acme_shop_lab_logs_runtime_api" }],
+  ];
+  for (const [context, resourceType, logical, want] of cases) {
+    assert.deepEqual(physicalResourceName(context, resourceType, logical, {}, []), want, `${resourceType}:${logical}`);
+  }
+
+  // A hosted pin is returned verbatim when it starts with its namespace
+  // component, exactly where the derived form puts it.
+  assert.deepEqual(
+    physicalResourceName(hostedContext(), "dynamodb_table", "events",
+      { "dynamodb_table:events": "acme-shop-lab-events-v1" }, []),
+    { name: "acme-shop-lab-events-v1", pinned: true },
+  );
+  for (const [resourceType, logical, pin] of [
+    ["ssm_parameter", "config", "/acme/shop/lab/config-v2"],
+    ["kms_alias", "data", "alias/acme/shop/lab/data-v2"],
+    ["log_group", "logs/runtime/api", "theorycloud_acme_shop_lab_logs_runtime_api"],
+  ]) {
+    assert.doesNotThrow(() =>
+      physicalResourceName(hostedContext(), resourceType, logical, { [`${resourceType}:${logical}`]: pin }, []),
+    );
+  }
+});
+
+test("hosted scenario 3: every broken hosted context is refused at synth", () => {
+  const cases = [
+    [
+      "missing namespace",
+      { app: "shop", stage: "lab", account: "123456789012", region: "us-east-1", hosted: true },
+      {},
+      "a hosted deployment must supply its namespace",
+    ],
+    [
+      "empty namespace",
+      hostedContext({ namespace: "" }),
+      {},
+      "a hosted deployment must supply its namespace",
+    ],
+    [
+      "namespace over 12 characters",
+      hostedContext({ namespace: "northwind-trade" }),
+      {},
+      "hosted namespace longer than 12 characters",
+    ],
+    ["namespace starts with aws", hostedContext({ namespace: "awsome" }), {}, "hosted namespace must not start with aws or ssm"],
+    ["namespace starts with ssm", hostedContext({ namespace: "ssmtools" }), {}, "hosted namespace must not start with aws or ssm"],
+    [
+      "reserved platform namespace",
+      hostedContext({ namespace: "theorycloud" }),
+      {},
+      "namespace theorycloud is reserved for first-party platform apps",
+    ],
+    [
+      "hosted pin without the namespace component",
+      hostedContext(),
+      { "dynamodb_table:events": "shop-lab-events" },
+      "a hosted pin must start with the namespace component",
+    ],
+    [
+      "hosted pin with the namespace as a substring only",
+      hostedContext({ namespace: "hop" }),
+      { "dynamodb_table:events": "shop-lab-events" },
+      "a hosted pin must start with the namespace component",
+    ],
+  ];
+  for (const [name, context, pins, want] of cases) {
+    assert.throws(
+      () => physicalResourceName(context, "dynamodb_table", "events", pins, []),
+      (error) => error.message === want,
+      name,
+    );
+    if (!want.includes("pin")) {
+      assert.throws(() => validateNamingContext(context), name);
+    }
+  }
+
+  // The two live-compatibility tools are first-party only (section 4 r5 rev2).
+  const legacy = hostedContext({ naming_profile: "legacy" });
+  for (const call of [
+    () => physicalResourceName(legacy, "dynamodb_table", "events", { "dynamodb_table:events": "acme-shop-lab-events" }, []),
+    () => physicalResourceName(legacy, "dynamodb_table", "events", {}, ["dynamodb_table:events"]),
+  ]) {
+    assert.throws(call, (error) => error.message === "a hosted deployment takes no legacy profile or generated entries");
+  }
+
+  // The lambda service path is not a hosted log source either.
+  assert.throws(
+    () => physicalResourceName(hostedContext(), "log_group", "logs/runtime/api",
+      { "log_group:logs/runtime/api": "/aws/lambda/acme-shop-lab-worker" }, []),
+    (error) => error.message === "a hosted pin must start with the namespace component",
+  );
+});
+
+// SAN-AT-N5-01: the legacy profile is a property of the context, so a hosted
+// context is refused when the context is validated — with no naming declarations
+// at all, and with only a log-source name — not only when a construct composes a
+// physical name.
+test("hosted scenario 3b: a forbidden profile is refused without a composed name", () => {
+  const want = "a hosted deployment takes no legacy profile or generated entries";
+  const legacy = hostedContext({ naming_profile: "legacy" });
+  const same = (error) => error.message === want;
+
+  // No declarations: the context is the only naming input, and it is refused.
+  assert.throws(() => validateNamingContext(legacy), same, "no declarations");
+
+  // A log-only declaration: the log-source path refuses too.
+  assert.throws(
+    () => logGroupName(legacy, "logs/runtime/api"),
+    same,
+    "log-only declaration",
+  );
+
+  // A composed name keeps refusing, on the same reason.
+  assert.throws(
+    () =>
+      physicalResourceName(
+        legacy,
+        "dynamodb_table",
+        "events",
+        { "dynamodb_table:events": "acme-shop-lab-events" },
+        [],
+      ),
+    same,
+    "composed name",
+  );
+
+  // A generated entry declared on the context is a context property too, so it
+  // is refused at the context rather than only where a name is composed.
+  assert.throws(
+    () => validateNamingContext(hostedContext({ naming_profile: "derived", generated: ["dynamodb_table:events"] })),
+    same,
+    "generated entry on the context",
+  );
+
+  // Control: the valid derived hosted context still validates, still resolves a
+  // log source, and still composes the hosted name.
+  const derived = hostedContext();
+  assert.doesNotThrow(() => validateNamingContext(derived));
+  assert.equal(logGroupName(derived, "logs/runtime/api"), "theorycloud_acme_shop_lab_logs_runtime_api");
+  assert.deepEqual(physicalResourceName(derived, "lambda_function", "worker", {}, []), {
+    name: "acme-shop-lab-worker",
+  });
+
+  // Control: the platform app keeps the legacy profile, exactly as r4 allowed, so
+  // the platform path is not narrowed.
+  const platform = labContext({ naming_profile: "legacy" });
+  assert.doesNotThrow(() => validateNamingContext(platform));
+  assert.deepEqual(
+    physicalResourceName(platform, "dynamodb_table", "events", { "dynamodb_table:events": "autheory-lab-events" }, []),
+    { name: "autheory-lab-events", pinned: true },
+  );
+});
+
+test("hosted scenario 4: two namespaces in one account stay distinct", () => {
+  const acme = physicalResourceName(hostedContext(), "lambda_function", "worker", {}, []);
+  const globex = physicalResourceName(hostedContext({ namespace: "globex" }), "lambda_function", "worker", {}, []);
+  assert.deepEqual(acme, { name: "acme-shop-lab-worker" });
+  assert.deepEqual(globex, { name: "globex-shop-lab-worker" });
+  assert.notEqual(acme.name, globex.name);
+
+  // The section 11.4 artifact carries the hosted names, so the reservation index
+  // reserves the namespaced forms and never collides.
+  const artifact = synthCheck([
+    { name: acme.name, type: "lambda_function", logical_id: "AcmeWorker" },
+    { name: globex.name, type: "lambda_function", logical_id: "GlobexWorker" },
+  ]);
+  assert.deepEqual(artifact.map((row) => row.name), ["acme-shop-lab-worker", "globex-shop-lab-worker"]);
+});
+
+test("hosted scenario 5: the account and Region are caller inputs, never environment", () => {
+  const saved = {};
+  for (const key of ["AWS_ACCOUNT_ID", "AWS_REGION", "AWS_DEFAULT_REGION", "NAMESPACE", "APP_THEORY_NAMESPACE"]) {
+    saved[key] = process.env[key];
+    process.env[key] = "999999999999";
+  }
+  try {
+    assert.deepEqual(physicalResourceName(hostedContext(), "s3_bucket", "uploads", {}, []), {
+      name: "acme-shop-lab-uploads-123456789012-us-east-1-an",
+      bucket_name_prefix: "acme-shop-lab-uploads",
+      bucket_namespace: "account-regional",
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  // An unresolved CDK token is not a concrete account or Region, so synth fails
+  // instead of deferring a deploy-time name.
+  for (const context of [
+    hostedContext({ account: "${Token[TOKEN.1]}" }),
+    hostedContext({ region: "${Token[TOKEN.2]}" }),
+    hostedContext({ account: "" }),
+    hostedContext({ region: "" }),
+  ]) {
+    assert.throws(() => validateNamingContext(context));
+  }
+
+  // The label rule applies to any non-platform namespace, hosted or not.
+  assert.throws(
+    () => validateNamingContext({
+      namespace: "northwind-trade", app: "shop", stage: "lab", account: "123456789012", region: "us-east-1",
+    }),
+    (error) => error.message === "hosted namespace longer than 12 characters",
+  );
+
+  // The exported surface agrees on the cap and the reserved prefixes.
+  assert.equal(HOSTED_NAMESPACE_MAX, 12);
+  assert.doesNotThrow(() => validateHostedNamespace("twelve-chars"));
+  assert.doesNotThrow(() => validateHostedNamespace("theorycloud"));
+  assert.throws(() => validateHostedNamespace("thirteen-char"), /12 characters/);
 });

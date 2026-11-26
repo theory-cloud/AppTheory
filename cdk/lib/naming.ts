@@ -109,6 +109,16 @@ export interface AppTheoryNamingContextValues {
   readonly generated?: string[];
 
   /**
+   * `true` for a deployment TheoryCloud.ai places on a tenant's behalf
+   * (contract section 1, r5). A hosted deployment always supplies its
+   * namespace, never uses the reserved platform namespace, and carries the
+   * namespace in every derived name (contract section 2). Only first-party
+   * platform apps omit it.
+   * @default false
+   */
+  readonly hosted?: boolean;
+
+  /**
    * Naming profile.
    * @default AppTheoryNamingProfile.DERIVED
    */
@@ -347,6 +357,8 @@ const SECRET_TAIL_RE = /-[A-Za-z0-9]{6}$/;
 const S3_EDGES_RE = /^[a-z0-9].*[a-z0-9]$/;
 const LOG_PREFIX = "theorycloud";
 const ROLE_POLICY_MAX = 10240;
+/** The longest hosted namespace label, in characters (contract section 1, r5 rev1). */
+const HOSTED_NAMESPACE_MAX = 12;
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 
 interface Rule {
@@ -488,6 +500,16 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+/**
+ * The refusal contract sections 1 and 4 state for the two live-compatibility
+ * naming tools on a namespaced context: a deployment whose names carry the
+ * tenant namespace takes neither the legacy profile nor a generated entry,
+ * because either would produce a name with no namespace and collide across
+ * tenants in a pooled account.
+ */
+const HOSTED_PROFILE_FAILURE =
+  "a hosted deployment takes no legacy profile or generated entries";
+
 function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -519,6 +541,64 @@ function namespaceOf(values: AppTheoryNamingContextValues): string {
   return values.namespace ?? LOG_PREFIX;
 }
 
+/**
+ * Apply the hosted namespace label rule (contract section 1, r5 rev1): a
+ * namespace other than the reserved platform one is at most
+ * `HOSTED_NAMESPACE_MAX` characters and never starts with `aws` or `ssm`. Those
+ * two prefixes are reserved by AWS, so a name carrying them cannot be created.
+ */
+function validateHostedNamespace(namespace: string): void {
+  if (namespace === LOG_PREFIX) return;
+  if (namespace.length > HOSTED_NAMESPACE_MAX) {
+    fail("hosted namespace longer than 12 characters");
+  }
+  if (namespace.startsWith("aws") || namespace.startsWith("ssm")) {
+    fail("hosted namespace must not start with aws or ssm");
+  }
+}
+
+/**
+ * Whether every derived name carries the namespace (contract section 2, r5):
+ * true for a hosted deployment and for any namespace other than the reserved
+ * platform one. The platform namespace keeps the compatibility form byte for
+ * byte, so the live hard gate (contract section 4) is unchanged.
+ */
+function namespaced(values: AppTheoryNamingContextValues): boolean {
+  return values.hosted === true || namespaceOf(values) !== LOG_PREFIX;
+}
+
+/**
+ * The `{namespace}-{app}-{stage}-{logical}` stem of a `dash` name or an S3
+ * account-regional prefix, with `/` in the logical name replaced by `-`.
+ */
+function dashStem(values: AppTheoryNamingContextValues, logical: string): string {
+  const parts = [values.app, values.stage, logical.replace(/\//g, "-")];
+  if (namespaced(values)) parts.unshift(namespaceOf(values));
+  return parts.join("-");
+}
+
+/**
+ * The `{namespace}/{app}/{stage}/{logical}` stem of a `path` name.
+ */
+function pathStem(values: AppTheoryNamingContextValues, logical: string): string {
+  const parts = [values.app, values.stage, logical];
+  if (namespaced(values)) parts.unshift(namespaceOf(values));
+  return parts.join("/");
+}
+
+/**
+ * The leading namespace component a hosted pin must carry, exactly where the
+ * derived form puts it (contract section 4, r5 rev1, rev2). Containing the
+ * namespace elsewhere is not enough: `shop-lab-events` is not a pin for
+ * namespace `hop`.
+ */
+function hostedPinLead(values: AppTheoryNamingContextValues, rule: Rule): string {
+  const namespace = namespaceOf(values);
+  if (rule.kind === "path") return `${rule.lead ?? ""}${namespace}/`;
+  if (rule.kind === "log") return `${LOG_PREFIX}_${namespace}_`;
+  return `${namespace}-`;
+}
+
 function sortedCopy(values: string[] | undefined): string[] {
   return [...new Set(values ?? [])].sort();
 }
@@ -536,13 +616,58 @@ export class AppTheoryResourceNaming {
 
   /**
    * Validate the bound context grammar. Throws on an invalid context.
+   *
+   * The naming profile and the context's own generated entries are properties of
+   * the context, so a namespaced context that carries either is refused here —
+   * when the context is validated, at construction — and not only as a side
+   * effect of composing a physical name (contract sections 1 and 4, r5;
+   * SAN-AT-N5-01). A hosted context that declares nothing yet would otherwise
+   * stand as a valid context whose every future name could carry no namespace.
    */
   public static validateContext(values: AppTheoryNamingContextValues): void {
     if (!APP_RE.test(values.app)) fail("app");
     if (!STAGE_RE.test(values.stage)) fail("stage");
     if (!ACCOUNT_RE.test(values.account)) fail("account");
     if (!REGION_RE.test(values.region)) fail("region");
-    if (!NAMESPACE_RE.test(namespaceOf(values))) fail("namespace");
+    // r5 rev1: a hosted deployment always supplies its namespace; it never
+    // defaults to the platform form.
+    if (values.hosted === true && !values.namespace) {
+      fail("a hosted deployment must supply its namespace");
+    }
+    const namespace = namespaceOf(values);
+    if (!NAMESPACE_RE.test(namespace)) fail("namespace");
+    // r5 rev1: `theorycloud` is reserved for first-party platform apps. A hosted
+    // deployment may never use it, because its names would then collide with the
+    // platform app's in a pooled account.
+    if (values.hosted === true && namespace === LOG_PREFIX) {
+      fail(`namespace ${LOG_PREFIX} is reserved for first-party platform apps`);
+    }
+    validateHostedNamespace(namespace);
+    if (namespaced(values)) {
+      const legacy = (values.namingProfile ?? AppTheoryNamingProfile.DERIVED) === AppTheoryNamingProfile.LEGACY;
+      if (legacy || (values.generated ?? []).length > 0) {
+        fail(HOSTED_PROFILE_FAILURE);
+      }
+    }
+  }
+
+  /**
+   * Apply the hosted namespace label rule to one namespace (contract section 1,
+   * r5 rev1): a namespace other than the reserved platform one is at most 12
+   * characters and never starts with `aws` or `ssm`. Throws on a namespace
+   * outside it.
+   */
+  public static validateHostedNamespace(namespace: string): void {
+    validateHostedNamespace(namespace);
+  }
+
+  /**
+   * Whether every derived name under these values carries the namespace
+   * (contract section 2, r5): true for a hosted deployment and for any namespace
+   * other than the reserved platform one.
+   */
+  public static namespaced(values: AppTheoryNamingContextValues): boolean {
+    return namespaced(values);
   }
 
   /**
@@ -561,8 +686,13 @@ export class AppTheoryResourceNaming {
 
   /**
    * Map a logical log source to its physical log-group name.
+   *
+   * The context is validated first, so resolving one log-source name is enough
+   * to refuse a context that breaks a rule: a forbidden naming profile must not
+   * survive on the log-only path (contract sections 1 and 4, r5; SAN-AT-N5-01).
    */
   public static logGroupName(values: AppTheoryNamingContextValues, logical: string): string {
+    AppTheoryResourceNaming.validateContext(values);
     if (!logical.startsWith("logs/")) fail("log logical must start with logs/");
     return logPrefix(values) + logical.replace(/\//g, "_");
   }
@@ -572,6 +702,13 @@ export class AppTheoryResourceNaming {
    * entry means CloudFormation generates the name today and the construct sets
    * no physical-name property. Generated entries are legacy-only; a legacy
    * profile needs exactly one of a pin or a generated entry.
+   *
+   * A hosted deployment (`hosted: true`, or any namespace other than the
+   * platform one) carries the namespace as the first component of every derived
+   * name, its S3 bucket-name prefix included, so it reaches the shortened
+   * over-budget form sooner (contract section 2.4). It takes no generated entry
+   * and no legacy profile, and a pin must start with its namespace component
+   * (contract sections 2 and 4, r5).
    */
   public static physicalName(
     values: AppTheoryNamingContextValues,
@@ -584,6 +721,13 @@ export class AppTheoryResourceNaming {
     if (!rule) fail(`resource type ${resourceType}`);
     const generated = values.generated ?? [];
     const legacy = (values.namingProfile ?? AppTheoryNamingProfile.DERIVED) === AppTheoryNamingProfile.LEGACY;
+    // r5 rev2: the legacy profile and generated entries are first-party
+    // live-compatibility tools only. A hosted deployment takes neither, because a
+    // pinned or CloudFormation-generated name carries no namespace and would
+    // collide across tenants in a pooled account.
+    if (namespaced(values) && (legacy || generated.length > 0)) {
+      fail(HOSTED_PROFILE_FAILURE);
+    }
     if (generated.length > 0 && !legacy) {
       fail("generated entries are only valid under the legacy naming profile");
     }
@@ -596,7 +740,15 @@ export class AppTheoryResourceNaming {
       fail("an API name takes a pin, never a generated entry");
     }
     if (pin !== undefined && keepGenerated) fail("a resource has both a pin and a generated entry");
-    if (pin !== undefined) return { name: pin, pinned: true };
+    if (pin !== undefined) {
+      // r5 rev2: a hosted pin starts with its namespace component, as the
+      // derived form does. A namespace that merely appears somewhere in the name
+      // is not the namespace component.
+      if (namespaced(values) && !pin.startsWith(hostedPinLead(values, rule))) {
+        fail("a hosted pin must start with the namespace component");
+      }
+      return { name: pin, pinned: true };
+    }
     if (keepGenerated) return { generated: true };
     if (legacy) {
       fail(`legacy naming profile requires a pin or a generated entry for ${key}`);
@@ -606,12 +758,12 @@ export class AppTheoryResourceNaming {
     if (rule.kind === "s3ar") {
       const suffix = AppTheoryResourceNaming.s3AccountRegionalSuffix(values);
       const budget = rule.max - suffix.length;
-      const prefix = shorten(`${values.app}-${values.stage}-${logical.replace(/\//g, "-")}`, budget);
+      const prefix = shorten(dashStem(values, logical), budget);
       out = { name: prefix + suffix, bucketNamePrefix: prefix, bucketNamespace: "account-regional" };
     } else if (rule.kind === "dash") {
-      out = { name: shorten(`${values.app}-${values.stage}-${logical.replace(/\//g, "-")}`, rule.max) };
+      out = { name: shorten(dashStem(values, logical), rule.max) };
     } else if (rule.kind === "path") {
-      const full = `${rule.lead ?? ""}${values.app}/${values.stage}/${logical}`;
+      const full = `${rule.lead ?? ""}${pathStem(values, logical)}`;
       if (resourceType === "secret" && SECRET_TAIL_RE.test(full)) {
         fail("secret name must not end with a hyphen and six characters");
       }

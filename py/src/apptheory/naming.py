@@ -59,6 +59,8 @@ def resource_name(app_name: str, resource: str, stage: str, tenant: str = "") ->
 RESOURCE_NAMING_CONTRACT = "theorycloud_resource_naming.v0.1"
 LOG_SOURCE_PREFIX = "theorycloud"
 ROLE_POLICY_MAX = 10240
+# The longest hosted namespace label, in characters (contract section 1, r5 rev1).
+HOSTED_NAMESPACE_MAX = 12
 
 _SEGMENT = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 _LOGICAL_RE = re.compile(rf"^{_SEGMENT}(?:/{_SEGMENT})*$")
@@ -111,6 +113,13 @@ KEEPER_EVENTS = "events"
 KEEPER_ALLOWED_NO_EVENTS = "allowed_no_events"
 KEEPER_NOT_SHARED = "not_shared"
 
+# The refusal contract sections 1 and 4 state for the two live-compatibility
+# naming tools on a namespaced context: a deployment whose names carry the tenant
+# namespace takes neither the legacy profile nor a generated entry, because
+# either would produce a name with no namespace and collide across tenants in a
+# pooled account.
+_HOSTED_PROFILE_FAILURE = "a hosted deployment takes no legacy profile or generated entries"
+
 
 def validate_naming_context(context: dict[str, Any]) -> None:
     """Enforce the bound-context grammar (contract section 1)."""
@@ -122,8 +131,87 @@ def validate_naming_context(context: dict[str, Any]) -> None:
         raise ValueError("account")
     if not _REGION_RE.match(context["region"]):
         raise ValueError("region")
-    if not _NAMESPACE_RE.match(context.get("namespace", LOG_SOURCE_PREFIX)):
+    # r5 rev1: a hosted deployment always supplies its namespace; it never
+    # defaults to the platform form.
+    if context.get("hosted") and not context.get("namespace"):
+        raise ValueError("a hosted deployment must supply its namespace")
+    namespace = context.get("namespace", LOG_SOURCE_PREFIX)
+    if not _NAMESPACE_RE.match(namespace):
         raise ValueError("namespace")
+    # r5 rev1: `theorycloud` is reserved for first-party platform apps. A hosted
+    # deployment may never use it, because its names would then collide with the
+    # platform app's in a pooled account.
+    if context.get("hosted") and namespace == LOG_SOURCE_PREFIX:
+        raise ValueError(f"namespace {LOG_SOURCE_PREFIX} is reserved for first-party platform apps")
+    validate_hosted_namespace(namespace)
+    # r5 section 4: the naming profile and the context's own generated entries are
+    # properties of the context, so a forbidden one is refused here -- when the
+    # context is validated -- and not only as a side effect of composing a
+    # physical name. A hosted context that names nothing yet would otherwise stand
+    # as a valid context whose every future name could carry no namespace
+    # (SAN-AT-N5-01).
+    if namespaced_context(context):
+        legacy = context.get("naming_profile", "derived") == "legacy"
+        if legacy or context.get("generated"):
+            raise ValueError(_HOSTED_PROFILE_FAILURE)
+
+
+def validate_hosted_namespace(namespace: str) -> None:
+    """Apply the hosted namespace label rule (contract section 1, r5 rev1).
+
+    A namespace other than the reserved platform one is at most
+    ``HOSTED_NAMESPACE_MAX`` characters and never starts with ``aws`` or ``ssm``.
+    Those two prefixes are reserved by AWS, so a name carrying them cannot be
+    created.
+    """
+    if namespace == LOG_SOURCE_PREFIX:
+        return
+    if len(namespace) > HOSTED_NAMESPACE_MAX:
+        raise ValueError("hosted namespace longer than 12 characters")
+    if namespace.startswith(("aws", "ssm")):
+        raise ValueError("hosted namespace must not start with aws or ssm")
+
+
+def namespaced_context(context: dict[str, Any]) -> bool:
+    """Whether every derived name carries the namespace (contract section 2, r5).
+
+    True for a hosted deployment and for any namespace other than the reserved
+    platform one. The platform namespace keeps the compatibility form byte for
+    byte, so the live hard gate (contract section 4) is unchanged.
+    """
+    return bool(context.get("hosted")) or context.get("namespace", LOG_SOURCE_PREFIX) != LOG_SOURCE_PREFIX
+
+
+def dash_stem(context: dict[str, Any], logical: str) -> str:
+    """The ``{namespace}-{app}-{stage}-{logical}`` stem of a ``dash`` name."""
+    parts = [context["app"], context["stage"], logical.replace("/", "-")]
+    if namespaced_context(context):
+        parts.insert(0, context["namespace"])
+    return "-".join(parts)
+
+
+def path_stem(context: dict[str, Any], logical: str) -> str:
+    """The ``{namespace}/{app}/{stage}/{logical}`` stem of a ``path`` name."""
+    parts = [context["app"], context["stage"], logical]
+    if namespaced_context(context):
+        parts.insert(0, context["namespace"])
+    return "/".join(parts)
+
+
+def hosted_pin_lead(context: dict[str, Any], rule: dict[str, Any]) -> str:
+    """The leading namespace component a hosted pin must carry (contract section 4).
+
+    Exactly where the derived form puts it (r5 rev1, rev2). Containing the
+    namespace elsewhere is not enough: ``shop-lab-events`` is not a pin for
+    namespace ``hop``.
+    """
+    namespace = context["namespace"]
+    kind = rule["kind"]
+    if kind == "path":
+        return f"{rule.get('lead', '')}{namespace}/"
+    if kind == "log":
+        return f"{LOG_SOURCE_PREFIX}_{namespace}_"
+    return f"{namespace}-"
 
 
 def _hash8(text: str) -> str:
@@ -151,7 +239,14 @@ def log_source_prefix(context: dict[str, Any]) -> str:
 
 
 def log_group_name(context: dict[str, Any], logical: str) -> str:
-    """Map a logical log source to its physical log-group name."""
+    """Map a logical log source to its physical log-group name.
+
+    The context is validated first, so a context that breaks a rule is refused
+    here as well: resolving one log-source name is enough to establish the
+    context's naming, and a forbidden naming profile must not survive on the
+    log-only path (SAN-AT-N5-01).
+    """
+    validate_naming_context(context)
     if not logical.startswith("logs/"):
         raise ValueError("log logical must start with logs/")
     return log_source_prefix(context) + logical.replace("/", "_")
@@ -169,6 +264,11 @@ def physical_resource_name(
     Pins are returned verbatim. A generated entry means CloudFormation generates
     the name today, so the construct sets no physical-name property and the
     result is ``{"generated": True}``. Generated entries are legacy-only.
+
+    A hosted deployment (``hosted: True``, or any namespace other than the
+    platform one) carries the namespace as the first component of every derived
+    name, its S3 prefix included, and takes no pin whose name does not start with
+    that namespace component (contract sections 2 and 4, r5).
     """
     validate_naming_context(context)
     if not _LOGICAL_RE.match(logical):
@@ -178,6 +278,12 @@ def physical_resource_name(
         raise ValueError(f"resource type {resource_type}")
     generated = generated or []
     legacy = context.get("naming_profile", "derived") == "legacy"
+    # r5 rev2: the legacy profile and generated entries are first-party
+    # live-compatibility tools only. A hosted deployment takes neither, because a
+    # pinned or CloudFormation-generated name carries no namespace and would
+    # collide across tenants in a pooled account.
+    if namespaced_context(context) and (legacy or generated):
+        raise ValueError(_HOSTED_PROFILE_FAILURE)
     if generated and not legacy:
         raise ValueError("generated entries are only valid under the legacy naming profile")
     key = f"{resource_type}:{logical}"
@@ -190,6 +296,11 @@ def physical_resource_name(
     if pin is not None and keep_generated:
         raise ValueError("a resource has both a pin and a generated entry")
     if pin is not None:
+        # r5 rev2: a hosted pin starts with its namespace component, as the
+        # derived form does. A namespace that merely appears somewhere in the
+        # name is not the namespace component.
+        if namespaced_context(context) and not pin.startswith(hosted_pin_lead(context, rule)):
+            raise ValueError("a hosted pin must start with the namespace component")
         return {"name": pin, "pinned": True}
     if keep_generated:
         return {"generated": True}
@@ -219,20 +330,16 @@ def _compose(
     if kind == "s3ar":
         suffix = s3_account_regional_suffix(context)
         budget = rule["max"] - len(suffix)
-        prefix = shorten_resource_name(f"{context['app']}-{context['stage']}-{logical.replace('/', '-')}", budget)
+        prefix = shorten_resource_name(dash_stem(context, logical), budget)
         return {
             "bucket_name_prefix": prefix,
             "bucket_namespace": "account-regional",
             "name": prefix + suffix,
         }
     if kind == "dash":
-        return {
-            "name": shorten_resource_name(
-                f"{context['app']}-{context['stage']}-{logical.replace('/', '-')}", rule["max"]
-            )
-        }
+        return {"name": shorten_resource_name(dash_stem(context, logical), rule["max"])}
     if kind == "path":
-        full = f"{rule.get('lead', '')}{context['app']}/{context['stage']}/{logical}"
+        full = f"{rule.get('lead', '')}{path_stem(context, logical)}"
         if resource_type == "secret" and _SECRET_TAIL_RE.search(full):
             raise ValueError("secret name must not end with a hyphen and six characters")
         if resource_type == "ssm_parameter" and full.count("/") > 15:

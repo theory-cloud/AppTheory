@@ -78,6 +78,10 @@ func AppTheoryResourceNaming_KeeperDecision(rules *AppTheoryVisibilityRules, log
 }
 
 // Map a logical log source to its physical log-group name.
+//
+// The context is validated first, so resolving one log-source name is enough
+// to refuse a context that breaks a rule: a forbidden naming profile must not
+// survive on the log-only path (contract sections 1 and 4, r5; SAN-AT-N5-01).
 func AppTheoryResourceNaming_LogGroupName(values *AppTheoryNamingContextValues, logical *string) *string {
 	_init_.Initialize()
 
@@ -134,6 +138,25 @@ func AppTheoryResourceNaming_ManifestJson(manifest *AppTheoryVisibilityManifest)
 	return returns
 }
 
+// Whether every derived name under these values carries the namespace (contract section 2, r5): true for a hosted deployment and for any namespace other than the reserved platform one.
+func AppTheoryResourceNaming_Namespaced(values *AppTheoryNamingContextValues) *bool {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_NamespacedParameters(values); err != nil {
+		panic(err)
+	}
+	var returns *bool
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"namespaced",
+		[]interface{}{values},
+		&returns,
+	)
+
+	return returns
+}
+
 // The scope in which AWS requires a type's names to be unique (contract section 11.1). A type the contract states no scope for is refused: it cannot be reserved, so it cannot be deployed through the index until a revision states its scope.
 func AppTheoryResourceNaming_NamingScope(resourceType *string) AppTheoryNamingScope {
 	_init_.Initialize()
@@ -159,6 +182,13 @@ func AppTheoryResourceNaming_NamingScope(resourceType *string) AppTheoryNamingSc
 // entry means CloudFormation generates the name today and the construct sets
 // no physical-name property. Generated entries are legacy-only; a legacy
 // profile needs exactly one of a pin or a generated entry.
+//
+// A hosted deployment (`hosted: true`, or any namespace other than the
+// platform one) carries the namespace as the first component of every derived
+// name, its S3 bucket-name prefix included, so it reaches the shortened
+// over-budget form sooner (contract section 2.4). It takes no generated entry
+// and no legacy profile, and a pin must start with its namespace component
+// (contract sections 2 and 4, r5).
 func AppTheoryResourceNaming_PhysicalName(values *AppTheoryNamingContextValues, resourceType *string, logical *string) *AppTheoryPhysicalName {
 	_init_.Initialize()
 
@@ -283,9 +313,14 @@ func AppTheoryResourceNaming_SynthCheck(entries *[]*AppTheoryDerivedNameInput) *
 	return returns
 }
 
-// Validate the bound context grammar.
+// Validate the bound context grammar. Throws on an invalid context.
 //
-// Throws on an invalid context.
+// The naming profile and the context's own generated entries are properties of
+// the context, so a namespaced context that carries either is refused here —
+// when the context is validated, at construction — and not only as a side
+// effect of composing a physical name (contract sections 1 and 4, r5;
+// SAN-AT-N5-01). A hosted context that declares nothing yet would otherwise
+// stand as a valid context whose every future name could carry no namespace.
 func AppTheoryResourceNaming_ValidateContext(values *AppTheoryNamingContextValues) {
 	_init_.Initialize()
 
@@ -296,6 +331,23 @@ func AppTheoryResourceNaming_ValidateContext(values *AppTheoryNamingContextValue
 		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
 		"validateContext",
 		[]interface{}{values},
+	)
+}
+
+// Apply the hosted namespace label rule to one namespace (contract section 1, r5 rev1): a namespace other than the reserved platform one is at most 12 characters and never starts with `aws` or `ssm`.
+//
+// Throws on a namespace
+// outside it.
+func AppTheoryResourceNaming_ValidateHostedNamespace(namespace *string) {
+	_init_.Initialize()
+
+	if err := validateAppTheoryResourceNaming_ValidateHostedNamespaceParameters(namespace); err != nil {
+		panic(err)
+	}
+	_jsii_.StaticInvokeVoid(
+		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
+		"validateHostedNamespace",
+		[]interface{}{namespace},
 	)
 }
 

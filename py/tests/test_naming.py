@@ -8,16 +8,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 from apptheory import (  # noqa: E402
+    HOSTED_NAMESPACE_MAX,
     KEEPER_ALLOWED_NO_EVENTS,
     KEEPER_EVENTS,
     KEEPER_NOT_SHARED,
     compile_visibility_policy,
     keeper_decision,
     log_group_name,
+    namespaced_context,
     naming_scope,
     physical_resource_name,
     source_visible,
     synth_check,
+    validate_hosted_namespace,
     validate_naming_context,
     visibility_manifest,
     visibility_preview,
@@ -276,6 +279,335 @@ class VisibilityTests(unittest.TestCase):
                     naming_scope(inherited)
                 with self.assertRaisesRegex(ValueError, "no stated naming scope"):
                     synth_check([{"name": "shop-lab-worker", "type": inherited, "logical_id": "Worker"}])
+
+# ---- hosted namespaces (contract sections 1, 2, 2.4 and 4, r5) -------------
+#
+# The five actor/state scenarios of the AT-N5 milestone, one test per scenario,
+# so every runtime surface can be compared line for line.
+
+
+def hosted_context(**overrides):
+    context = {
+        "namespace": "acme",
+        "app": "shop",
+        "stage": "lab",
+        "account": "123456789012",
+        "region": "us-east-1",
+        "hosted": True,
+    }
+    context.update(overrides)
+    return context
+
+
+class HostedNamingTests(unittest.TestCase):
+    def test_scenario_1_platform_app_keeps_r4_names(self) -> None:
+        platform = {"app": "theory-mcp-server", "stage": "lab", "account": "191637461429", "region": "us-east-1"}
+        expected = {
+            ("lambda_function", "worker"): {"name": "theory-mcp-server-lab-worker"},
+            ("dynamodb_table", "events"): {"name": "theory-mcp-server-lab-events"},
+            ("s3_bucket", "media"): {
+                "name": "theory-mcp-server-lab-media-191637461429-us-east-1-an",
+                "bucket_name_prefix": "theory-mcp-server-lab-media",
+                "bucket_namespace": "account-regional",
+            },
+            ("secret", "provider/stripe"): {"name": "theory-mcp-server/lab/provider/stripe"},
+            ("ssm_parameter", "config"): {"name": "/theory-mcp-server/lab/config"},
+            ("kms_alias", "data"): {"name": "alias/theory-mcp-server/lab/data"},
+            ("log_group", "logs/runtime/api"): {
+                "name": "theorycloud_theorycloud_theory-mcp-server_lab_logs_runtime_api"
+            },
+        }
+        for (resource_type, logical), want in expected.items():
+            with self.subTest(resource_type=resource_type, logical=logical):
+                self.assertEqual(physical_resource_name(platform, resource_type, logical), want)
+
+        # An explicit platform namespace and an omitted one are the same context.
+        self.assertFalse(namespaced_context(platform))
+        self.assertFalse(namespaced_context({**platform, "namespace": "theorycloud"}))
+        self.assertEqual(
+            physical_resource_name({**platform, "namespace": "theorycloud"}, "lambda_function", "worker"),
+            physical_resource_name(platform, "lambda_function", "worker"),
+        )
+
+        # The pins and generated entries a platform app relies on today still apply.
+        self.assertEqual(
+            physical_resource_name(
+                {**platform, "namespace": "theorycloud"},
+                "lambda_function",
+                "worker",
+                {"lambda_function:worker": "theory-mcp-server-lab-worker-v1"},
+            ),
+            {"name": "theory-mcp-server-lab-worker-v1", "pinned": True},
+        )
+        self.assertEqual(
+            physical_resource_name(
+                {**platform, "namespace": "theorycloud", "naming_profile": "legacy"},
+                "dynamodb_table",
+                "events",
+                None,
+                ["dynamodb_table:events"],
+            ),
+            {"generated": True},
+        )
+
+    def test_scenario_2_hosted_names_carry_the_namespace(self) -> None:
+        cases = [
+            (hosted_context(), "lambda_function", "worker", {"name": "acme-shop-lab-worker"}),
+            (hosted_context(), "dynamodb_table", "orders", {"name": "acme-shop-lab-orders"}),
+            (
+                hosted_context(),
+                "s3_bucket",
+                "uploads",
+                {
+                    "name": "acme-shop-lab-uploads-123456789012-us-east-1-an",
+                    "bucket_name_prefix": "acme-shop-lab-uploads",
+                    "bucket_namespace": "account-regional",
+                },
+            ),
+            (
+                hosted_context(app="storefront-checkout"),
+                "s3_bucket",
+                "customer-uploads-archive",
+                {
+                    "name": "acme-storefront-checkout-lab-5cs2pek2-123456789012-us-east-1-an",
+                    "bucket_name_prefix": "acme-storefront-checkout-lab-5cs2pek2",
+                    "bucket_namespace": "account-regional",
+                },
+            ),
+            (
+                hosted_context(namespace="northwind", app="customer-portal-analytics"),
+                "iam_role",
+                "keeper-reader-cross-account",
+                {"name": "northwind-customer-portal-analytics-lab-keeper-reader-c-r3njssl4"},
+            ),
+            (hosted_context(), "secret", "provider/stripe", {"name": "acme/shop/lab/provider/stripe"}),
+            (
+                hosted_context(),
+                "ssm_parameter",
+                "config/feature-flags",
+                {"name": "/acme/shop/lab/config/feature-flags"},
+            ),
+            (hosted_context(), "kms_alias", "data", {"name": "alias/acme/shop/lab/data"}),
+            (
+                hosted_context(),
+                "log_group",
+                "logs/runtime/api",
+                {"name": "theorycloud_acme_shop_lab_logs_runtime_api"},
+            ),
+        ]
+        for context, resource_type, logical, want in cases:
+            with self.subTest(resource_type=resource_type, logical=logical):
+                self.assertEqual(physical_resource_name(context, resource_type, logical), want)
+
+        # A hosted pin is returned verbatim when it starts with its namespace
+        # component, exactly where the derived form puts it.
+        self.assertEqual(
+            physical_resource_name(
+                hosted_context(),
+                "dynamodb_table",
+                "events",
+                {"dynamodb_table:events": "acme-shop-lab-events-v1"},
+            ),
+            {"name": "acme-shop-lab-events-v1", "pinned": True},
+        )
+        for resource_type, logical, pin in (
+            ("ssm_parameter", "config", "/acme/shop/lab/config-v2"),
+            ("kms_alias", "data", "alias/acme/shop/lab/data-v2"),
+            ("log_group", "logs/runtime/api", "theorycloud_acme_shop_lab_logs_runtime_api"),
+        ):
+            with self.subTest(resource_type=resource_type):
+                physical_resource_name(hosted_context(), resource_type, logical, {f"{resource_type}:{logical}": pin})
+
+    def test_scenario_3_every_broken_hosted_context_is_refused(self) -> None:
+        cases = [
+            (
+                "missing namespace",
+                {"app": "shop", "stage": "lab", "account": "123456789012", "region": "us-east-1", "hosted": True},
+                None,
+                "a hosted deployment must supply its namespace",
+            ),
+            ("empty namespace", hosted_context(namespace=""), None, "a hosted deployment must supply its namespace"),
+            (
+                "namespace over 12 characters",
+                hosted_context(namespace="northwind-trade"),
+                None,
+                "hosted namespace longer than 12 characters",
+            ),
+            (
+                "namespace starts with aws",
+                hosted_context(namespace="awsome"),
+                None,
+                "hosted namespace must not start with aws or ssm",
+            ),
+            (
+                "namespace starts with ssm",
+                hosted_context(namespace="ssmtools"),
+                None,
+                "hosted namespace must not start with aws or ssm",
+            ),
+            (
+                "reserved platform namespace",
+                hosted_context(namespace="theorycloud"),
+                None,
+                "namespace theorycloud is reserved for first-party platform apps",
+            ),
+            (
+                "hosted pin without the namespace component",
+                hosted_context(),
+                {"dynamodb_table:events": "shop-lab-events"},
+                "a hosted pin must start with the namespace component",
+            ),
+            (
+                "hosted pin with the namespace as a substring only",
+                hosted_context(namespace="hop"),
+                {"dynamodb_table:events": "shop-lab-events"},
+                "a hosted pin must start with the namespace component",
+            ),
+        ]
+        for name, context, pins, want in cases:
+            with self.subTest(name):
+                with self.assertRaisesRegex(ValueError, want):
+                    physical_resource_name(context, "dynamodb_table", "events", pins)
+                if "pin" not in want:
+                    with self.assertRaisesRegex(ValueError, want):
+                        validate_naming_context(context)
+
+        # The two live-compatibility tools are first-party only (section 4 r5 rev2).
+        legacy = hosted_context(naming_profile="legacy")
+        for call in (
+            lambda: physical_resource_name(
+                legacy, "dynamodb_table", "events", {"dynamodb_table:events": "acme-shop-lab-events"}
+            ),
+            lambda: physical_resource_name(legacy, "dynamodb_table", "events", None, ["dynamodb_table:events"]),
+        ):
+            with self.assertRaisesRegex(ValueError, "a hosted deployment takes no legacy profile or generated entries"):
+                call()
+
+        # The lambda service path is not a hosted log source either.
+        with self.assertRaisesRegex(ValueError, "a hosted pin must start with the namespace component"):
+            physical_resource_name(
+                hosted_context(),
+                "log_group",
+                "logs/runtime/api",
+                {"log_group:logs/runtime/api": "/aws/lambda/acme-shop-lab-worker"},
+            )
+
+    def test_scenario_3b_forbidden_profile_refused_without_a_composed_name(self) -> None:
+        """SAN-AT-N5-01: the legacy profile is refused at the context.
+
+        The legacy profile is a property of the context, so a hosted context is
+        refused when the context is validated -- with no naming declarations at
+        all, and with only a log-source name -- not only when a construct
+        composes a physical name.
+        """
+        want = "a hosted deployment takes no legacy profile or generated entries"
+        legacy = hosted_context(naming_profile="legacy")
+
+        # No declarations: the context is the only naming input, and it is refused.
+        with self.assertRaisesRegex(ValueError, want):
+            validate_naming_context(legacy)
+
+        # A log-only declaration: the log-source path refuses too.
+        with self.assertRaisesRegex(ValueError, want):
+            log_group_name(legacy, "logs/runtime/api")
+
+        # A composed name keeps refusing, on the same reason.
+        with self.assertRaisesRegex(ValueError, want):
+            physical_resource_name(
+                legacy, "dynamodb_table", "events", {"dynamodb_table:events": "acme-shop-lab-events"}
+            )
+
+        # A generated entry declared on the context is a context property too.
+        with self.assertRaisesRegex(ValueError, want):
+            validate_naming_context(hosted_context(generated=["dynamodb_table:events"]))
+
+        # Control: the valid derived hosted context still validates, still
+        # resolves a log source, and still composes the hosted name.
+        derived = hosted_context()
+        validate_naming_context(derived)
+        self.assertEqual(log_group_name(derived, "logs/runtime/api"), "theorycloud_acme_shop_lab_logs_runtime_api")
+        self.assertEqual(
+            physical_resource_name(derived, "lambda_function", "worker"), {"name": "acme-shop-lab-worker"}
+        )
+
+        # Control: the platform app keeps the legacy profile, exactly as r4
+        # allowed, so the platform path is not narrowed.
+        platform = lab_context(naming_profile="legacy")
+        validate_naming_context(platform)
+        self.assertEqual(
+            physical_resource_name(platform, "dynamodb_table", "events", {"dynamodb_table:events": "autheory-lab-events"}),
+            {"name": "autheory-lab-events", "pinned": True},
+        )
+
+    def test_scenario_4_two_namespaces_stay_distinct(self) -> None:
+        acme = physical_resource_name(hosted_context(), "lambda_function", "worker")
+        globex = physical_resource_name(hosted_context(namespace="globex"), "lambda_function", "worker")
+        self.assertEqual(acme, {"name": "acme-shop-lab-worker"})
+        self.assertEqual(globex, {"name": "globex-shop-lab-worker"})
+        self.assertNotEqual(acme["name"], globex["name"])
+
+        # The section 11.4 artifact carries the hosted names, so the reservation
+        # index reserves the namespaced forms and never collides.
+        artifact = synth_check(
+            [
+                {"name": acme["name"], "type": "lambda_function", "logical_id": "AcmeWorker"},
+                {"name": globex["name"], "type": "lambda_function", "logical_id": "GlobexWorker"},
+            ]
+        )
+        self.assertEqual([row["name"] for row in artifact], ["acme-shop-lab-worker", "globex-shop-lab-worker"])
+
+    def test_scenario_5_account_and_region_are_caller_inputs(self) -> None:
+        import os
+
+        saved = {}
+        for key in ("AWS_ACCOUNT_ID", "AWS_REGION", "AWS_DEFAULT_REGION", "NAMESPACE", "APP_THEORY_NAMESPACE"):
+            saved[key] = os.environ.get(key)
+            os.environ[key] = "999999999999"
+        try:
+            self.assertEqual(
+                physical_resource_name(hosted_context(), "s3_bucket", "uploads"),
+                {
+                    "name": "acme-shop-lab-uploads-123456789012-us-east-1-an",
+                    "bucket_name_prefix": "acme-shop-lab-uploads",
+                    "bucket_namespace": "account-regional",
+                },
+            )
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        # An unresolved CDK token is not a concrete account or Region, so synth
+        # fails instead of deferring a deploy-time name.
+        for context in (
+            hosted_context(account="${Token[TOKEN.1]}"),
+            hosted_context(region="${Token[TOKEN.2]}"),
+            hosted_context(account=""),
+            hosted_context(region=""),
+        ):
+            with self.assertRaises(ValueError):
+                validate_naming_context(context)
+
+        # The label rule applies to any non-platform namespace, hosted or not.
+        with self.assertRaisesRegex(ValueError, "hosted namespace longer than 12 characters"):
+            validate_naming_context(
+                {
+                    "namespace": "northwind-trade",
+                    "app": "shop",
+                    "stage": "lab",
+                    "account": "123456789012",
+                    "region": "us-east-1",
+                }
+            )
+
+        # The exported surface agrees on the cap and the reserved prefixes.
+        self.assertEqual(HOSTED_NAMESPACE_MAX, 12)
+        validate_hosted_namespace("twelve-chars")
+        validate_hosted_namespace("theorycloud")
+        with self.assertRaisesRegex(ValueError, "12 characters"):
+            validate_hosted_namespace("thirteen-char")
 
 
 if __name__ == "__main__":

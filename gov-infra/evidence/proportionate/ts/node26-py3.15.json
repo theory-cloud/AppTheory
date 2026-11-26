@@ -5,32 +5,32 @@
         "bash",
         "scripts/verify-ts-dist-drift.sh"
       ],
-      "durationSeconds": 1.829,
+      "durationSeconds": 1.657,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T16:11:23Z",
+      "finishedAt": "2026-11-26T06:19:31Z",
       "id": "ts-dist-drift",
-      "inputsDigest": "sha256:74c41bff983d27a100e689ff8a8a388146c0d8c198324b8abadd2bec9e33cbf4",
+      "inputsDigest": "sha256:e1e9dc52cfea6dee69c529bb0770221d2feb416a64f2ed036f07f1187bb664ae",
       "logDigest": "sha256:689cc69789fd8dba267380ace3b0b9f52c5e4f6d5d6edfafe0a46383ccd43758",
-      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261125T161122Z-69402.log",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261126T061929Z-30419.log",
       "reused": false,
-      "startedAt": "2026-11-25T16:11:22Z"
+      "startedAt": "2026-11-26T06:19:29Z"
     },
     {
       "argv": [
         "bash",
         "scripts/verify-ts-pack.sh"
       ],
-      "durationSeconds": 5.62,
+      "durationSeconds": 5.385,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T16:11:29Z",
+      "finishedAt": "2026-11-26T06:19:36Z",
       "id": "ts-pack",
-      "inputsDigest": "sha256:1b08c043e32560e20d8bb14d74bedb48a3b474e5b141a682b091d52dd5026621",
+      "inputsDigest": "sha256:c4d025b890b96ba2e11377f1cfcb6fec49c6a043d195b28008b5d350680e6743",
       "logDigest": "sha256:aaf88daafa5c25da414c8213b9afd3a4aeb4d71f6d7547b20bdca6ab15fdcbbc",
-      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261125T161123Z-69402.log",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261126T061931Z-30419.log",
       "reused": false,
-      "startedAt": "2026-11-25T16:11:23Z"
+      "startedAt": "2026-11-26T06:19:31Z"
     }
   ],
   "consumed": [],
@@ -42,7 +42,7 @@
       "arch": "arm64",
       "os": "darwin"
     },
-    "python": "3.15.2"
+    "python": "3.14.7"
   },
   "gate": "ts",
   "kind": "source",
@@ -52,17 +52,17 @@
   },
   "profile": "node26-py3.15",
   "reason": "",
-  "recordedAt": "2026-11-25T16:11:29Z",
+  "recordedAt": "2026-11-26T06:19:36Z",
   "releaseOnly": {
-    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
-    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "normalizedDigest": "sha256:f0086bb3b5fa0d8d45dc672d3d18a5208727ca9dbff594a38d644d9e9e81761a",
     "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:4945cd42f955d22ffb9e0d709b2bea1559e04b32619c511b144cce1d319f66cc",
+    "digest": "sha256:5a206e16a0e0f4903f7a5f1a2fbd02ab5e5974ba93a46198e192b3ccae4e1499",
     "fileCount": 464,
     "paths": [
       "ts/",
@@ -77,8 +77,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:2f516487e445ff7b08505ba9a38514b31cec3c509519eb44a07092ca2023b5a7",
-    "fileCount": 2788
+    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
+    "fileCount": 2819
   },
   "verdict": "PASS"
 }

@@ -166,6 +166,61 @@ class NamingBindingTests(unittest.TestCase):
             self.assertIn(row["logical_id"], owner_resources)
             self.assertNotIn(row["logical_id"], consumer_resources)
 
+    def test_hosted_legacy_profile_is_refused_at_the_context(self) -> None:
+        """SAN-AT-N5-01: the profile rule belongs to the context.
+
+        A hosted context that carries the forbidden legacy profile is refused
+        when the context is created -- with no naming declarations at all, and
+        with only a log-source name -- not only when a construct composes a
+        physical name, and a refused context emits no artifact. The derived
+        hosted control still synthesizes.
+        """
+        want = "a hosted deployment takes no legacy profile or generated entries"
+
+        def hosted(scope: cdk.Stack, **overrides):
+            return apptheory.AppTheoryNamingContext(
+                scope,
+                "Naming",
+                namespace="acme",
+                hosted=True,
+                app="shop",
+                stage="lab",
+                account="998115851393",
+                region="us-east-1",
+                **overrides,
+            )
+
+        def no_declarations(scope: cdk.Stack) -> None:
+            hosted(scope, naming_profile=apptheory.AppTheoryNamingProfile.LEGACY)
+
+        def log_only(scope: cdk.Stack) -> None:
+            context = hosted(scope, naming_profile=apptheory.AppTheoryNamingProfile.LEGACY)
+            context.log_group_name("logs/runtime/api")
+
+        for label, build in (("no declarations", no_declarations), ("log-only declaration", log_only)):
+            with self.subTest(label):
+                outdir = tempfile.mkdtemp()
+                app = cdk.App(outdir=outdir)
+                with self.assertRaises(Exception) as raised:
+                    build(_stack(app, "Stack"))
+                self.assertIn(want, str(raised.exception))
+                self.assertFalse(
+                    os.path.exists(os.path.join(outdir, "Stack.metadata.json")),
+                    f"{label}: a refused context must emit no artifact",
+                )
+
+        # Control: the valid derived hosted context still synthesizes.
+        outdir = tempfile.mkdtemp()
+        app = cdk.App(outdir=outdir)
+        stack = _stack(app, "Stack")
+        _function(stack, "Worker", "worker", hosted(stack))
+        app.synth()
+        documents = _artifact_documents(outdir, "Stack")
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]["context"]["namespace"], "acme")
+        names = {row["type"]: row["name"] for row in documents[0]["entries"]}
+        self.assertEqual(names["lambda_function"], "acme-shop-lab-worker")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -12212,7 +12212,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 202
+        "line": 212
       },
       "name": "AppTheoryDerivedName",
       "properties": [
@@ -12224,7 +12224,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 223
+            "line": 233
           },
           "name": "logicalId",
           "type": {
@@ -12239,7 +12239,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 218
+            "line": 228
           },
           "name": "scope",
           "type": {
@@ -12254,7 +12254,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 212
+            "line": 222
           },
           "name": "type",
           "type": {
@@ -12270,7 +12270,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 229
+            "line": 239
           },
           "name": "generated",
           "optional": true,
@@ -12288,7 +12288,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 207
+            "line": 217
           },
           "name": "name",
           "optional": true,
@@ -12309,7 +12309,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 171
+        "line": 181
       },
       "name": "AppTheoryDerivedNameInput",
       "properties": [
@@ -12321,7 +12321,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 189
+            "line": 199
           },
           "name": "logicalId",
           "type": {
@@ -12336,7 +12336,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 181
+            "line": 191
           },
           "name": "type",
           "type": {
@@ -12352,7 +12352,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 195
+            "line": 205
           },
           "name": "generated",
           "optional": true,
@@ -12370,7 +12370,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 176
+            "line": 186
           },
           "name": "name",
           "optional": true,
@@ -12391,7 +12391,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 236
+        "line": 246
       },
       "name": "AppTheoryDerivedNames",
       "properties": [
@@ -12403,7 +12403,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 250
+            "line": 260
           },
           "name": "context",
           "type": {
@@ -12418,7 +12418,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 240
+            "line": 250
           },
           "name": "contract",
           "type": {
@@ -12433,7 +12433,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 256
+            "line": 266
           },
           "name": "entries",
           "type": {
@@ -12453,7 +12453,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 245
+            "line": 255
           },
           "name": "schema",
           "type": {
@@ -25667,7 +25667,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/naming-context.ts",
-          "line": 190
+          "line": 214
         },
         "parameters": [
           {
@@ -25693,7 +25693,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/naming-context.ts",
-        "line": 124
+        "line": 142
       },
       "methods": [
         {
@@ -25703,7 +25703,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 414
+            "line": 455
           },
           "name": "declareFixedName",
           "parameters": [
@@ -25729,12 +25729,12 @@
         },
         {
           "docs": {
-            "remarks": "Synthesis refuses two different logical resources in one naming context that\nderive the same name in the same naming scope, and emits the derived-name\nartifact the name reservation index reserves. A construct declares every\nphysically named resource it creates; an application that names its own\nresource with `physicalName` declares it here once the resource exists, so\nthe artifact covers it too.\n\nA name AppTheory only wires for a resource another stack owns, such as\n`AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that\nstack declares its own resource.\n\nA `log_group` type declares a log-source name (contract section 3): a log\ngroup takes no pin or generated entry.",
+            "remarks": "Synthesis refuses two different logical resources in one naming context that\nderive the same name in the same naming scope, and emits the derived-name\nartifact the name reservation index reserves. A construct declares every\nphysically named resource it creates; an application that names its own\nresource with `physicalName` declares it here once the resource exists, so\nthe artifact covers it too.\n\nA name AppTheory only wires for a resource another stack owns, such as\n`AppTheorySsrSite`'s ISR metadata table, takes no declaration here: that\nstack declares its own resource.\n\n A `log_group` type declares a log-source name (contract section 3): a log\ngroup takes no pin or generated entry.\n\nThe emitted derived-name artifact carries the hosted names of a hosted\ncontext verbatim, because every declaration composes through this context\n(contract section 11.4, r5). The artifact's `context.namespace` is the\ntenant namespace for a hosted deployment and `theorycloud` for a platform\napp, so the reader can tell the two apart; the wire schema is unchanged and\na platform app's artifact stays byte-identical.",
             "summary": "Declare the CloudFormation resource that carries one composed name (contract section 11.4)."
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 370
+            "line": 411
           },
           "name": "declareName",
           "parameters": [
@@ -25764,7 +25764,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 516
+            "line": 557
           },
           "name": "logGroupName",
           "parameters": [
@@ -25787,7 +25787,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 523
+            "line": 564
           },
           "name": "logSourcePrefix",
           "returns": {
@@ -25802,7 +25802,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 346
+            "line": 380
           },
           "name": "physicalName",
           "parameters": [
@@ -25831,7 +25831,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 328
+            "line": 361
           },
           "name": "values",
           "returns": {
@@ -25851,7 +25851,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 144
+            "line": 162
           },
           "name": "account",
           "type": {
@@ -25865,7 +25865,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 133
+            "line": 151
           },
           "name": "app",
           "type": {
@@ -25879,7 +25879,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 160
+            "line": 178
           },
           "name": "generated",
           "type": {
@@ -25893,12 +25893,26 @@
         },
         {
           "docs": {
+            "summary": "Whether this context is a hosted deployment TheoryCloud.ai places (contract section 1, r5)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/naming-context.ts",
+            "line": 197
+          },
+          "name": "hosted",
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "docs": {
             "summary": "Logging profile."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 183
+            "line": 207
           },
           "name": "loggingProfile",
           "type": {
@@ -25912,7 +25926,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 128
+            "line": 146
           },
           "name": "namespace",
           "type": {
@@ -25926,7 +25940,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 178
+            "line": 202
           },
           "name": "namingProfile",
           "type": {
@@ -25940,7 +25954,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 155
+            "line": 173
           },
           "name": "pins",
           "type": {
@@ -25960,7 +25974,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 150
+            "line": 168
           },
           "name": "region",
           "type": {
@@ -25974,7 +25988,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 188
+            "line": 212
           },
           "name": "retentionDays",
           "type": {
@@ -25988,7 +26002,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 138
+            "line": 156
           },
           "name": "stage",
           "type": {
@@ -26002,7 +26016,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 321
+            "line": 354
           },
           "name": "standardLogging",
           "type": {
@@ -26115,6 +26129,24 @@
         {
           "abstract": true,
           "docs": {
+            "default": "false",
+            "remarks": "TheoryCloud.ai sets this flag and the tenant `namespace` on every deployment\nit places, and injects `account` and `region` from its own placement logic.\nOnly first-party platform apps omit it; for them the platform default\n(namespace `theorycloud`, the r4 forms) is unchanged.\n\nA hosted context always supplies a `namespace`, never uses the reserved\nplatform namespace, carries the namespace in every derived name, and takes\nno legacy naming profile and no generated entries. A context that breaks any\nof these fails synthesis.",
+            "summary": "`true` for a deployment TheoryCloud.ai places on a tenant's behalf (contract section 1, r5): a pooled, isolated or dedicated managed-account placement."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/naming-context.ts",
+            "line": 103
+          },
+          "name": "hosted",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "AppTheoryLoggingProfile.LEGACY",
             "remarks": "`standard` opts every construct that receives the context\ninto the contract's log groups and access logging. `legacy` keeps each\nconstruct's pre-contract behaviour.",
             "summary": "Logging profile."
@@ -26122,7 +26154,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 99
+            "line": 117
           },
           "name": "loggingProfile",
           "optional": true,
@@ -26156,7 +26188,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 91
+            "line": 109
           },
           "name": "namingProfile",
           "optional": true,
@@ -26196,7 +26228,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming-context.ts",
-            "line": 106
+            "line": 124
           },
           "name": "retentionDays",
           "optional": true,
@@ -26308,13 +26340,30 @@
         {
           "abstract": true,
           "docs": {
+            "default": "false",
+            "summary": "`true` for a deployment TheoryCloud.ai places on a tenant's behalf (contract section 1, r5). A hosted deployment always supplies its namespace, never uses the reserved platform namespace, and carries the namespace in every derived name (contract section 2). Only first-party platform apps omit it."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/naming.ts",
+            "line": 119
+          },
+          "name": "hosted",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "AppTheoryLoggingProfile.LEGACY",
             "summary": "Logging profile."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 121
+            "line": 131
           },
           "name": "loggingProfile",
           "optional": true,
@@ -26348,7 +26397,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 115
+            "line": 125
           },
           "name": "namingProfile",
           "optional": true,
@@ -26387,7 +26436,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 127
+            "line": 137
           },
           "name": "retentionDays",
           "optional": true,
@@ -26435,7 +26484,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 262
+        "line": 272
       },
       "members": [
         {
@@ -27232,7 +27281,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 133
+        "line": 143
       },
       "name": "AppTheoryPhysicalName",
       "properties": [
@@ -27245,7 +27294,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 144
+            "line": 154
           },
           "name": "bucketNamePrefix",
           "optional": true,
@@ -27262,7 +27311,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 150
+            "line": 160
           },
           "name": "bucketNamespace",
           "optional": true,
@@ -27279,7 +27328,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 163
+            "line": 173
           },
           "name": "generated",
           "optional": true,
@@ -27297,7 +27346,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 138
+            "line": 148
           },
           "name": "name",
           "optional": true,
@@ -27314,7 +27363,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 156
+            "line": 166
           },
           "name": "pinned",
           "optional": true,
@@ -29203,7 +29252,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 534
+        "line": 614
       },
       "methods": [
         {
@@ -29213,7 +29262,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 850
+            "line": 1002
           },
           "name": "compileVisibilityPolicyJson",
           "parameters": [
@@ -29243,7 +29292,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 779
+            "line": 931
           },
           "name": "derivedNamesJson",
           "parameters": [
@@ -29268,7 +29317,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 932
+            "line": 1084
           },
           "name": "keeperDecision",
           "parameters": [
@@ -29300,11 +29349,12 @@
         },
         {
           "docs": {
+            "remarks": "The context is validated first, so resolving one log-source name is enough\nto refuse a context that breaks a rule: a forbidden naming profile must not\nsurvive on the log-only path (contract sections 1 and 4, r5; SAN-AT-N5-01).",
             "summary": "Map a logical log source to its physical log-group name."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 565
+            "line": 694
           },
           "name": "logGroupName",
           "parameters": [
@@ -29334,7 +29384,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 558
+            "line": 683
           },
           "name": "logSourcePrefix",
           "parameters": [
@@ -29358,7 +29408,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 920
+            "line": 1072
           },
           "name": "manifestJson",
           "parameters": [
@@ -29378,11 +29428,35 @@
         },
         {
           "docs": {
+            "summary": "Whether every derived name under these values carries the namespace (contract section 2, r5): true for a hosted deployment and for any namespace other than the reserved platform one."
+          },
+          "locationInModule": {
+            "filename": "lib/naming.ts",
+            "line": 669
+          },
+          "name": "namespaced",
+          "parameters": [
+            {
+              "name": "values",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContextValues"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "boolean"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
             "summary": "The scope in which AWS requires a type's names to be unique (contract section 11.1). A type the contract states no scope for is refused: it cannot be reserved, so it cannot be deployed through the index until a revision states its scope."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 647
+            "line": 799
           },
           "name": "namingScope",
           "parameters": [
@@ -29402,12 +29476,12 @@
         },
         {
           "docs": {
-            "remarks": "A pin always wins. A generated\nentry means CloudFormation generates the name today and the construct sets\nno physical-name property. Generated entries are legacy-only; a legacy\nprofile needs exactly one of a pin or a generated entry.",
+            "remarks": "A pin always wins. A generated\nentry means CloudFormation generates the name today and the construct sets\nno physical-name property. Generated entries are legacy-only; a legacy\nprofile needs exactly one of a pin or a generated entry.\n\nA hosted deployment (`hosted: true`, or any namespace other than the\nplatform one) carries the namespace as the first component of every derived\nname, its S3 bucket-name prefix included, so it reaches the shortened\nover-budget form sooner (contract section 2.4). It takes no generated entry\nand no legacy profile, and a pin must start with its namespace component\n(contract sections 2 and 4, r5).",
             "summary": "Compose the physical name of one resource."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 576
+            "line": 713
           },
           "name": "physicalName",
           "parameters": [
@@ -29443,7 +29517,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 841
+            "line": 993
           },
           "name": "ruleVersion",
           "parameters": [
@@ -29467,7 +29541,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 551
+            "line": 676
           },
           "name": "s3AccountRegionalSuffix",
           "parameters": [
@@ -29492,7 +29566,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 824
+            "line": 976
           },
           "name": "selectorMatches",
           "parameters": [
@@ -29522,7 +29596,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 832
+            "line": 984
           },
           "name": "sourceVisible",
           "parameters": [
@@ -29553,7 +29627,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 751
+            "line": 903
           },
           "name": "synthCheck",
           "parameters": [
@@ -29583,12 +29657,12 @@
         },
         {
           "docs": {
-            "remarks": "Throws on an invalid context.",
-            "summary": "Validate the bound context grammar."
+            "remarks": "The naming profile and the context's own generated entries are properties of\nthe context, so a namespaced context that carries either is refused here —\nwhen the context is validated, at construction — and not only as a side\neffect of composing a physical name (contract sections 1 and 4, r5;\nSAN-AT-N5-01). A hosted context that declares nothing yet would otherwise\nstand as a valid context whose every future name could carry no namespace.",
+            "summary": "Validate the bound context grammar. Throws on an invalid context."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 540
+            "line": 627
           },
           "name": "validateContext",
           "parameters": [
@@ -29603,12 +29677,32 @@
         },
         {
           "docs": {
+            "remarks": "Throws on a namespace\noutside it.",
+            "summary": "Apply the hosted namespace label rule to one namespace (contract section 1, r5 rev1): a namespace other than the reserved platform one is at most 12 characters and never starts with `aws` or `ssm`."
+          },
+          "locationInModule": {
+            "filename": "lib/naming.ts",
+            "line": 660
+          },
+          "name": "validateHostedNamespace",
+          "parameters": [
+            {
+              "name": "namespace",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "static": true
+        },
+        {
+          "docs": {
             "remarks": "Throws on a name outside them.\n\nThis is the section 2 table, not a second one: it reads the same rule rows\nthe derivation uses. A `log_group` accepts `/` in addition to the section 2\ncharset, but only for the two fixed shapes contract section 3 states: a\nlog-source name (which carries no `/` at all, because section 3 joins its\nsegments with `_`) or the Lambda service path `/aws/lambda/{function name}`,\nwhose function name satisfies the `lambda_function` row. Any other\n`/`-bearing log group is refused (SANITY-AT-N3-08).\n\nThe check is **structural**: it holds no context values, so it cannot tell\nwhether a log-source-shaped name is this naming context's own source. The\ncontext completes that rule in `AppTheoryNamingContext.declareFixedName`,\nwhich owns the bound `theorycloud_{namespace}_{app}_{stage}_` prefix\n(SANITY-AT-N3-08, round 4).",
             "summary": "Validate a physical name the contract fixes rather than derives against the character and shape rules of the type's section 2 row: charset, the length range (**both** bounds when the row states a lower one, not only the upper), the S3 start/end rule, the path rules (lead, non-empty segments, depth, reserved prefixes, the `alias/aws/` namespace) and the secret ARN-suffix rule."
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 676
+            "line": 828
           },
           "name": "validatePhysicalName",
           "parameters": [
@@ -29634,7 +29728,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 812
+            "line": 964
           },
           "name": "validateSelector",
           "parameters": [
@@ -29653,7 +29747,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 908
+            "line": 1060
           },
           "name": "visibilityManifest",
           "parameters": [
@@ -29694,7 +29788,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 888
+            "line": 1040
           },
           "name": "visibilityPreview",
           "parameters": [
@@ -33944,7 +34038,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 322
+        "line": 332
       },
       "name": "AppTheoryVisibilityManifest",
       "properties": [
@@ -33956,7 +34050,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 336
+            "line": 346
           },
           "name": "future",
           "type": {
@@ -33971,7 +34065,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 331
+            "line": 341
           },
           "name": "matchedNow",
           "type": {
@@ -33991,7 +34085,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 326
+            "line": 336
           },
           "name": "ruleVersion",
           "type": {
@@ -34039,7 +34133,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 297
+        "line": 307
       },
       "name": "AppTheoryVisibilityPreview",
       "properties": [
@@ -34051,7 +34145,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 316
+            "line": 326
           },
           "name": "future",
           "type": {
@@ -34066,7 +34160,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 306
+            "line": 316
           },
           "name": "matchedNow",
           "type": {
@@ -34086,7 +34180,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 311
+            "line": 321
           },
           "name": "notMatchedNow",
           "type": {
@@ -34106,7 +34200,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 301
+            "line": 311
           },
           "name": "ruleVersion",
           "type": {
@@ -34126,7 +34220,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 280
+        "line": 290
       },
       "name": "AppTheoryVisibilityRules",
       "properties": [
@@ -34140,7 +34234,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 291
+            "line": 301
           },
           "name": "exclude",
           "optional": true,
@@ -34162,7 +34256,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 285
+            "line": 295
           },
           "name": "include",
           "optional": true,
@@ -35314,5 +35408,5 @@
     }
   },
   "version": "7.5.0",
-  "fingerprint": "/EB5vgG2VPPFfkGSFPGtxperJXKsnaJkKKHF4RuERSU="
+  "fingerprint": "UyAAp6shsAABfCm0OPxYZbQZbrROhbglOqVFymT4lC8="
 }

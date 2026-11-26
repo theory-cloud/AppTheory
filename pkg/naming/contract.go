@@ -26,6 +26,17 @@ const (
 // RolePolicyMax is the aggregate inline role policy quota, in characters.
 const RolePolicyMax = 10240
 
+// HostedNamespaceMax is the longest hosted namespace label, in characters
+// (contract section 1, r5 rev1).
+const HostedNamespaceMax = 12
+
+// errHostedProfile is the refusal contract sections 1 and 4 state for the two
+// live-compatibility naming tools on a namespaced context: a deployment whose
+// names carry the tenant namespace takes neither the legacy profile nor a
+// generated entry, because either would produce a name with no namespace and
+// collide across tenants in a pooled account.
+const errHostedProfile = "a hosted deployment takes no legacy profile or generated entries"
+
 const (
 	segmentPattern = `[a-z0-9]+(?:-[a-z0-9]+)*`
 	stripSet       = "-_./"
@@ -51,6 +62,13 @@ type Context struct {
 	Account       string `json:"account"`
 	Region        string `json:"region"`
 	NamingProfile string `json:"naming_profile,omitempty"`
+
+	// Hosted marks a deployment TheoryCloud.ai places on a tenant's behalf
+	// (contract section 1, r5). A hosted deployment always supplies its
+	// namespace, never uses the reserved platform namespace, and carries the
+	// namespace in every derived name (contract section 2). Only first-party
+	// platform apps omit it.
+	Hosted bool `json:"hosted,omitempty"`
 
 	// namespaceExplicit records that a decoded context carried the namespace
 	// key. The contract defaults an absent namespace to LogPrefix but rejects an
@@ -149,10 +167,91 @@ func ValidateContext(ctx Context) error {
 	if !regionRe.MatchString(ctx.Region) {
 		return errors.New("region")
 	}
-	if !namespaceRe.MatchString(namespaceOf(ctx)) {
+	// r5 rev1: a hosted deployment always supplies its namespace; it never
+	// defaults to the platform form.
+	if ctx.Hosted && ctx.Namespace == "" {
+		return errors.New("a hosted deployment must supply its namespace")
+	}
+	ns := namespaceOf(ctx)
+	if !namespaceRe.MatchString(ns) {
 		return errors.New("namespace")
 	}
+	// r5 rev1: `theorycloud` is reserved for first-party platform apps. A hosted
+	// deployment may never use it, because its names would then collide with the
+	// platform app's in a pooled account.
+	if ctx.Hosted && ns == LogPrefix {
+		return errors.New("namespace " + LogPrefix + " is reserved for first-party platform apps")
+	}
+	if err := ValidateHostedNamespace(ns); err != nil {
+		return err
+	}
+	// r5 section 4: the naming profile is a property of the context, so a
+	// forbidden one is refused here — when the context is established or
+	// resolved — and not only as a side effect of composing a physical name. A
+	// hosted context that names nothing yet would otherwise stand as a valid
+	// context whose every future name could carry no namespace (SAN-AT-N5-01).
+	return checkHostedProfile(ctx)
+}
+
+// ValidateHostedNamespace applies the hosted namespace label rule (contract
+// section 1, r5 rev1): a namespace other than the reserved platform one is at
+// most HostedNamespaceMax characters and never starts with `aws` or `ssm`.
+// Those two prefixes are reserved by AWS, so a name carrying them cannot be
+// created.
+func ValidateHostedNamespace(ns string) error {
+	if ns == LogPrefix {
+		return nil
+	}
+	if len(ns) > HostedNamespaceMax {
+		return errors.New("hosted namespace longer than 12 characters")
+	}
+	if strings.HasPrefix(ns, "aws") || strings.HasPrefix(ns, "ssm") {
+		return errors.New("hosted namespace must not start with aws or ssm")
+	}
 	return nil
+}
+
+// namespaced reports whether every derived name carries the namespace (contract
+// section 2, r5): true for a hosted deployment and for any namespace other than
+// the reserved platform one. The platform namespace keeps the compatibility
+// form byte for byte, so the live hard gate (contract section 4) is unchanged.
+func namespaced(ctx Context) bool {
+	return ctx.Hosted || namespaceOf(ctx) != LogPrefix
+}
+
+// dashStem is the `{namespace}-{app}-{stage}-{logical}` stem of a `dash` name or
+// an S3 account-regional prefix, with `/` in the logical name replaced by `-`.
+func dashStem(ctx Context, logical string) string {
+	parts := []string{ctx.App, ctx.Stage, strings.ReplaceAll(logical, "/", "-")}
+	if namespaced(ctx) {
+		parts = append([]string{namespaceOf(ctx)}, parts...)
+	}
+	return strings.Join(parts, "-")
+}
+
+// pathStem is the `{namespace}/{app}/{stage}/{logical}` stem of a `path` name.
+func pathStem(ctx Context, logical string) string {
+	parts := []string{ctx.App, ctx.Stage, logical}
+	if namespaced(ctx) {
+		parts = append([]string{namespaceOf(ctx)}, parts...)
+	}
+	return strings.Join(parts, "/")
+}
+
+// hostedPinLead is the leading namespace component a hosted pin must carry,
+// exactly where the derived form puts it (contract section 4, r5 rev1, rev2).
+// Containing the namespace elsewhere is not enough: `shop-lab-events` is not a
+// pin for namespace `hop`.
+func hostedPinLead(ctx Context, rule ResourceRule) string {
+	ns := namespaceOf(ctx)
+	switch rule.Kind {
+	case "path":
+		return rule.Lead + ns + "/"
+	case "log":
+		return strings.Join([]string{LogPrefix, ns}, "_") + "_"
+	default:
+		return ns + "-"
+	}
 }
 
 // namespaceOf returns the contract namespace, defaulting only when the key was
@@ -189,7 +288,15 @@ func LogSourcePrefix(ctx Context) string {
 }
 
 // LogGroupName maps a logical log source to its physical log-group name.
+//
+// The context is validated first, so a context that breaks a rule is refused
+// here as well: resolving one log-source name is enough to establish the
+// context's naming, and a forbidden naming profile must not survive on the
+// log-only path (SAN-AT-N5-01).
 func LogGroupName(ctx Context, logical string) (string, error) {
+	if err := ValidateContext(ctx); err != nil {
+		return "", err
+	}
 	if !strings.HasPrefix(logical, "logs/") {
 		return "", errors.New("log logical must start with logs/")
 	}
@@ -202,6 +309,11 @@ func LogGroupName(ctx Context, logical string) (string, error) {
 // the construct sets no physical-name property and the result is
 // {"generated": true}. Generated entries are valid only under the legacy
 // naming profile (contract section 4).
+//
+// A hosted deployment (hosted true, or any namespace other than the platform
+// one) carries the namespace as the first component of every derived name, its
+// S3 prefix included, and takes no pin or generated entry whose name does not
+// start with that namespace component (contract sections 2 and 4, r5).
 func PhysicalName(ctx Context, resourceType, logical string, pins map[string]string, generated []string) (ComposedName, error) {
 	if err := ValidateContext(ctx); err != nil {
 		return ComposedName{}, err
@@ -213,7 +325,7 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 	if !ok {
 		return ComposedName{}, fmt.Errorf("resource type %s", resourceType)
 	}
-	entry, resolved, err := resolveEntry(ctx, resourceType, logical, pins, generated)
+	entry, resolved, err := resolveEntry(ctx, resourceType, logical, rule, pins, generated)
 	if err != nil {
 		return ComposedName{}, err
 	}
@@ -242,14 +354,14 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 
 // resolveEntry applies the legacy profile's pin and generated rules. The second
 // result reports whether an entry supplied the name.
-func resolveEntry(ctx Context, resourceType, logical string, pins map[string]string, generated []string) (ComposedName, bool, error) {
+func resolveEntry(ctx Context, resourceType, logical string, rule ResourceRule, pins map[string]string, generated []string) (ComposedName, bool, error) {
 	profile := ctx.NamingProfile
 	if profile == "" {
 		profile = NamingProfileDerived
 	}
 	legacy := profile == NamingProfileLegacy
-	if len(generated) > 0 && !legacy {
-		return ComposedName{}, false, errors.New("generated entries are only valid under the legacy naming profile")
+	if err := checkEntryProfile(ctx, legacy, generated); err != nil {
+		return ComposedName{}, false, err
 	}
 	key := resourceType + ":" + logical
 	pin, hasPin := pins[key]
@@ -263,6 +375,9 @@ func resolveEntry(ctx Context, resourceType, logical string, pins map[string]str
 		return ComposedName{}, false, errors.New("a resource has both a pin and a generated entry")
 	}
 	if hasPin {
+		if err := checkHostedPin(ctx, rule, pin); err != nil {
+			return ComposedName{}, false, err
+		}
 		return ComposedName{Name: pin, Pinned: true}, true, nil
 	}
 	if keepGenerated {
@@ -272,6 +387,53 @@ func resolveEntry(ctx Context, resourceType, logical string, pins map[string]str
 		return ComposedName{}, false, errors.New("legacy naming profile requires a pin or a generated entry for every resource")
 	}
 	return ComposedName{}, false, nil
+}
+
+// checkHostedProfile refuses the legacy naming profile on a namespaced context
+// when the context itself is validated (contract sections 1 and 4, r5).
+//
+// The legacy profile is a first-party live-compatibility tool: under it every
+// name comes from a pin or from CloudFormation, so nothing carries the tenant
+// namespace and hosted names would collide in a pooled account. The rule is a
+// property of the context, not of one composed name, so it fires even when the
+// caller composes no name at all (SAN-AT-N5-01). Generated entries are a
+// call-level input rather than a context field in this package, so they stay
+// with checkEntryProfile.
+func checkHostedProfile(ctx Context) error {
+	if namespaced(ctx) && ctx.NamingProfile == NamingProfileLegacy {
+		return errors.New(errHostedProfile)
+	}
+	return nil
+}
+
+// checkEntryProfile applies the naming-profile rules that decide whether a
+// stage config may carry entries at all.
+//
+// r5 rev2: the legacy profile and generated entries are first-party
+// live-compatibility tools only. A hosted deployment takes neither, because a
+// pinned or CloudFormation-generated name carries no namespace and would collide
+// across tenants in a pooled account.
+func checkEntryProfile(ctx Context, legacy bool, generated []string) error {
+	if namespaced(ctx) && (legacy || len(generated) > 0) {
+		return errors.New(errHostedProfile)
+	}
+	if len(generated) > 0 && !legacy {
+		return errors.New("generated entries are only valid under the legacy naming profile")
+	}
+	return nil
+}
+
+// checkHostedPin applies the hosted pin rule (contract section 4, r5 rev1,
+// rev2): a hosted pin starts with its namespace component, exactly where the
+// derived form puts it. Containing the namespace elsewhere is not enough.
+func checkHostedPin(ctx Context, rule ResourceRule, pin string) error {
+	if !namespaced(ctx) {
+		return nil
+	}
+	if strings.HasPrefix(pin, hostedPinLead(ctx, rule)) {
+		return nil
+	}
+	return errors.New("a hosted pin must start with the namespace component")
 }
 
 // matchesCharset applies a row's charset to the whole name, anchored like the
@@ -294,16 +456,16 @@ func composeName(ctx Context, resourceType, logical string, rule ResourceRule) (
 	case "s3ar":
 		suffix := S3AccountRegionalSuffix(ctx)
 		budget := rule.Max - len(suffix)
-		prefix := ShortenName(ctx.App+"-"+ctx.Stage+"-"+strings.ReplaceAll(logical, "/", "-"), budget)
+		prefix := ShortenName(dashStem(ctx, logical), budget)
 		return ComposedName{
 			Name:             prefix + suffix,
 			BucketNamePrefix: prefix,
 			BucketNamespace:  "account-regional",
 		}, nil
 	case "dash":
-		return ComposedName{Name: ShortenName(ctx.App+"-"+ctx.Stage+"-"+strings.ReplaceAll(logical, "/", "-"), rule.Max)}, nil
+		return ComposedName{Name: ShortenName(dashStem(ctx, logical), rule.Max)}, nil
 	case "path":
-		full := rule.Lead + ctx.App + "/" + ctx.Stage + "/" + logical
+		full := rule.Lead + pathStem(ctx, logical)
 		if resourceType == "secret" && secretTail.MatchString(full) {
 			return ComposedName{}, errors.New("secret name must not end with a hyphen and six characters")
 		}

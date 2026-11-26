@@ -1,0 +1,27 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-r5-hosted-empty-namespace",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "",
+      "app": "shop",
+      "stage": "lab",
+      "account": "123456789012",
+      "region": "us-east-1",
+      "hosted": true
+    },
+    "resource_type": "lambda_function",
+    "logical": "worker"
+  },
+  "expected": {
+    "error": "a hosted deployment must supply its namespace"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

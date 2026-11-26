@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [434-vector corpus](../reference/contract-fixtures.md) includes 328 shared runtime fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the sixteen nested MCP route-algebra, auth-facade and limiter cancellation tables and the 90 resource-naming conformance fixtures. <!-- apptheory-fixture-count: 434 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [460-vector corpus](../reference/contract-fixtures.md) includes 328 shared runtime fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the sixteen nested MCP route-algebra, auth-facade and limiter cancellation tables and the 116 resource-naming conformance fixtures. <!-- apptheory-fixture-count: 460 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -407,4 +407,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 434 vectors: 328 shared runtime fixtures, sixteen nested conformance tables, and 90 resource-naming conformance fixtures <!-- apptheory-fixture-count: 434 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 434 vectors: 328 shared runtime fixtures, sixteen nested conformance tables, and 116 resource-naming conformance fixtures <!-- apptheory-fixture-count: 460 -->

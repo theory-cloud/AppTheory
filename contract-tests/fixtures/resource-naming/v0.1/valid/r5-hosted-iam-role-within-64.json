@@ -1,0 +1,27 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "r5-hosted-iam-role-within-64",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "acme",
+      "app": "shop",
+      "stage": "lab",
+      "account": "123456789012",
+      "region": "us-east-1",
+      "hosted": true
+    },
+    "resource_type": "iam_role",
+    "logical": "keeper-reader"
+  },
+  "expected": {
+    "name": "acme-shop-lab-keeper-reader"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

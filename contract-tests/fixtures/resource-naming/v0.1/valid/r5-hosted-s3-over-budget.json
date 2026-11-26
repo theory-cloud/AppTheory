@@ -1,0 +1,29 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "r5-hosted-s3-over-budget",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "acme",
+      "app": "storefront-checkout",
+      "stage": "lab",
+      "account": "123456789012",
+      "region": "us-east-1",
+      "hosted": true
+    },
+    "resource_type": "s3_bucket",
+    "logical": "customer-uploads-archive"
+  },
+  "expected": {
+    "bucket_name_prefix": "acme-storefront-checkout-lab-5cs2pek2",
+    "bucket_namespace": "account-regional",
+    "name": "acme-storefront-checkout-lab-5cs2pek2-123456789012-us-east-1-an"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

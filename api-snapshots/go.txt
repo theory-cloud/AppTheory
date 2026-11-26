@@ -685,6 +685,8 @@ func SetLogger(observability.StructuredLogger)
 
 const Contract = "theorycloud_resource_naming.v0.1"
 
+const HostedNamespaceMax = 12
+
 const KeeperAllowedNoEvents = "allowed_no_events"
 
 const KeeperEvents = "events"
@@ -755,6 +757,8 @@ type Context struct {
 	Account       string `json:"account"`
 	Region        string `json:"region"`
 	NamingProfile string `json:"naming_profile,omitempty"`
+
+	Hosted bool `json:"hosted,omitempty"`
 
 	namespaceExplicit bool
 }
@@ -851,6 +855,8 @@ func ShortenName(string, int) string
 func SynthCheck([]NameEntry) ([]DerivedName, error)
 
 func ValidateContext(Context) error
+
+func ValidateHostedNamespace(string) error
 
 func ValidateSelector(string) error
 

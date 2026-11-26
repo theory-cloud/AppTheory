@@ -9,20 +9,26 @@ declare logical names and stage configuration; AppTheory turns them into physica
 S3 prefix and the deterministic over-budget form. The normative contract is Factory's
 `theorycloud_resource_naming.v0.1`; this page describes the shipped implementation and the CDK surface.
 
+A **platform app** is a first-party app in namespace `theorycloud`. A **hosted deployment** is anything TheoryCloud.ai
+places on a tenant's behalf, and it carries its namespace in every derived name
+([Hosted deployments](#hosted-deployments-r5)): many namespaces share one pooled account, so `{app}-{stage}-{logical}`
+alone would collide across tenants.
+
 ## Bound context
 
 The context comes from stage config. Nothing comes from environment variables.
 
 | Field | Grammar | Notes |
 |---|---|---|
-| `namespace` | `[a-z0-9]+(-[a-z0-9]+)*` | Defaults to `theorycloud`. Appears only in log-source names. |
+| `namespace` | `[a-z0-9]+(-[a-z0-9]+)*` | Defaults to `theorycloud`. A platform app's namespace appears only in log-source names; a hosted deployment's appears in every derived name. At most 12 characters, never starting `aws` or `ssm`, and never `theorycloud` for a hosted deployment (r5). |
+| `hosted` | boolean | Defaults to `false`. `true` marks a deployment TheoryCloud.ai places; it must then supply `namespace`. See [Hosted deployments](#hosted-deployments-r5). |
 | `app` | same as namespace | The app instance id. No `/` or `_`. |
 | `stage` | `[a-z][a-z0-9]{0,7}` | For example `lab` or `live`. |
-| `account` | exactly 12 digits | An unresolved token fails synthesis. |
-| `region` | a full Region code | For example `us-east-1`. |
+| `account` | exactly 12 digits | An unresolved token fails synthesis. For a hosted deployment TheoryCloud.ai injects it from its placement. |
+| `region` | a full Region code | For example `us-east-1`. Injected the same way for a hosted deployment. |
 | `namingProfile` | `derived` or `legacy` | Defaults to `derived`. |
-| `pins` | `{type}:{logical}` → name | The physical name when the resource carries an explicit name today. |
-| `generated` | `{type}:{logical}` list | The resource whose name CloudFormation generates today. Legacy-only. |
+| `pins` | `{type}:{logical}` → name | The physical name when the resource carries an explicit name today. Under a hosted deployment the name must start with its namespace component. |
+| `generated` | `{type}:{logical}` list | The resource whose name CloudFormation generates today. Legacy-only, and first-party only. |
 | `loggingProfile` | `standard` or `legacy` | Defaults to `legacy`. See [Logging and visibility](./logging-and-visibility.md). |
 | `retentionDays` | an accepted CloudWatch Logs value | Passed from stage config; lab 30, live 90. |
 
@@ -32,9 +38,75 @@ A logical name is one or more segments `[a-z0-9]+(-[a-z0-9]+)*` joined by `/`, f
 The `namingProfile` also selects the Security Hub-aligned defaults: a `derived` context applies them, while a `legacy`
 context keeps the pinned live template byte for byte. See [Security Hub defaults](./security-hub-defaults.md).
 
+### Hosted deployments (r5)
+
+TheoryCloud.ai deploys AppTheory systems for many tenants into a pool of managed AWS accounts. Two namespaces in one
+pooled account would derive the same `{app}-{stage}-{logical}` name, so a hosted deployment carries its namespace in
+every derived name.
+
+**The hosted handoff.** TheoryCloud.ai sets `hosted: true` and the tenant `namespace` on every deployment it places —
+pooled, isolated and dedicated alike — and injects `account` and `region` from its own placement logic. Only
+first-party platform apps omit `hosted`; for them the platform default (namespace `theorycloud`, the r4 forms) is
+unchanged. A hosted deployment always supplies its namespace and never defaults to the platform form.
+
+**The namespace label rule.** A hosted namespace is at most **12 characters**, follows the namespace grammar, and never
+starts with `aws` or `ssm` (both are reserved by AWS). `theorycloud` is reserved for first-party platform apps, so a
+hosted deployment may never use it. The cap applies to any namespace other than the reserved platform one, hosted flag
+or not, because only the platform namespace keeps the r4 form.
+
+**Hosted forms** (namespace `acme`, app `shop`, stage `lab`):
+
+| Type | Platform form | Hosted form |
+|---|---|---|
+| `dash` names | `{app}-{stage}-{logical}` | `{namespace}-{app}-{stage}-{logical}` |
+| `path` names | `{lead}{app}/{stage}/{logical}` | `{lead}{namespace}/{app}/{stage}/{logical}` |
+| S3 `BucketNamePrefix` | `{app}-{stage}-{logical}` | `{namespace}-{app}-{stage}-{logical}` |
+| log groups | `theorycloud_{namespace}_{app}_{stage}_{logical}` | unchanged — they already carry the namespace (`theorycloud_acme_shop_lab_logs_runtime_api`) |
+
+The limits, charsets and the over-budget rule do not change; the longer stem only means a hosted name reaches the
+shortened form sooner. The stem costs `len(namespace) + len(app) + len(stage) + 3` characters, so choose logical names
+that fit:
+
+| Context | Type | Logical | Result |
+|---|---|---|---|
+| `acme`/`shop`/`lab` | `lambda_function` | `worker` | `acme-shop-lab-worker` (fits) |
+| `acme`/`shop`/`lab` | `s3_bucket` prefix | `uploads` | `acme-shop-lab-uploads` (fits) |
+| `acme`/`storefront-checkout`/`lab` | `s3_bucket` prefix | `customer-uploads-archive` | `acme-storefront-checkout-lab-5cs2pek2` (shortened) |
+| `northwind`/`customer-portal-analytics`/`lab` | `iam_role` | `keeper-reader-cross-account` | `northwind-customer-portal-analytics-lab-keeper-reader-c-r3njssl4` (shortened) |
+
+**Hosted pins.** A hosted deployment's pinned name must start with its namespace component, exactly where the derived
+form puts it: `{namespace}-` for `dash` names and S3 prefixes, `{lead}{namespace}/` for `path` names, and
+`theorycloud_{namespace}_` for log groups. Containing the namespace elsewhere is not enough: `shop-lab-events` is not a
+pin for namespace `hop`. `naming.generated` and `naming.profile: legacy` exist for the live compatibility of platform
+apps only, so a hosted deployment that uses either fails synthesis. This is a property of the context, not of one
+composed name: a hosted context is refused when it is established, before any construct composes a physical name, so a
+stack that declares no names yet cannot stand as a valid context whose future names would carry no namespace
+(SAN-AT-N5-01).
+
+**Refusals at synthesis.** Each names the rule it broke:
+
+| Context | Refusal |
+|---|---|
+| `hosted: true` with no namespace, or an empty one | a hosted deployment must supply its namespace |
+| namespace longer than 12 characters | hosted namespace longer than 12 characters |
+| namespace starting with `aws` or `ssm` | hosted namespace must not start with aws or ssm |
+| `hosted: true` with namespace `theorycloud` | namespace theorycloud is reserved for first-party platform apps |
+| `hosted: true` with `naming.profile: legacy` or a `generated` entry | a hosted deployment takes no legacy profile or generated entries |
+| a hosted pin that does not start with its namespace component | a hosted pin must start with the namespace component |
+
+**AppTheory does not resolve or choose the account or Region.** They are naming inputs the caller supplies, so the
+S3 account-regional suffix budget is the only thing they change. An unresolved token still fails synthesis as it always
+did, and nothing is read from the environment. TheoryCloud.ai is the party that injected them, so its installer is the
+party that validates them against the account and Region it deploys to.
+
+**Placement is not AppTheory's.** Which accounts and Regions a tenant may be placed into, and whether a deployment's
+`{namespace}-{app}` stem collides with another tenant's, is TheoryCloud.ai's placement check; AppTheory only derives
+the names.
+
 ## Composition
 
 `dash` names are `{app}-{stage}-{logical with / replaced by -}`. `path` names are `{lead}{app}/{stage}/{logical}`.
+A hosted deployment prepends its namespace to both forms; see [Hosted deployments](#hosted-deployments-r5).
 
 | Type key | Form | Limit |
 |---|---|---|
@@ -60,8 +132,8 @@ A type that is not in the table is added by a contract revision before an applic
 ### S3 general purpose buckets
 
 S3 buckets use the account-regional namespace. AppTheory sets `BucketNamespace: account-regional` and
-`BucketNamePrefix: {app}-{stage}-{logical}`. CloudFormation appends `-{account}-{region}-an`, which only this account
-can create. The prefix budget is `63 − len(suffix)`; for a 12-digit account in `us-east-1` the suffix is 26 characters,
+`BucketNamePrefix: {app}-{stage}-{logical}` (`{namespace}-{app}-{stage}-{logical}` for a hosted deployment).
+CloudFormation appends `-{account}-{region}-an`, which only this account can create. The prefix budget is `63 − len(suffix)`; for a 12-digit account in `us-east-1` the suffix is 26 characters,
 which leaves 37 for the prefix. Longer Region codes shrink the budget.
 
 The pinned `aws-cdk-lib` L2 exposes `bucketNamespace` and `bucketNamePrefix` on `s3.BucketProps`, so `AppTheoryBucket`
@@ -86,7 +158,8 @@ Under `namingProfile: legacy` every resource the app names through AppTheory has
   the template keeps its pre-change shape and CloudFormation keeps today's name.
 
 A resource with neither entry fails synthesis, and a resource with both fails synthesis. `generated` under `derived`
-fails synthesis, because lab names are derived.
+fails synthesis, because lab names are derived. The whole legacy profile is first-party only: a hosted deployment that
+sets it, or that carries any `generated` entry, fails synthesis.
 
 - A pin takes precedence over derivation under either profile, so a `derived` stage config may carry pins.
 - **API names take pins, never generated entries.** A REST, HTTP or WebSocket API `Name` exists today (the CDK
@@ -292,6 +365,16 @@ installer would read wrong:
   deploys**, and refuses a deploy whose environment is not the one the names were derived for. Nothing in the naming
   code resolves a `Lazy` or any other token of a stack's environment, so a producer that is only valid later in
   synthesis is never evaluated early (SANITY-AT-N3-09; operator ruling 2026-11-25).
+
+For a hosted deployment the artifact carries the hosted names, because every declaration composes through its
+context: the reservation index TheoryCloud.ai runs therefore reserves the namespaced forms. Namespacing separates
+tenants' names — it makes every hosted name start with its tenant namespace, so one tenant's app no longer derives the
+platform app's `{app}-{stage}-{logical}` form — but it does not make collisions impossible: contract section 11.2 leaves
+two shortened names in one account able to meet, across namespaces as within one. TheoryCloud.ai's reservation index is
+authoritative and is what guarantees uniqueness; the namespace only keeps the names apart to begin with. The artifact's
+wire schema is unchanged (`apptheory_resource_naming.derived_names.v1`) and its
+`context.namespace` is the tenant namespace, so a reader can tell a hosted deployment (`context.namespace` other than
+`theorycloud`) from a platform app. A platform app's artifact stays byte-identical to r4.
 
 Two names AppTheory creates fall outside the derivation table and go through `declareFixedName()`: the Lambda service
 log group `/aws/lambda/{function name}` that `AppTheoryFunction` creates under the legacy logging profile, and the

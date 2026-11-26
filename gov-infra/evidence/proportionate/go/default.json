@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-go.sh"
       ],
-      "durationSeconds": 26.738,
+      "durationSeconds": 26.813,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T15:44:01Z",
+      "finishedAt": "2026-11-26T05:53:00Z",
       "id": "go-test-vet",
-      "inputsDigest": "sha256:3356a6e63f6551d1952601078f94736078afabf73639e8164a380e69f3ac4154",
-      "logDigest": "sha256:e98993fc19f778bd032b2c25bac27f02b10aaf6a8a007ef22ae2e5440c774341",
-      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261125T154334Z-19476.log",
+      "inputsDigest": "sha256:f460fff932ac7ab8ec164e7f78791f5f7d9462b786a3262848992e14fdfb4d07",
+      "logDigest": "sha256:4ad97fbb9b629dcfb454f9ccb78465146b1a9e310d67c6593ba360dc455b83ee",
+      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261126T055233Z-2036.log",
       "reused": false,
-      "startedAt": "2026-11-25T15:43:34Z"
+      "startedAt": "2026-11-26T05:52:33Z"
     }
   ],
   "consumed": [],
   "description": "Go test and vet",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,18 +36,18 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-25T15:44:01Z",
+  "recordedAt": "2026-11-26T05:53:00Z",
   "releaseOnly": {
-    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
-    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "normalizedDigest": "sha256:f0086bb3b5fa0d8d45dc672d3d18a5208727ca9dbff594a38d644d9e9e81761a",
     "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:c04dfeda8b73948045551e8597b445da9e96a7dc329d9e09055b55bc1586119a",
-    "fileCount": 1636,
+    "digest": "sha256:0340cf03e2682c5f0c20875d77d91cb219ce16a5fe730de02075561965c92e4b",
+    "fileCount": 1663,
     "paths": [
       "go.mod",
       "go.sum",
@@ -64,8 +64,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:2f516487e445ff7b08505ba9a38514b31cec3c509519eb44a07092ca2023b5a7",
-    "fileCount": 2788
+    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
+    "fileCount": 2819
   },
   "verdict": "PASS"
 }
