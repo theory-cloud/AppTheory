@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-security-refresh.sh"
       ],
-      "durationSeconds": 30.935,
+      "durationSeconds": 32.046,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T10:07:39Z",
+      "finishedAt": "2026-11-26T12:22:46Z",
       "id": "security-refresh",
       "inputsDigest": "sha256:153a65598132f6954ee4c90212d2b2a5749e8578aebf280a8b080adea58ad297",
-      "logDigest": "sha256:bbe215f01672e5e938a5f5641fd5079645063a19a28f1ac1b57014676bb05f8d",
-      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261126T100708Z-44711.log",
+      "logDigest": "sha256:aea93301d33fa76e870e8e356f96193f5b4ae05c2c902221be80041c85b47568",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261126T122214Z-60472.log",
       "reused": false,
-      "startedAt": "2026-11-26T10:07:08Z"
+      "startedAt": "2026-11-26T12:22:14Z"
     }
   ],
   "consumed": [],
@@ -40,7 +40,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T10:07:39Z",
+  "recordedAt": "2026-11-26T12:22:46Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -50,7 +50,7 @@
   "reviews": [],
   "scan": {
     "maxAgeSeconds": 86400,
-    "scannedAt": "2026-11-26T10:07:39Z"
+    "scannedAt": "2026-11-26T12:22:46Z"
   },
   "schemaVersion": 1,
   "scope": {
@@ -77,7 +77,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:23a607183e2377d3dbdd2473a9e11ab42b8330855772e73207135e139dd4a4f9",
+    "digest": "sha256:42ec44184302b7e7f7a59940a53425f60fcce4c1a87504a70a20f58843f6d42d",
     "fileCount": 2823
   },
   "verdict": "PASS"

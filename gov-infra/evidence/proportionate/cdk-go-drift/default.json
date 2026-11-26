@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 18.339,
+      "durationSeconds": 18.55,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T05:52:52Z",
+      "finishedAt": "2026-11-26T12:21:13Z",
       "id": "cdk-go-drift",
       "inputsDigest": "sha256:1fbf91b74bf199ffdf1a70a6b469b89da4a47b338467307043a84a8ae7243f5a",
       "logDigest": "sha256:2da4112b9fe7d2aa3b97d4d893dc9ed5a3c3ffbc7db7d99a50cfdc924d37a57c",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261126T055233Z-2036.log",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261126T122054Z-60472.log",
       "reused": false,
-      "startedAt": "2026-11-26T05:52:33Z"
+      "startedAt": "2026-11-26T12:20:54Z"
     }
   ],
   "consumed": [],
@@ -36,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T05:52:52Z",
+  "recordedAt": "2026-11-26T12:21:13Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -59,8 +59,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
-    "fileCount": 2819
+    "digest": "sha256:42ec44184302b7e7f7a59940a53425f60fcce4c1a87504a70a20f58843f6d42d",
+    "fileCount": 2823
   },
   "verdict": "PASS"
 }

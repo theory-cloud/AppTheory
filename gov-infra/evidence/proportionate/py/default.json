@@ -5,25 +5,19 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 0.757,
+      "durationSeconds": 6.164,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T10:31:31Z",
+      "finishedAt": "2026-11-26T12:38:17Z",
       "id": "py-build",
-      "inputsDigest": "sha256:5d22edb3ca0d45a144d1bb414d9ce41e3893fb0861770604e557fde0499543f7",
-      "logDigest": "sha256:b6f90e6b7291e91787ba9f456388d15fca8c7ae59aa965c1fc1a5d619006af5f",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T103131Z-44711.log",
+      "inputsDigest": "sha256:48ae43a15bc292bba46d5d61bf813dcd8b18f9716224b35e9cca38dbfd174465",
+      "logDigest": "sha256:4aa9dd121a38371853c14bf6650ec9c859e348a4fd4595cdd9e5ac620917bef0",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T123811Z-5292.log",
       "reused": false,
-      "startedAt": "2026-11-26T10:31:31Z"
+      "startedAt": "2026-11-26T12:38:11Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:06d54111643bfd5c1b993c0f25e9e8cefb703af0a14cd1b306c83cc4b8b6f4ab",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-26T10:08:47Z"
-    }
-  ],
+  "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
@@ -42,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T10:31:31Z",
+  "recordedAt": "2026-11-26T12:38:17Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -52,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:b82eeebf6e1a3c5793d7350bee4537a06cf037c6e909e6c8221991ae07e13d7d",
+    "digest": "sha256:0829cbb45278f4f4d87960324b30afeb7e483ffdeefaf2b9bc5e4001ba18007a",
     "fileCount": 134,
     "paths": [
       "py/",
@@ -62,7 +56,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:23a607183e2377d3dbdd2473a9e11ab42b8330855772e73207135e139dd4a4f9",
+    "digest": "sha256:42ec44184302b7e7f7a59940a53425f60fcce4c1a87504a70a20f58843f6d42d",
     "fileCount": 2823
   },
   "verdict": "PASS"
