@@ -94,7 +94,7 @@ execution environment serves at once: that is the AWS execution model for the ru
 
 **Go serves one invocation at a time, and that is an upstream gap, not an AppTheory one.** Lambda Managed Instances
 lists Java, Python, Node.js, .NET and Rust (through the OS-only `provided.al2023` runtime); Go is not among them, and
-the Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. So AppTheory's Go runtime is built for one
+the Web Function runtimes are `nodejs24.x`, `nodejs26.x` and `python3.15`. [Lambda Web Functions](../features/web-functions.md) composes the two Node.js runtimes and refuses the Python one, because a Python Web Function serves an ASGI or WSGI application and AppTheory's Python runtime is not one. So AppTheory's Go runtime is built for one
 invocation per environment, which is exactly what AWS provides for Go.
 
 AppTheory keeps parity everywhere upstream allows it. Nothing in the Go surface is removed, weakened or marked

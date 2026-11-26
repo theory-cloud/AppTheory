@@ -15,7 +15,7 @@ properties of the context objects and the middleware chain, not of a particular 
 ## Why this is now a stated guarantee
 
 A classic Lambda invocation handles one event at a time, so an execution environment can serve a second request only
-after the first returned. An AWS Lambda **Web Function** removes that: one environment serves many requests at once
+after the first returned. An AWS Lambda [**Web Function**](web-functions.md) removes that: one environment serves many requests at once
 (64 concurrently by default, up to 128). Lambda **Managed Instances** remove it for event functions: one environment
 processes multiple invocations concurrently instead of sequentially. The runtime therefore cannot rely on "nothing
 else is running" for correctness, and this page records the invariant that replaces that assumption.
