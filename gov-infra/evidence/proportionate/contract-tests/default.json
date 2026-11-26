@@ -5,39 +5,39 @@
         "bash",
         "scripts/verify-api-snapshots.sh"
       ],
-      "durationSeconds": 0.43,
+      "durationSeconds": 0.448,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T09:20:09Z",
+      "finishedAt": "2026-11-26T01:56:59Z",
       "id": "api-snapshots",
-      "inputsDigest": "sha256:408470cdecb4240c91c06343b77c52226cbcf1934a88234f8227096525046834",
+      "inputsDigest": "sha256:8ea69e4e159f629b91d79b00c7fef6b28775ab2eef7d763c727a6a7ac0d68f2b",
       "logDigest": "sha256:b17e1296373b7df42af02ec9c5b739b85a211832a965a53883d2195a43e69d35",
-      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-api-snapshots-20261125T092008Z-90794.log",
+      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-api-snapshots-20261126T015658Z-1348.log",
       "reused": false,
-      "startedAt": "2026-11-25T09:20:08Z"
+      "startedAt": "2026-11-26T01:56:58Z"
     },
     {
       "argv": [
         "bash",
         "scripts/verify-contract-tests.sh"
       ],
-      "durationSeconds": 35.743,
+      "durationSeconds": 36.474,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-25T09:20:44Z",
+      "finishedAt": "2026-11-26T01:57:35Z",
       "id": "contract-fixtures",
-      "inputsDigest": "sha256:d765e26b35adf33f50988360c5d328e35860c71c1c934ae693315c16f7d85720",
-      "logDigest": "sha256:044ce7806355cf774f49fa26f8f56a0e2454aa3ef981459ba5f5e524bb678e29",
-      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-contract-fixtures-20261125T092009Z-90794.log",
+      "inputsDigest": "sha256:461141b8846fdb0cb84c3d0b979dfee20fed46c0b31536229d1b4fe49726a8d0",
+      "logDigest": "sha256:b09bc33ea0fa5075d5c9fcbfda5f3445b6cb72653851a70f4f33e1cbcaabad0b",
+      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-contract-fixtures-20261126T015659Z-1348.log",
       "reused": false,
-      "startedAt": "2026-11-25T09:20:09Z"
+      "startedAt": "2026-11-26T01:56:59Z"
     }
   ],
   "consumed": [],
   "description": "API snapshots and the cross-language contract fixture corpus",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -52,18 +52,18 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-25T09:20:44Z",
+  "recordedAt": "2026-11-26T01:57:35Z",
   "releaseOnly": {
-    "digest": "sha256:41f41e545c8a84fe0d0a3d8d6b05304a124c0424502cf91c73c2929d8c7a15c1",
-    "fileCount": 534,
-    "normalizedDigest": "sha256:7d935b1dd17876946b0348b27dc4d56e24907530de428c9a42a7cc8062c74af1",
+    "digest": "sha256:a73b4342baa8ea2cc43ac458c1fff7713be8e3e1b7169a32f7c12eb3a7bb017d",
+    "fileCount": 537,
+    "normalizedDigest": "sha256:51224143fa1b80626bbd02412a8a00ddad2bc338d9203ab1b4ad861eac98faa9",
     "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:da892f9f5f295eeb669dc5b370b3bed51c79d2942bcf396ee617224554b51dd2",
-    "fileCount": 1388,
+    "digest": "sha256:5125d464a2c8f30089c22530c3e867d417e002092e8eb07b41d8704deb787b26",
+    "fileCount": 1415,
     "paths": [
       "api-snapshots/",
       "contract-tests/",
@@ -82,8 +82,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:79a009ca46ef31ff1a4f16a126610a63d0f0109c11883353ff9911de1d4d43de",
-    "fileCount": 2783
+    "digest": "sha256:cef12848c2a630e4f55c55c1d23892dc91ef48b3708c767b931c1f14edcab363",
+    "fileCount": 2819
   },
   "verdict": "PASS"
 }

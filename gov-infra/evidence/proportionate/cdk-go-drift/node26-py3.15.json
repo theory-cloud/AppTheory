@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 14.481,
+      "durationSeconds": 20.489,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T00:51:38Z",
+      "finishedAt": "2026-11-26T02:23:37Z",
       "id": "cdk-go-drift",
-      "inputsDigest": "sha256:473c38de052af90ee1acfd2863e2ee598f48e80a960e1972572ade10d8e670da",
+      "inputsDigest": "sha256:de5571ad0e67a687bf7438e4e332b4cbb250f032e01ceb92f2c182c91612b383",
       "logDigest": "sha256:2da4112b9fe7d2aa3b97d4d893dc9ed5a3c3ffbc7db7d99a50cfdc924d37a57c",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261126T005124Z-41126.log",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261126T022316Z-32065.log",
       "reused": false,
-      "startedAt": "2026-11-26T00:51:24Z"
+      "startedAt": "2026-11-26T02:23:16Z"
     }
   ],
   "consumed": [],
@@ -36,17 +36,17 @@
   },
   "profile": "node26-py3.15",
   "reason": "",
-  "recordedAt": "2026-11-26T00:51:38Z",
+  "recordedAt": "2026-11-26T02:23:37Z",
   "releaseOnly": {
-    "digest": "sha256:bdf194519b63815ee7ca628e4369b8e9c991a374970882a05dfe84e403f71736",
+    "digest": "sha256:a73b4342baa8ea2cc43ac458c1fff7713be8e3e1b7169a32f7c12eb3a7bb017d",
     "fileCount": 537,
-    "normalizedDigest": "sha256:53866e3a9a2a4498551ec5ab00c86262a0111b36bbc72b26bcd06c47c56e2e37",
+    "normalizedDigest": "sha256:51224143fa1b80626bbd02412a8a00ddad2bc338d9203ab1b4ad861eac98faa9",
     "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:a65871e095f4cf58d53156cf0648b55c91d8fb7199f80be59635f21cd095e2a7",
+    "digest": "sha256:2da88eba77ca06d0ecf74aa370a1e8ddd0273a2690832eb255182d4fe440b310",
     "fileCount": 654,
     "paths": [
       "cdk/",
@@ -59,8 +59,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:38c196bf3edea3a5afaad714ededc74bba263bdc36bf3a5973e66f6e153e8334",
-    "fileCount": 2792
+    "digest": "sha256:cef12848c2a630e4f55c55c1d23892dc91ef48b3708c767b931c1f14edcab363",
+    "fileCount": 2819
   },
   "verdict": "PASS"
 }
