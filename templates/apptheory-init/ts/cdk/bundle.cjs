@@ -451,12 +451,6 @@ function manifestEdges(manifest) {
   return [...required, ...optional];
 }
 
-// The names one manifest field declares.
-function declaredIn(manifest, field) {
-  const value = manifest[field];
-  return new Set(value !== null && typeof value === "object" ? Object.keys(value) : []);
-}
-
 // The packages one `node_modules` directory holds, by their install name: a
 // scoped directory is not a package, and an entry without a manifest is not
 // resolvable by name, so neither is a copy the asset has to carry.
@@ -499,15 +493,22 @@ function heldPackages(dir) {
 // project can still load such a file because it only exists in the project's
 // checkout, and an asset cannot.
 //
-// The second is a package holding packages of its own that the asset does not
-// carry. A `node_modules` inside the package's *subtree* is the shape that
-// matters: Node's walk from a file inside the package reaches it, so the project
-// loads what it holds, but the closure resolves a package's dependencies from the
-// package root and the asset carries no such subtree — the dependent would
-// silently load whichever copy the asset's own walk reaches instead. A package's
-// own root-level `node_modules` is the shape npm installs, and stays supported: a
-// copy the closure places (a bundled dependency) is carried, and a linked
-// checkout's development tree is excluded exactly as it always has been.
+// The second is a `node_modules` inside a package's own *subtree* — below its
+// root, never at it. Node's walk from a file inside the package reaches one, so
+// the project loads what it holds, but the closure resolves a package's
+// dependencies from the package root and the asset carries no such subtree: the
+// dependent would silently load whichever copy the asset's own walk reaches
+// instead. `npm install` never creates one.
+//
+// A package's own *root-level* `node_modules` is the opposite case and stays
+// supported, because npm does create it: a nested copy for a version conflict, a
+// published bundled dependency, and a linked checkout's own install — including
+// its development tree, which is excluded here exactly as it always has been (a
+// scaffold built from a `file:` link carries that tree, and its transitive dev
+// dependencies are not declared by the package itself, so nothing about the
+// package's root can decide what belongs in the asset). Whatever the closure
+// resolves from that root is staged from it, and each declared edge is checked by
+// the rules above.
 function refuseUnfaithfulLayouts(output, stagedAt, closure) {
   for (const [destination, source] of closure) {
     const manifest = readManifest(source);
@@ -527,9 +528,15 @@ function refuseUnfaithfulLayouts(output, stagedAt, closure) {
       }
     }
 
-    const dev = declaredIn(manifest, "devDependencies");
     for (const relative of nestedNodeModules(source)) {
-      const atRoot = relative === "node_modules";
+      if (relative === "node_modules") {
+        // The package's own root-level install: the shape npm leaves — a nested
+        // copy for a conflict, a bundled dependency, a linked checkout's own
+        // development tree. Whatever the closure resolves from here is staged
+        // from here; the rest is not imported at run time, and the handler's own
+        // edges are checked above.
+        continue;
+      }
       for (const held of heldPackages(path.join(source, relative))) {
         let heldSource;
         try {
@@ -540,12 +547,6 @@ function refuseUnfaithfulLayouts(output, stagedAt, closure) {
         const carriedAt = path.join(output, destination, relative, held.name);
         const carried = fs.existsSync(carriedAt) ? stagedAt.get(fs.realpathSync(carriedAt)) : undefined;
         if (carried !== undefined && carried.source === heldSource) {
-          // A bundled dependency the closure already places: carried, and fine.
-          continue;
-        }
-        if (atRoot && dev.has(held.name)) {
-          // The linked checkout's own development tree: excluded by design, and
-          // never imported by the handler.
           continue;
         }
         throw new Error(

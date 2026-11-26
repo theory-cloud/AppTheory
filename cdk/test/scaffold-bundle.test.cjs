@@ -1159,6 +1159,75 @@ for (const layout of [
   });
 }
 
+// The boundary of the second refusal, pinned: a linked checkout's own root-level
+// `node_modules` is npm's shape and must keep bundling, including the
+// *transitive* development tree it holds — a package is not required to declare
+// what its own install pulled in, so its root can never decide what belongs in
+// the asset. Only a `node_modules` inside the package's subtree is refused.
+test("the CDK still stages a linked package whose own install holds a transitive development tree", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-linked-devtree-"));
+  const root = path.join(workspace, "project");
+  try {
+    writePackage(root, {
+      name: "project",
+      private: true,
+      version: "0.0.0",
+      type: "module",
+      dependencies: { "dev-tree-carrier": "file:./carrier", leftpad: "0.0.1" },
+    });
+    // The linked package declares one production dependency (hoisted to the
+    // project root by npm, so the asset carries it) and holds a development tree
+    // of its own whose names its manifest never mentions.
+    writeModule(
+      path.join(root, "carrier"),
+      { name: "dev-tree-carrier", version: "1.0.0", dependencies: { leftpad: "^0.0.1" } },
+      'module.exports.self = "dev-tree-carrier@1.0.0";\nmodule.exports.leftpad = require("leftpad").self;',
+    );
+    writeModule(
+      path.join(root, "carrier", "node_modules", "cacheable"),
+      { name: "cacheable", version: "2.2.0", dependencies: { "@cacheable/memory": "^2.2.0" } },
+      'module.exports = "cacheable@2.2.0";',
+    );
+    writeModule(
+      path.join(root, "carrier", "node_modules", "@cacheable", "memory"),
+      { name: "@cacheable/memory", version: "2.2.0" },
+      'module.exports = "cacheable-memory@2.2.0";',
+    );
+    installPackage(root, "leftpad", "0.0.1", { code: 'module.exports = { self: "leftpad@0.0.1" }' });
+    linkSlot(root, "dev-tree-carrier", path.join(root, "carrier"));
+    writeHandler(root, [
+      'import carrier from "dev-tree-carrier";',
+      "",
+      "export const handler = () => ({ carrier: carrier.self, leftpad: carrier.leftpad });",
+    ]);
+
+    const project = invokeHandlerEverywhere(path.join(root, "src", "handler.mjs"), root);
+    const asset = synthNodeAsset(root, workspace, "linked-devtree");
+    const asserted = invokeHandlerEverywhere(path.join(asset, "handler.mjs"), asset);
+    assert.deepEqual(
+      asserted.map((entry) => entry.resolved),
+      project.map((entry) => entry.resolved),
+    );
+    assert.deepEqual(project.map((entry) => entry.resolved)[0], {
+      carrier: "dev-tree-carrier@1.0.0",
+      leftpad: "leftpad@0.0.1",
+    });
+    // The dependency is staged from the project root; the dev tree is not staged
+    // at all, exactly as before this round.
+    assert.deepEqual(fs.readdirSync(path.join(asset, "node_modules")).sort(), [
+      "dev-tree-carrier",
+      "leftpad",
+    ]);
+    assert.equal(
+      fs.existsSync(path.join(asset, "node_modules", "node_modules")),
+      false,
+      "the asset must not carry a nested node_modules",
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 // The control for both refusals: the same two package shapes, without the
 // unfaithful part, still bundle and still load exactly what the project loads —
 // so the refusal is about the layout and not about the package names.
