@@ -5,32 +5,32 @@
         "bash",
         "scripts/verify-api-snapshots.sh"
       ],
-      "durationSeconds": 0.361,
+      "durationSeconds": 0.357,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T06:21:37Z",
+      "finishedAt": "2026-11-26T08:11:52Z",
       "id": "api-snapshots",
-      "inputsDigest": "sha256:65129ed03fce36bb037173ffa147a7e6fd64adb0d049b4581159f4a567e8a8ae",
+      "inputsDigest": "sha256:40f705721276bed841af077fdcaaa7921c0d60418c94279e90f2367501dc438d",
       "logDigest": "sha256:b17e1296373b7df42af02ec9c5b739b85a211832a965a53883d2195a43e69d35",
-      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-api-snapshots-20261126T062136Z-31186.log",
+      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-api-snapshots-20261126T081151Z-50253.log",
       "reused": false,
-      "startedAt": "2026-11-26T06:21:36Z"
+      "startedAt": "2026-11-26T08:11:51Z"
     },
     {
       "argv": [
         "bash",
         "scripts/verify-contract-tests.sh"
       ],
-      "durationSeconds": 35.609,
+      "durationSeconds": 35.614,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T06:22:12Z",
+      "finishedAt": "2026-11-26T08:12:27Z",
       "id": "contract-fixtures",
-      "inputsDigest": "sha256:92cfa4a32ecbce2c10385659fc3ac0ff00b60a9c0cc1f9791f63ac2fdbf334bd",
-      "logDigest": "sha256:1ecf955ce0b622baafd0ffc86b28c72f711eeefd766bcf8d3b0f965ec9d9ed08",
-      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-contract-fixtures-20261126T062137Z-31186.log",
+      "inputsDigest": "sha256:3d666be9f42a21c9da058391638ee2d06856651b0ee4d442d5e33d93c24f42a0",
+      "logDigest": "sha256:8b1391db3bfcc7f24766fc5cd6869813e1321173c9576ae99024ddfaab0dad6b",
+      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-contract-fixtures-20261126T081152Z-50253.log",
       "reused": false,
-      "startedAt": "2026-11-26T06:21:37Z"
+      "startedAt": "2026-11-26T08:11:52Z"
     }
   ],
   "consumed": [],
@@ -52,7 +52,7 @@
   },
   "profile": "node26-py3.15",
   "reason": "",
-  "recordedAt": "2026-11-26T06:22:12Z",
+  "recordedAt": "2026-11-26T08:12:27Z",
   "releaseOnly": {
     "digest": "sha256:44b1d3026389b6e74e8871064d16f2d9dc5bc4b8ce9c0dd37b987db3e4618f65",
     "fileCount": 537,
@@ -62,7 +62,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:e900a1ec07654c8ba66b1ae3baf0c97966c4963a9210f31a380bb0f84c4fe002",
+    "digest": "sha256:5c5db201bb82fef7e709b1c520132b03e1e0b61eee0e603b2862704c58f094dc",
     "fileCount": 1415,
     "paths": [
       "api-snapshots/",
@@ -82,8 +82,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d34ae3c35a6005d1683bba7778ad53b459fe32c2430fe60801e753f9dea435aa",
-    "fileCount": 2819
+    "digest": "sha256:318fa2f60897f798dbfebb234d5f64fa193b069ad0870ba1eff064f7d337d0e4",
+    "fileCount": 2823
   },
   "verdict": "PASS"
 }
