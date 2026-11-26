@@ -54,7 +54,9 @@ Each request owns its own instance of everything below. Two overlapping requests
 ## Shared: process-wide by design, and safe under overlap
 
 These exist once per execution environment and are shared by every request. Each is either immutable after
-construction, keyed only by immutable inputs, or guarded, and the runtime's concurrency tests pin that.
+construction, keyed only by immutable inputs, or guarded. The [audit](../development/planning/apptheory/supporting/apptheory-runtime-concurrency-audit.md)
+names the item and the test that pins it, one row at a time; this page states the guarantees, the audit carries the
+evidence.
 
 - **Configuration**: tier, error format, request-ID source, limits, CORS policy, observability hooks, auth hooks, the
   clock, and the ID generator, all fixed when the app is constructed.
@@ -62,10 +64,11 @@ construction, keyed only by immutable inputs, or guarded, and the runtime's conc
   `registerTool`), read-only while serving. Route matching allocates fresh parameter maps per call.
 - **Warm caches keyed by immutable input**: the JWKS signing-key cache (keyed by `kid`), the OAuth provider's
   validator cache (keyed by issuer/audience/scopes/azp), the front-door parameter cache (keyed by the parameter name
-  fixed at construction), the OAuth reference stores (keyed by opaque IDs), and the MCP session/stream/task stores
-  (keyed by session/stream/task ID).
-- **Clients**: the DynamoDB/S3/SSM/WebSocket clients, created once and reused. Creation is guarded so overlapping
-  first requests build one client rather than several.
+  fixed at construction), the OAuth reference stores (keyed by opaque IDs), the MCP session/stream/task stores (keyed
+  by session/stream/task ID), and the micro:vm session registry (keyed by tenant/namespace/session ID).
+- **Clients**: the DynamoDB/S3/SSM clients, created once and reused. Creation is guarded so overlapping first requests
+  build one client rather than several. The WebSocket management client is the exception: it belongs to
+  `WebSocketContext` and is created per socket request, not per environment.
 - **The process logger**: the sink installed with `setLogger(...)` / `set_logger(...)`. Install it at initialization.
   Request identity travels on a *derived* logger, never on this instance.
 - **The logging profile's retained-entry ring and counters**: process-scoped diagnostics. `entries()`,
@@ -107,11 +110,17 @@ inside them.
 
 ## TypeScript specifics
 
-Node runs one thread, so the runtime's obligation is the absence of a yield point: a shared store's read-modify-write
-must complete without an `await` in the middle. The concurrency tests interleave every handler body at an explicit
-barrier and assert that no request observes another's context, identity, headers, response state or logger binding.
-If a future change introduces an `await` inside a critical section, the interleaved tests fail rather than a deployed
-Web Function.
+Node runs one thread, so the runtime's first obligation is the absence of a yield point: a shared store's
+read-modify-write must complete without an `await` in the middle. The concurrency tests interleave every handler body at
+an explicit barrier and assert that no request observes another's context, identity, headers, response state or logger
+binding. If a future change introduces an `await` inside a critical section, the interleaved tests fail rather than a
+deployed Web Function.
+
+The second obligation is that a cache being filled is joined, not refused. When one request starts filling a shared
+cache (a cold JWKS key set, a discovery document, a lazily created client), every request that arrives during the fill
+waits for that fill and then reads the result; it must not fail a valid request because an unrelated request is still
+in flight. The cold-cache tests hold a burst of valid tokens against one cold cache and require all of them to be
+authorized.
 
 ## Where this is proven
 
