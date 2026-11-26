@@ -33,6 +33,7 @@ groups:
   - label: HTTP & Runtime
     items:
       - { id: feature-http,           title: HTTP Runtime (P0–P2),    url: /features/http-runtime/,      icon: layers,       tag: ga }
+      - { id: feature-concurrency,    title: Concurrency & Isolation, url: /features/concurrency/,      icon: activity,     tag: new }
       - { id: feature-secure-app,     title: SecureApp Routing,       url: /features/secure-app/,        icon: shield-check, tag: new }
       - { id: feature-source,         title: Source Provenance,       url: /features/source-provenance/, icon: shield-check }
       - { id: feature-observability,  title: Observability Hooks,     url: /features/observability/,     icon: activity }
@@ -173,6 +174,7 @@ url_to_id:
   /runtimes/typescript/:                        runtime-ts
   /runtimes/python/:                            runtime-py
   /features/http-runtime/:                      feature-http
+  /features/concurrency/:                       feature-concurrency
   /features/secure-app/:                        feature-secure-app
   /features/source-provenance/:                 feature-source
   /features/observability/:                     feature-observability

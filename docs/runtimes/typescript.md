@@ -160,4 +160,5 @@ The TypeScript runtime passes all 328 shared runtime fixtures and the 116 resour
 - [API Reference](../api-reference.md)
 - [HTTP Runtime tiers](../features/http-runtime.md)
 - [MCP Method Surface](../integrations/mcp.md) — transport and JSON-RPC method contract
+- [Concurrency and Request Isolation](../features/concurrency.md) — what one request owns and what the process shares
 - [Contract Fixtures](../reference/contract-fixtures.md)

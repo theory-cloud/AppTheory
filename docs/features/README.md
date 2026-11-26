@@ -13,6 +13,7 @@ contract.
 ## Current feature guides
 
 - [SecureApp Closed-Default Routing](./secure-app.md)
+- [Concurrency and Request Isolation](./concurrency.md)
 - [MCP Server Umbrella Construct](./mcp-server-construct.md)
 - [Namespace Install Parameters](./install-parameters.md)
 - [S3 Versioned Artifact Ingress](./s3-versioned-ingress.md)
