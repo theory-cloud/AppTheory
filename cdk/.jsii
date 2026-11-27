@@ -27374,6 +27374,102 @@
       ],
       "symbolId": "lib/naming:AppTheoryPhysicalName"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryPythonAppProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "The Python application a Python Web Function serves, as the runtime loads it."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPythonAppProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/web-function.ts",
+        "line": 61
+      },
+      "name": "AppTheoryPythonAppProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "`ASGI` declares an async callable; `WSGI` declares a synchronous one. The interface is written\nwith the entry point (as `asgi:module:callable`), so the runtime never has to guess.",
+            "summary": "The interface the callable implements."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/web-function.ts",
+            "line": 83
+          },
+          "name": "interface",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPythonInterface"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Must not contain a colon: the runtime's entry-point syntax is `module:callable`.",
+            "summary": "The module that holds the callable, relative to the root of the deployment package and without the `.py` extension, for example `main`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/web-function.ts",
+            "line": 68
+          },
+          "name": "module",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"app\"",
+            "summary": "The name of the callable the module exposes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/web-function.ts",
+            "line": 75
+          },
+          "name": "callable",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/web-function:AppTheoryPythonAppProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryPythonInterface": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "remarks": "A Python Web Function is not a request/response handler: Lambda manages the HTTP server and\npasses each request to this application through the interface named here. The interface is part\nof the stack, so it is deployment configuration rather than a runtime knob.",
+        "summary": "The Python application a Python Web Function serves."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPythonInterface",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/web-function.ts",
+        "line": 46
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "An ASGI 3.0 application. Concurrent requests run on the application's single event loop."
+          },
+          "name": "ASGI"
+        },
+        {
+          "docs": {
+            "remarks": "Concurrent requests run in the server's pool of worker threads.",
+            "summary": "A WSGI application."
+          },
+          "name": "WSGI"
+        }
+      ],
+      "name": "AppTheoryPythonInterface",
+      "symbolId": "lib/web-function:AppTheoryPythonInterface"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryQueue": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -34501,15 +34597,15 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
       "docs": {
-        "example": "// A page and a streamed response, on an endpoint that requires IAM authorization\nconst app = new AppTheoryWebFunction(stack, 'Web', {\n  code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),\n  runtime: lambda.WebFunctionRuntime.NODEJS_24_X,\n  entryPoint: 'server.mjs',\n});\n// app.domainName is the endpoint to request, and app.endpoint.grants authorizes callers.",
-        "remarks": "One composition creates the function, its first revision, and the endpoint it answers on, with\nan endpoint that defaults to `IamAuth` so a function is never public by accident. The\napplication starts its own HTTP server and reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to\nlisten on; there is no adapter and no second entry point.",
+        "example": "// A Python ASGI application (`apptheory.ASGIApp` in main.py), on an IAM-authorized endpoint\nconst pythonApp = new AppTheoryWebFunction(stack, 'PythonWeb', {\n  code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),\n  runtime: lambda.WebFunctionRuntime.of('python3.15'),\n  pythonApp: { module: 'main', interface: AppTheoryPythonInterface.ASGI },\n});",
+        "remarks": "One composition creates the function, its first revision, and the endpoint it answers on, with\nan endpoint that defaults to `IamAuth` so a function is never public by accident. How the\napplication serves HTTP is decided by its runtime:\n\n- **Node.js** (`nodejs24.x`, `nodejs26.x`) — the application starts its own HTTP server and reads\n  `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on. `entryPoint` names the entry file.\n- **Python** (`python3.15`, upstream public preview) — Lambda manages the HTTP server and passes\n  each request to an ASGI or WSGI application. `pythonApp` names the module, the callable and the\n  interface; the construct writes the entry point, and no environment variable decides it.\n\nThere is no adapter and no second entry point either way: `runtime/` serves request/response\nLambda events, and this construct composes the function that serves HTTP directly.",
         "summary": "A Lambda Web Function: a function that serves HTTP through its own endpoint."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryWebFunction",
       "initializer": {
         "locationInModule": {
           "filename": "lib/web-function.ts",
-          "line": 225
+          "line": 356
         },
         "parameters": [
           {
@@ -34535,7 +34631,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/web-function.ts",
-        "line": 194
+        "line": 325
       },
       "name": "AppTheoryWebFunction",
       "properties": [
@@ -34546,7 +34642,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 208
+            "line": 339
           },
           "name": "domainName",
           "type": {
@@ -34560,7 +34656,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 203
+            "line": 334
           },
           "name": "endpoint",
           "type": {
@@ -34575,7 +34671,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 223
+            "line": 354
           },
           "name": "revisionId",
           "type": {
@@ -34589,7 +34685,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 198
+            "line": 329
           },
           "name": "webFunction",
           "type": {
@@ -34603,7 +34699,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 213
+            "line": 344
           },
           "name": "webFunctionArn",
           "type": {
@@ -34624,7 +34720,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/web-function.ts",
-        "line": 25
+        "line": 92
       },
       "name": "AppTheoryWebFunctionEndpointProps",
       "properties": [
@@ -34637,7 +34733,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 41
+            "line": 108
           },
           "name": "description",
           "optional": true,
@@ -34655,7 +34751,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 34
+            "line": 101
           },
           "name": "endpointName",
           "optional": true,
@@ -34673,7 +34769,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 50
+            "line": 117
           },
           "name": "maxEnvironments",
           "optional": true,
@@ -34691,7 +34787,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 61
+            "line": 128
           },
           "name": "rateLimit",
           "optional": true,
@@ -34713,7 +34809,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/web-function.ts",
-        "line": 72
+        "line": 139
       },
       "name": "AppTheoryWebFunctionProps",
       "properties": [
@@ -34725,7 +34821,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 76
+            "line": 143
           },
           "name": "code",
           "type": {
@@ -34742,7 +34838,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 85
+            "line": 152
           },
           "name": "runtime",
           "type": {
@@ -34758,7 +34854,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 167
+            "line": 234
           },
           "name": "applicationLogLevel",
           "optional": true,
@@ -34776,7 +34872,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 139
+            "line": 206
           },
           "name": "authType",
           "optional": true,
@@ -34793,7 +34889,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 128
+            "line": 195
           },
           "name": "description",
           "optional": true,
@@ -34810,7 +34906,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 146
+            "line": 213
           },
           "name": "endpoint",
           "optional": true,
@@ -34828,7 +34924,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 95
+            "line": 162
           },
           "name": "entryPoint",
           "optional": true,
@@ -34846,7 +34942,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 105
+            "line": 172
           },
           "name": "environment",
           "optional": true,
@@ -34868,7 +34964,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 160
+            "line": 227
           },
           "name": "logGroup",
           "optional": true,
@@ -34886,12 +34982,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 121
+            "line": 188
           },
           "name": "maxConcurrencyPerEnvironment",
           "optional": true,
           "type": {
             "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined - the runtime is not Python",
+            "remarks": "Required with a Python runtime, and refused with a Node.js runtime: a Node.js Web Function\nstarts its own HTTP server and names its entry file through `entryPoint` instead.\n\n`python3.15` is an upstream public preview: not covered by the Lambda SLA or Technical\nSupport, and not for production.",
+            "summary": "The Python application a `python3.15` Web Function serves."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/web-function.ts",
+            "line": 254
+          },
+          "name": "pythonApp",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPythonAppProps"
           }
         },
         {
@@ -34903,7 +35017,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 153
+            "line": 220
           },
           "name": "role",
           "optional": true,
@@ -34920,7 +35034,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 174
+            "line": 241
           },
           "name": "systemLogLevel",
           "optional": true,
@@ -34937,7 +35051,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/web-function.ts",
-            "line": 112
+            "line": 179
           },
           "name": "timeout",
           "optional": true,
@@ -35859,5 +35973,5 @@
     }
   },
   "version": "7.5.0",
-  "fingerprint": "T/36rMvzZbWIAUOcfBRqC8kC01t1Y1eu4ZFGw8wPjuA="
+  "fingerprint": "m60RJzvLVxVztHhipthQe8ovgq5b737SDzGOiHNeJ3M="
 }

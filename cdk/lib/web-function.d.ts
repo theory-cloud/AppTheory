@@ -4,6 +4,48 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 /**
+ * The Python application a Python Web Function serves.
+ *
+ * A Python Web Function is not a request/response handler: Lambda manages the HTTP server and
+ * passes each request to this application through the interface named here. The interface is part
+ * of the stack, so it is deployment configuration rather than a runtime knob.
+ */
+export declare enum AppTheoryPythonInterface {
+    /**
+     * An ASGI 3.0 application. Concurrent requests run on the application's single event loop.
+     */
+    ASGI = "asgi",
+    /**
+     * A WSGI application. Concurrent requests run in the server's pool of worker threads.
+     */
+    WSGI = "wsgi"
+}
+/**
+ * The Python application a Python Web Function serves, as the runtime loads it.
+ */
+export interface AppTheoryPythonAppProps {
+    /**
+     * The module that holds the callable, relative to the root of the deployment package and without
+     * the `.py` extension, for example `main`.
+     *
+     * Must not contain a colon: the runtime's entry-point syntax is `module:callable`.
+     */
+    readonly module: string;
+    /**
+     * The name of the callable the module exposes.
+     *
+     * @default "app"
+     */
+    readonly callable?: string;
+    /**
+     * The interface the callable implements.
+     *
+     * `ASGI` declares an async callable; `WSGI` declares a synchronous one. The interface is written
+     * with the entry point (as `asgi:module:callable`), so the runtime never has to guess.
+     */
+    readonly interface: AppTheoryPythonInterface;
+}
+/**
  * The endpoint a Web Function serves requests on.
  *
  * Every field here is deployment configuration, not a runtime knob: the endpoint is part of the
@@ -145,23 +187,51 @@ export interface AppTheoryWebFunctionProps {
      * @default undefined - no system log level filtering
      */
     readonly systemLogLevel?: lambda.SystemLogLevel;
+    /**
+     * The Python application a `python3.15` Web Function serves.
+     *
+     * Required with a Python runtime, and refused with a Node.js runtime: a Node.js Web Function
+     * starts its own HTTP server and names its entry file through `entryPoint` instead.
+     *
+     * `python3.15` is an upstream public preview: not covered by the Lambda SLA or Technical
+     * Support, and not for production.
+     *
+     * @default undefined - the runtime is not Python
+     */
+    readonly pythonApp?: AppTheoryPythonAppProps;
 }
 /**
  * A Lambda Web Function: a function that serves HTTP through its own endpoint.
  *
  * One composition creates the function, its first revision, and the endpoint it answers on, with
- * an endpoint that defaults to `IamAuth` so a function is never public by accident. The
- * application starts its own HTTP server and reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to
- * listen on; there is no adapter and no second entry point.
+ * an endpoint that defaults to `IamAuth` so a function is never public by accident. How the
+ * application serves HTTP is decided by its runtime:
+ *
+ * - **Node.js** (`nodejs24.x`, `nodejs26.x`) — the application starts its own HTTP server and reads
+ *   `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on. `entryPoint` names the entry file.
+ * - **Python** (`python3.15`, upstream public preview) — Lambda manages the HTTP server and passes
+ *   each request to an ASGI or WSGI application. `pythonApp` names the module, the callable and the
+ *   interface; the construct writes the entry point, and no environment variable decides it.
+ *
+ * There is no adapter and no second entry point either way: `runtime/` serves request/response
+ * Lambda events, and this construct composes the function that serves HTTP directly.
  *
  * @example
- * // A page and a streamed response, on an endpoint that requires IAM authorization
+ * // A Node.js application: a page and a streamed response, on an IAM-authorized endpoint
  * const app = new AppTheoryWebFunction(stack, 'Web', {
  *   code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),
  *   runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
  *   entryPoint: 'server.mjs',
  * });
  * // app.domainName is the endpoint to request, and app.endpoint.grants authorizes callers.
+ *
+ * @example
+ * // A Python ASGI application (`apptheory.ASGIApp` in main.py), on an IAM-authorized endpoint
+ * const pythonApp = new AppTheoryWebFunction(stack, 'PythonWeb', {
+ *   code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),
+ *   runtime: lambda.WebFunctionRuntime.of('python3.15'),
+ *   pythonApp: { module: 'main', interface: AppTheoryPythonInterface.ASGI },
+ * });
  */
 export declare class AppTheoryWebFunction extends Construct {
     /**

@@ -96,7 +96,10 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
   `AppTheoryMicrovmNetworkConnector`, path-routed frontends, media CDN, and `AppTheorySsrSite`.
 - Web Function serving: `AppTheoryWebFunction` composes a function that serves HTTP through its own
   endpoint, `IamAuth` by default and `ApplicationManaged` only on an explicit opt-in, with weighted
-  revision splits through the endpoint's L1 escape hatch.
+  revision splits through the endpoint's L1 escape hatch. A Node.js runtime starts its own server and
+  names an `entryPoint`; `python3.15` (upstream public preview) serves an ASGI or WSGI application named
+  by `AppTheoryPythonAppProps`, whose `AppTheoryPythonInterface` is `ASGI` or `WSGI` — the construct
+  writes `AWS_LAMBDA_PYTHON_ENTRYPOINT` itself, so no environment variable decides how Python starts.
 
 <!-- apptheory-api-docs:cdk:start -->
 ## CDK snapshot coverage index
@@ -104,7 +107,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>195 exported top-level symbols</summary>
+<summary>197 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps,
@@ -129,7 +132,7 @@ AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration, App
 AppTheoryMicrovmImageOsCapability, AppTheoryMicrovmImageProps, AppTheoryMicrovmImageResources, AppTheoryMicrovmManagedNetworkConnector, AppTheoryMicrovmNetworkConnector,
 AppTheoryMicrovmNetworkConnectorKind, AppTheoryMicrovmNetworkConnectorProps, AppTheoryMicrovmNetworkConnectorReference, AppTheoryMicrovmNetworkConnectorReferenceProps, AppTheoryMicrovmNetworkProtocol,
 AppTheoryMicrovmRuntimeHooks, AppTheoryObservability, AppTheoryObservabilityProps, AppTheoryPathRoutedFrontend, AppTheoryPathRoutedFrontendProps,
-AppTheoryQueue, AppTheoryQueueConsumer, AppTheoryQueueConsumerProps, AppTheoryQueueProcessor, AppTheoryQueueProcessorProps,
+AppTheoryPythonAppProps, AppTheoryPythonInterface, AppTheoryQueue, AppTheoryQueueConsumer, AppTheoryQueueConsumerProps, AppTheoryQueueProcessor, AppTheoryQueueProcessorProps,
 AppTheoryQueueProps, AppTheoryRegionalWafOptions, AppTheoryRemoteMcpServer, AppTheoryRemoteMcpServerProps, AppTheoryRequestMetricDimensions,
 AppTheoryRestApi, AppTheoryRestApiProps, AppTheoryRestApiRouteOptions, AppTheoryRestApiRouter, AppTheoryRestApiRouterCorsOptions,
 AppTheoryRestApiRouterDomainOptions, AppTheoryRestApiRouterIntegrationOptions, AppTheoryRestApiRouterProps, AppTheoryRestApiRouterStageOptions, AppTheoryS3Ingest,

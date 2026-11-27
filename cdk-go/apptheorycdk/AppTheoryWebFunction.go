@@ -12,19 +12,26 @@ import (
 // A Lambda Web Function: a function that serves HTTP through its own endpoint.
 //
 // One composition creates the function, its first revision, and the endpoint it answers on, with
-// an endpoint that defaults to `IamAuth` so a function is never public by accident. The
-// application starts its own HTTP server and reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to
-// listen on; there is no adapter and no second entry point.
+// an endpoint that defaults to `IamAuth` so a function is never public by accident. How the
+// application serves HTTP is decided by its runtime:
+//
+//   - **Node.js** (`nodejs24.x`, `nodejs26.x`) — the application starts its own HTTP server and reads
+//     `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on. `entryPoint` names the entry file.
+//   - **Python** (`python3.15`, upstream public preview) — Lambda manages the HTTP server and passes
+//     each request to an ASGI or WSGI application. `pythonApp` names the module, the callable and the
+//     interface; the construct writes the entry point, and no environment variable decides it.
+//
+// There is no adapter and no second entry point either way: `runtime/` serves request/response
+// Lambda events, and this construct composes the function that serves HTTP directly.
 //
 // Example:
 //
-//	// A page and a streamed response, on an endpoint that requires IAM authorization
-//	const app = new AppTheoryWebFunction(stack, 'Web', {
+//	// A Python ASGI application (`apptheory.ASGIApp` in main.py), on an IAM-authorized endpoint
+//	const pythonApp = new AppTheoryWebFunction(stack, 'PythonWeb', {
 //	  code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),
-//	  runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
-//	  entryPoint: 'server.mjs',
+//	  runtime: lambda.WebFunctionRuntime.of('python3.15'),
+//	  pythonApp: { module: 'main', interface: AppTheoryPythonInterface.ASGI },
 //	});
-//	// app.domainName is the endpoint to request, and app.endpoint.grants authorizes callers.
 type AppTheoryWebFunction interface {
 	constructs.Construct
 	// The domain name to send requests to.
