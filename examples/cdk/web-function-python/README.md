@@ -166,6 +166,20 @@ importable from the archive root, so it is code as far as the guard can tell, an
 than guessing whether it was meant to ship. Keep a local Python test tree beside the example rather than inside `app/`
 or `py/src/apptheory`; the residue that stays out in silence is exactly the residue Python cannot import.
 
+The guard reads entry types, so the trees have to hold the two types it reads. **Every entry in `app/` or in
+`py/src/apptheory` is a regular file or a regular directory, at any depth — nothing else.** An entry that is neither is
+refused by name before anything is checked or copied: a symbolic link to a file, a symbolic link to a directory, a
+socket, a fifo. A link used to be the quiet case, because the walk tests `isFile()` and `isDirectory()` and both are
+false for one — so a linked `.py` module, or a linked package directory, imported from the source tree while staging
+exited 0, shipped the same package, and left the entry point failing at import from the asset. Python imports through
+the link, so the guard cannot call it nothing; it refuses it instead, and it does not follow it. Following it would
+move the guard's judgement outside the tree it guards, where a missing target, a target elsewhere in the repo, or a
+link that leads back into the tree has no answer the allow-list can state — and it is why a link is refused even when
+it points at residue Python could not import: silence is for what Python cannot import, and a link is not a verdict
+about its target. Ship the file or the directory itself, name it in `PACKAGE_TREES` if it is meant to ship, or keep it
+outside these two trees. `WebFunctionPythonPackageInputTests` plants a linked module and a linked package directory in
+each tree and requires each to be refused by name, then requires the committed trees to keep staging the same package.
+
 ```bash
 npx cdk deploy --all     # or: theory app up
 ```
