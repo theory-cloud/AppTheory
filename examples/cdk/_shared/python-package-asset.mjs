@@ -1,15 +1,22 @@
-#!/usr/bin/env node
-// Build the Python deployment package an example's stack stages.
+// Build every Python deployment asset an example's stack stages.
 //
 // A Lambda's archive root is the import root: the entry module and everything it imports have to sit
-// at the top of the package. Every example that ships Python stages the same two things — its own
-// handler modules at the archive root, and the AppTheory runtime this checkout builds under
-// `apptheory/` — so the rule that decides what a package may contain is one rule, stated once, here,
-// and each example contributes only its declaration of which trees it packages and which files in
-// them ship.
+// at the top of the package. A Python example stages two kinds of thing — its own modules, and, when
+// its handler imports the runtime this checkout builds, that runtime under `apptheory/`. Either way
+// the rule that decides what a package may contain is one rule, stated once, here: each example
+// contributes only its declaration of which assets it stages, which trees each asset is built from,
+// and which files in them ship.
 //
-// The package is defined by what it is allowed to contain, not by what it excludes. `EXAMPLE_TREES`
-// and `RUNTIME_TREE` below name every file that ships: an example's handler modules, the runtime's
+// Every Python asset under `examples/cdk/` is built here. That is deliberate: the defect this file
+// closes was a deny-list, `lambda.Code.fromAsset(handlerDir, { exclude: ["__pycache__", "*.pyc"] })`,
+// and it left one copy of the same broken idea in lambda-packaging, local-iam and local-tls — an
+// example that excludes a list of names still deploys whatever kind of residue nobody predicted, and
+// a `.env`, a `.pytest_cache` and a note planted in those trees reached their synthesized assets. A
+// second asset (lambda-packaging's layer) and an asset that ships no runtime (the local-* callers are
+// stdlib-and-botocore handlers) are declarations in the registry below, not a second rule.
+//
+// The package is defined by what it is allowed to contain, not by what it excludes. `EXAMPLE_PACKAGES`
+// and `RUNTIME_TREE` below name every file that ships: an example's own modules, the runtime's
 // importable modules and its declared package data. Local-only files that happen to be lying in a
 // tree — a `.env`, a `.pytest_cache`, an editor swap file, a note — are not named, so they stay on
 // the author's machine and out of the CDK asset, and the asset's hash depends only on files that
@@ -20,11 +27,25 @@
 //
 // The allow-list cannot quietly fall behind the source trees either. `verifyTree` fails the build
 // when a declared file is missing, or when a tree carries an importable unit the list does not name
-// — at any depth, in any of the three shapes Python makes importable: a `.py` module, a package
-// directory with `__init__.py`, or a namespace package directory (Python 3 imports a directory with
-// no `__init__.py` too, as long as it holds modules). Every one of them belongs in the package, so
-// growing any of these trees is a deliberate act of naming the file here rather than a silently
-// incomplete archive.
+// — at any depth, in every shape the import system loads: a `.py` module, a sourceless module (a
+// `<module>.pyc` compiled and kept beside its siblings, which Python imports with no `.py` there at
+// all), an extension module (`.so` or `.pyd`), a package directory with `__init__.py`, and a
+// namespace package directory (Python 3 imports a directory with no `__init__.py` too, as long as it
+// holds modules). Every one of them belongs in the package, so growing any of these trees is a
+// deliberate act of naming the file here rather than a silently incomplete archive. A sourceless
+// module is the shape that used to fall between the two halves of the rule: the walk listed `.py`
+// files, so a `helper.pyc` was not declared, not refused, and not copied — staging exited 0 and the
+// deployed function could not import a module its own source tree could.
+//
+// Byte-code *caches* are the one thing inside a `__pycache__` that is residue, and only there. The
+// interpreter writes them beside the source it compiles — never as something a later import of that
+// directory can load, because a cache is named `<module>.<tag>.pyc` and the import system only looks
+// for `<module>.pyc` — so a `<module>.pyc` inside a `__pycache__` is dropped in silence, at any
+// depth, and a `__pycache__` holding nothing else is not an importable directory at all. A source
+// file or an extension module *inside* a `__pycache__` is not something the interpreter writes
+// there, and a directory named `__pycache__` is importable exactly like any other, so those stay
+// importable units: named or refused, never dropped on the assumption that a cache directory is
+// harmless.
 //
 // That rule is deliberately total, and it is why a local *Python* test tree cannot live inside these
 // trees while a `.env` can: a directory of test modules is importable from the archive root, so it is
@@ -51,8 +72,9 @@
 // package ships, but leaving one to be walked is still leaving one to be walked).
 //
 // Usage:
-//   node examples/cdk/_shared/python-package-asset.mjs <example-dir>          # stages, prints the dir
-//   node examples/cdk/_shared/python-package-asset.mjs --trees <example-dir>  # prints one tree per line
+//   node examples/cdk/_shared/python-package-asset.mjs <example-dir> [asset]          # stages, prints the dir
+//   node examples/cdk/_shared/python-package-asset.mjs --trees <example-dir> [asset]  # prints one tree per line
+//   node examples/cdk/_shared/python-package-asset.mjs --assets <example-dir>         # prints one asset per line
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import * as path from "node:path";
@@ -62,10 +84,34 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
 const RUNTIME_DIR = path.join(REPO_ROOT, "py", "src", "apptheory");
 const STAGE_PARENT = ".cdk-asset-stage";
-const STAGE_NAME = "python-package";
 
 /**
- * The AppTheory runtime, one named file at a time — the same package in every example.
+ * The directory the interpreter writes byte-code caches into, at any depth.
+ *
+ * Its contents are the one shape that is residue where it stands: the import system never loads
+ * `<dir>/__pycache__/<module>.<tag>.pyc`, it loads `<dir>/<module>.py`, `<dir>/<module>.pyc` and
+ * `<dir>/<module>.so`. A cache is therefore dropped in silence; a source file or an extension module
+ * that happens to sit inside a `__pycache__` is a unit like any other (see `importableUnit`).
+ */
+const CACHE_DIRECTORY = "__pycache__";
+
+/**
+ * The file shapes the import system loads whatever the directory is.
+ *
+ * `.py` is a source module, `.so` and `.pyd` are extension modules (same module, one per platform's
+ * loader), and each is importable from any directory on `sys.path`.
+ */
+const IMPORTABLE_SUFFIXES = [".py", ".so", ".pyd"];
+
+/**
+ * The file shapes the import system loads only outside a `__pycache__`: `<module>.pyc` is the
+ * sourceless module Python 3 imports when the source is gone, and `.pyo` is its optimised
+ * predecessor, kept here so a tree that still carries one is named rather than dropped.
+ */
+const BYTE_CODE_SUFFIXES = [".pyc", ".pyo"];
+
+/**
+ * The AppTheory runtime, one named file at a time — the same package in every example that ships it.
  *
  * `destination` is where the tree lands in the archive: under `apptheory/`, because that is the
  * name an application imports. `modules` is every file that ships as code or as declared package
@@ -147,45 +193,87 @@ const RUNTIME_TREE = {
 };
 
 /**
- * Each example that ships a Python package, and the trees it contributes.
+ * Each example that stages a Python asset, the assets it stages, and each asset's trees.
  *
  * `source` is relative to the example directory, and `destination` is where the tree lands in the
  * archive: the handler at the root, because that is where the runtime loads its entry module from.
- * The runtime is not repeated here — it is `RUNTIME_TREE`, declared once, because every example
- * ships the same one.
+ * The asset name is the staging directory under `.cdk-asset-stage/`, so two Python assets of one
+ * example (a function and a layer) are two declarations rather than two packages merged into one.
+ *
+ * `runtime` says whether the AppTheory runtime is part of every asset this example stages. It is a
+ * fact about the example, not a choice: hello-world, multilang and web-function-python handlers
+ * import `apptheory`; lambda-packaging's handler and python layer, and the local-iam and local-tls
+ * callers, import the standard library or botocore and nothing this checkout builds. Shipping the
+ * runtime into those four would deploy code their handlers never import under a name they must not
+ * depend on, so the declaration is `false`.
  *
  * The key is the example's directory name. An example with no entry here cannot be staged: the
  * alternative is guessing, and a guess is what produced a deny-list.
  */
-const EXAMPLE_TREES = {
-  "web-function-python": [
-    {
-      label: "application",
-      source: "app",
-      destination: "",
-      modules: ["main.py", "main_wsgi.py", "lib/application.py"],
-      data: [],
+const EXAMPLE_PACKAGES = {
+  "web-function-python": {
+    runtime: true,
+    assets: {
+      "python-package": [
+        {
+          label: "application",
+          source: "app",
+          destination: "",
+          modules: ["main.py", "main_wsgi.py", "lib/application.py"],
+          data: [],
+        },
+      ],
     },
-  ],
-  "hello-world": [
-    {
-      label: "hello-world handler",
-      source: "handlers/py",
-      destination: "",
-      modules: ["handler.py"],
-      data: [],
+  },
+  "hello-world": {
+    runtime: true,
+    assets: {
+      "python-package": [
+        {
+          label: "hello-world handler",
+          source: "handlers/py",
+          destination: "",
+          modules: ["handler.py"],
+          data: [],
+        },
+      ],
     },
-  ],
-  multilang: [
-    {
-      label: "multilang handler",
-      source: "handlers/py",
-      destination: "",
-      modules: ["handler.py"],
-      data: [],
+  },
+  multilang: {
+    runtime: true,
+    assets: {
+      "python-package": [
+        {
+          label: "multilang handler",
+          source: "handlers/py",
+          destination: "",
+          modules: ["handler.py"],
+          data: [],
+        },
+      ],
     },
-  ],
+  },
 };
+
+/**
+ * Whether a file name is a unit the import system loads, standing in the directory it sits in.
+ *
+ * `cached` is true only for the entries directly inside a `__pycache__`: there, byte-code is what
+ * the interpreter put there and is residue, while a source file or an extension module is not
+ * something the interpreter writes and stays a unit. Everywhere else byte-code is importable.
+ */
+function importableUnit(name, cached) {
+  const lower = name.toLowerCase();
+  if (IMPORTABLE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
+    return true;
+  }
+  return !cached && BYTE_CODE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
+/** Whether a directory is a package: it holds `__init__` as source or as byte-code. */
+function isPackageDirectory(directory) {
+  return existsSync(path.join(directory, "__init__.py")) || existsSync(path.join(directory, "__init__.pyc"));
+}
 
 /**
  * Every entry in a tree that is not a regular file or a regular directory, at any depth.
@@ -226,26 +314,26 @@ function specialEntries(directory, prefix = "") {
   return found;
 }
 
-/** The module names directly inside one directory of a tree, sorted. */
-function modulesIn(directory) {
+/** The unit file names directly inside one directory of a tree, sorted. */
+function unitsIn(directory, cached) {
   return readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".py"))
+    .filter((entry) => entry.isFile() && importableUnit(entry.name, cached))
     .map((entry) => entry.name)
     .sort();
 }
 
-/** Every `.py` file anywhere beneath a directory, as paths relative to it, sorted. */
-function pythonFilesBelow(directory, prefix = "") {
+/** Every importable unit anywhere beneath a directory, as paths relative to it, sorted. */
+function unitsBelow(directory, cached, prefix = "") {
   const found = [];
+  for (const name of unitsIn(directory, cached)) {
+    found.push(prefix ? `${prefix}/${name}` : name);
+  }
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      found.push(...pythonFilesBelow(path.join(directory, entry.name), relative));
+    if (!entry.isDirectory()) {
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith(".py")) {
-      found.push(relative);
-    }
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    found.push(...unitsBelow(path.join(directory, entry.name), entry.name === CACHE_DIRECTORY, relative));
   }
   return found.sort();
 }
@@ -253,14 +341,15 @@ function pythonFilesBelow(directory, prefix = "") {
 /**
  * Every importable unit in a tree that the allow-list does not name, at any depth.
  *
- * Python imports three shapes, and all three are walked here, because all three would deploy
- * incomplete if they were left out: a `.py` module, a package directory holding `__init__.py`, and a
+ * The import system loads several shapes, and all of them are walked here, because all of them would
+ * deploy incomplete if they were left out: a `.py` module, a sourceless `<module>.pyc` beside its
+ * siblings, an extension module (`.so`, `.pyd`), a package directory holding `__init__.py`, and a
  * namespace package — a directory with no `__init__.py` that Python still imports because it holds
  * modules. Depth is irrelevant to importability: `apptheory.oauth.newsub` imports from
  * `apptheory/oauth/newsub/` just as `apptheory.router` imports from `apptheory/router.py`, so a walk
  * that stops at the directories somebody thought to list is a walk that misses growth. (A directory
- * with no Python beneath it is not importable, which is what keeps `__pycache__` and a local
- * `.pytest_cache` out of the findings.)
+ * with no importable file beneath it is not importable, which is what keeps `__pycache__` and a
+ * local `.pytest_cache` out of the findings.)
  *
  * A directory the allow-list names nothing inside is reported once, together with the files it would
  * have brought in; a directory it partly names is descended into, so its own undeclared units are
@@ -274,9 +363,9 @@ function undeclaredUnits(tree, declared) {
   };
   const found = [];
 
-  const walk = (relative) => {
+  const walk = (relative, cached) => {
     const absolute = relative ? path.join(tree.source, relative) : tree.source;
-    for (const name of modulesIn(absolute)) {
+    for (const name of unitsIn(absolute, cached)) {
       const file = relative ? `${relative}/${name}` : name;
       if (!named.has(file)) {
         found.push(`${file} (a module the allow-list does not name)`);
@@ -287,22 +376,21 @@ function undeclaredUnits(tree, declared) {
         continue;
       }
       const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      const childCached = entry.name === CACHE_DIRECTORY;
       if (namesInside(childRelative)) {
-        walk(childRelative);
+        walk(childRelative, childCached);
         continue;
       }
-      const below = pythonFilesBelow(path.join(absolute, entry.name));
+      const below = unitsBelow(path.join(absolute, entry.name), childCached);
       if (!below.length) {
         continue;
       }
-      const kind = existsSync(path.join(absolute, entry.name, "__init__.py"))
-        ? "a package"
-        : "a namespace package";
+      const kind = isPackageDirectory(path.join(absolute, entry.name)) ? "a package" : "a namespace package";
       found.push(`${childRelative}/ (${kind} the allow-list does not walk: ${below.join(", ")})`);
     }
   };
 
-  walk("");
+  walk("", false);
   return found;
 }
 
@@ -328,7 +416,7 @@ function verifyTree(tree) {
         "file or a directory is refused by name rather than followed: a linked module or a linked package " +
         "directory imports from the source tree but cannot be checked against the allow-list or shipped in the " +
         "archive, which is exactly how a package deploys incomplete. Replace the link with the file or the " +
-        "directory itself, name it in EXAMPLE_TREES or RUNTIME_TREE in " +
+        "directory itself, name it in EXAMPLE_PACKAGES or RUNTIME_TREE in " +
         "examples/cdk/_shared/python-package-asset.mjs if it ships, or keep it outside the packaged trees.",
     );
   }
@@ -345,37 +433,65 @@ function verifyTree(tree) {
   if (undeclared.length) {
     throw new Error(
       `the ${tree.label} tree has importable units the allow-list does not name: ${undeclared.join(", ")}. ` +
-        "Name them in EXAMPLE_TREES or RUNTIME_TREE in examples/cdk/_shared/python-package-asset.mjs if they " +
-        "ship with the package; a module, test tree or scratch package that is local-only does not ship, so keep " +
-        "it outside the packaged trees (a handler's local test lives in examples/cdk/<example>/tests/).",
+        "Name them in EXAMPLE_PACKAGES or RUNTIME_TREE in examples/cdk/_shared/python-package-asset.mjs if " +
+        "they ship with the package — a module, a sourceless module kept beside its siblings, an extension " +
+        "module, a package or a namespace package directory all import from the archive root. A module, test " +
+        "tree or scratch package that is local-only does not ship, so keep it outside the packaged trees (a " +
+        "handler's local test lives in examples/cdk/<example>/tests/); byte-code caches belong in a " +
+        "__pycache__, which is dropped in silence.",
     );
   }
 }
 
-/** The trees one example packages, with its handler trees resolved against the example directory. */
-export function packageTrees(exampleDir) {
+/** The example's declaration, and the name of the asset to stage within it. */
+function declaredAsset(exampleDir, assetName) {
   const example = path.resolve(exampleDir);
-  const declared = EXAMPLE_TREES[path.basename(example)];
+  const declared = EXAMPLE_PACKAGES[path.basename(example)];
   if (!declared) {
     throw new Error(
-      `${path.basename(example)} declares no Python package: name the trees it ships in EXAMPLE_TREES in ` +
+      `${path.basename(example)} declares no Python package: name the assets it stages in EXAMPLE_PACKAGES in ` +
         "examples/cdk/_shared/python-package-asset.mjs, or do not stage a Python asset for it.",
     );
   }
+  const names = Object.keys(declared.assets);
+  let name = assetName;
+  if (name === undefined) {
+    if (names.length !== 1) {
+      throw new Error(
+        `${path.basename(example)} declares ${names.length} Python assets (${names.join(", ")}): name the one to ` +
+          "stage in the stack's staging call and in EXAMPLE_PACKAGES in " +
+          "examples/cdk/_shared/python-package-asset.mjs.",
+      );
+    }
+    [name] = names;
+  }
+  if (!declared.assets[name]) {
+    throw new Error(
+      `${path.basename(example)} declares no ${name} asset: it declares ${names.join(", ")}. ` +
+        "Name it in EXAMPLE_PACKAGES in examples/cdk/_shared/python-package-asset.mjs, or stage one of the " +
+        "declared assets.",
+    );
+  }
+  return { example, declared, name };
+}
+
+/** The trees one asset is built from, with its handler trees resolved against the example directory. */
+export function packageTrees(exampleDir, assetName) {
+  const { example, declared, name } = declaredAsset(exampleDir, assetName);
   return [
-    ...declared.map((tree) => ({ ...tree, source: path.join(example, tree.source) })),
-    RUNTIME_TREE,
+    ...declared.assets[name].map((tree) => ({ ...tree, source: path.join(example, tree.source) })),
+    ...(declared.runtime ? [RUNTIME_TREE] : []),
   ];
 }
 
-/** Rebuild one example's deployment package and return its directory. */
-export function stagePythonPackage(exampleDir) {
-  const example = path.resolve(exampleDir);
-  const trees = packageTrees(example);
+/** Rebuild one asset's deployment package and return its directory. */
+export function stagePythonPackage(exampleDir, assetName) {
+  const { example, name } = declaredAsset(exampleDir, assetName);
+  const trees = packageTrees(example, name);
   for (const tree of trees) {
     verifyTree(tree);
   }
-  const stageDir = path.join(example, STAGE_PARENT, STAGE_NAME);
+  const stageDir = path.join(example, STAGE_PARENT, name);
   rmSync(stageDir, { force: true, recursive: true });
   mkdirSync(stageDir, { recursive: true });
   for (const tree of trees) {
@@ -389,18 +505,29 @@ export function stagePythonPackage(exampleDir) {
 }
 
 function main(argv) {
-  const [first, second] = argv;
-  if (first === "--trees") {
+  const [first, second, third] = argv;
+  if (first === "--trees" || first === "--assets") {
     if (!second) {
-      throw new Error("--trees needs the example directory");
+      throw new Error(`${first} needs the example directory`);
     }
-    process.stdout.write(`${packageTrees(second).map((tree) => tree.source).join("\n")}\n`);
+    if (first === "--assets") {
+      const declared = EXAMPLE_PACKAGES[path.basename(path.resolve(second))];
+      if (!declared) {
+        throw new Error(
+          `${path.basename(second)} declares no Python package: name the assets it stages in EXAMPLE_PACKAGES ` +
+            "in examples/cdk/_shared/python-package-asset.mjs, or do not stage a Python asset for it.",
+        );
+      }
+      process.stdout.write(`${Object.keys(declared.assets).join("\n")}\n`);
+      return;
+    }
+    process.stdout.write(`${packageTrees(second, third).map((tree) => tree.source).join("\n")}\n`);
     return;
   }
   if (!first) {
-    throw new Error("usage: python-package-asset.mjs [--trees] <example-dir>");
+    throw new Error("usage: python-package-asset.mjs [--trees|--assets] <example-dir> [asset]");
   }
-  process.stdout.write(`${stagePythonPackage(first)}\n`);
+  process.stdout.write(`${stagePythonPackage(first, second)}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

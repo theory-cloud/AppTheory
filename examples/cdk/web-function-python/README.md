@@ -20,7 +20,7 @@ template will see it — in the revisions' descriptions.
 | `app/main.py` | The ASGI entry point: `app = ASGIApp(build_app())`. |
 | `app/main_wsgi.py` | The WSGI entry point: `application = WSGIApp(build_app())`. |
 | `app/lib/application.py` | The AppTheory application both entry points serve: `/`, `/health` and a streamed `/stream`. |
-| `../_shared/python-package-asset.mjs` | Builds the deployment package the stack stages: `app/` at the archive root with the `apptheory` runtime beside it. Shared with every example that ships Python, so the rule that decides what a package contains is stated once. |
+| `../_shared/python-package-asset.mjs` | Builds the deployment package the stack stages: `app/` at the archive root with the `apptheory` runtime beside it. Shared with every Python asset under `examples/cdk/`, so the rule that decides what a package contains is stated once. |
 | `scripts/serve-wsgi.py` | A local stand-in for the server Lambda manages: the standard library's WSGI server with a threading mixin. Not part of the deployment package. |
 
 The application is written once. `apptheory.ASGIApp` and `apptheory.WSGIApp` turn a request into an AppTheory request,
@@ -155,11 +155,14 @@ stages exactly those. Whatever else is lying in `app/` or in `py/src/apptheory` 
 `.pytest_cache`, an editor swap file, a note. That is what keeps the template's pinned hash a property of the source
 and not of the last local run, and `scripts/local/test_examples_local.py` proves it by planting those files in both
 trees, synthesizing, and requiring the asset and its hash to come out unchanged. The allow-list also fails closed on
-growth, and it holds both trees to it recursively: every importable unit has to be named — a `.py` module, a package
-directory with `__init__.py`, or a namespace package directory (a directory with no `__init__.py` that Python imports
-because it holds modules) — at any depth, in `app/` or in `py/src/apptheory`. An unnamed one stops the build, naming
-the directory or module and the files it would have brought in, instead of deploying an archive that is missing code
-the tree has.
+growth, and it holds both trees to it recursively: every importable unit has to be named — a `.py` module, a
+sourceless `<module>.pyc` kept beside its siblings, an extension module (`.so` or `.pyd`), a package directory with
+`__init__.py`, or a namespace package directory (a directory with no `__init__.py` that Python imports because it holds
+modules) — at any depth, in `app/` or in `py/src/apptheory`. An unnamed one stops the build, naming the directory or
+module and the files it would have brought in, instead of deploying an archive that is missing code the tree has. The
+one shape that stays out in silence is a byte-code cache: `<module>.<tag>.pyc` inside a `__pycache__` is what the
+interpreter wrote, and the import system never loads a file from there. A `.py` or a `.so` that happens to sit in a
+`__pycache__` is not something the interpreter writes, so it is refused by name like any other unit.
 
 That rule is total, and it settles what happens to a local *test* tree: a directory of test modules under `app/` is
 importable from the archive root, so it is code as far as the guard can tell, and staging refuses it by name rather
@@ -176,8 +179,8 @@ the link, so the guard cannot call it nothing; it refuses it instead, and it doe
 move the guard's judgement outside the tree it guards, where a missing target, a target elsewhere in the repo, or a
 link that leads back into the tree has no answer the allow-list can state — and it is why a link is refused even when
 it points at residue Python could not import: silence is for what Python cannot import, and a link is not a verdict
-about its target. Ship the file or the directory itself, name it in `EXAMPLE_TREES` or `RUNTIME_TREE` if it is meant to ship, or keep
-it outside these two trees. `WebFunctionPythonPackageInputTests` plants a linked module and a linked package directory in
+about its target. Ship the file or the directory itself, name it in `EXAMPLE_PACKAGES` or `RUNTIME_TREE` if it is
+meant to ship, or keep it outside these two trees. `WebFunctionPythonPackageInputTests` plants a linked module and a linked package directory in
 each tree and requires each to be refused by name, then requires the committed trees to keep staging the same package.
 
 ```bash
