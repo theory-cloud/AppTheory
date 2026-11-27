@@ -1081,12 +1081,16 @@ WEB_FUNCTION_PYTHON_STACK = "AppTheoryWebFunctionPythonExample"
 # Synthetic local-only files, planted in both package trees to prove they stay out of the deployment
 # package. None of them is or contains a credential: the values are this test's own strings, and what
 # the plant is about is the file's *presence*, never its contents. They are the shapes a developer
-# leaves behind — a dotenv, a local test tree, a pytest cache, a dot-file, a note.
+# leaves behind that Python cannot import — a dotenv, a pytest cache, a dot-file, a note, an editor
+# swap file — which is exactly the residue the allow-list drops in silence. A local *test tree* is
+# not in this set, because a directory of test modules is importable from the archive root and
+# staging refuses it by name (SAN-AT-W1B-05); that case lives in
+# WebFunctionPythonPackageInputTests.test_growth_anywhere_in_either_tree_fails_staging.
 WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS: dict[str, str] = {
     ".env": "APPTHEORY_LOCAL_ONLY_PLANT=this-is-not-a-credential\n",
-    "tests/test_local_only.py": "def test_local_only():\n    assert True\n",
     ".pytest_cache/v/cache/lastfailed": "{}\n",
     ".dotfile-local-only": "a dot-file nobody declared\n",
+    ".main.py.swp": "an editor swap file nobody declared\n",
     "local-notes.txt": "a note nobody declared\n",
 }
 
@@ -1235,11 +1239,21 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
     The allow-list is held to the trees recursively (SAN-AT-W1B-05). Every importable unit in either
     tree has to be named — a `.py` module, a package directory with `__init__.py`, or a namespace
     package directory that Python imports because it holds modules — at any depth, because staging
-    refuses rather than deploying an archive that is missing code the source tree has.
+    refuses rather than deploying an archive that is missing code the source tree has. The rule is
+    total, and it decides what happens to local residue: what Python cannot import (a `.env`, a
+    `.pytest_cache`, a swap file, a note) stays out in silence, while a local *Python* test tree is
+    importable from the archive root, so it is refused by name instead of being dropped or shipped.
     """
 
     def test_local_only_files_stay_out_of_the_synthesized_cdk_asset(self) -> None:
-        """Plant residue in both trees, synthesize, and hold the actual asset to the allow-list."""
+        """Plant residue in both trees, synthesize, and hold the actual asset to the allow-list.
+
+        The plants are the residue Python cannot import, which is the residue staging drops without
+        saying anything: a dotenv, a pytest cache, a dot-file, a swap file, a note. Adding any of
+        them changes neither the asset nor the template hash. Residue that *is* importable — a local
+        test tree — is refused by name instead, and that is asserted in
+        test_growth_anywhere_in_either_tree_fails_staging.
+        """
         example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
         trees = web_function_python_package_trees()
         pinned = (example / "snapshots" / f"{WEB_FUNCTION_PYTHON_STACK}.template.sha256").read_text(encoding="utf-8")
@@ -1426,6 +1440,11 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
                 application,
                 {"lib/deeper/mod.py": "VALUE = 4\n"},
                 ("lib/deeper/", "a namespace package the allow-list does not walk"),
+            ),
+            "a local test tree inside the application tree": (
+                application,
+                {"tests/test_local_only.py": "def test_local_only():\n    assert True\n"},
+                ("tests/", "a namespace package the allow-list does not walk"),
             ),
         }
         for label, (tree, plants, expected) in cases.items():

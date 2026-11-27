@@ -10,11 +10,10 @@
 // The package is defined by what it is allowed to contain, not by what it excludes. `PACKAGE_TREES`
 // below names every file that ships: the application's modules and the runtime's importable modules
 // plus its declared package data. Local-only files that happen to be lying in either tree — a
-// `.env`, a local `tests/` directory, a `.pytest_cache`, an editor swap file, a note — are not
-// named, so they stay on the author's machine and out of the CDK asset, and the asset's hash depends
-// only on files that belong in the package. A list of names to skip cannot promise that: it has to
-// anticipate every kind of local residue, and each kind nobody thought of changes what gets
-// deployed.
+// `.env`, a `.pytest_cache`, an editor swap file, a note — are not named, so they stay on the
+// author's machine and out of the CDK asset, and the asset's hash depends only on files that belong
+// in the package. A list of names to skip cannot promise that: it has to anticipate every kind of
+// local residue, and each kind nobody thought of changes what gets deployed.
 //
 // The allow-list cannot quietly fall behind the source trees either. `verifyTree` fails the build
 // when a declared file is missing, or when a tree carries an importable unit the list does not name
@@ -22,6 +21,13 @@
 // directory with `__init__.py`, or a namespace package directory (Python 3 imports a directory with
 // no `__init__.py` too, as long as it holds modules). Every one of them belongs in the package, so
 // growing the runtime is a deliberate one-line act here rather than a silently incomplete archive.
+//
+// That rule is deliberately total, and it is why a local *Python* test tree cannot live inside
+// these two trees while a `.env` can: a directory of test modules is importable from the archive
+// root, so it is indistinguishable from code the package needs, and the guard refuses it by name
+// instead of guessing which unnamed importable unit was meant to ship. Nothing unnamed reaches the
+// asset either way — the residue that stays out silently is exactly the residue that Python cannot
+// import.
 //
 // The directory is rebuilt from scratch on every run, so the result depends only on the named files
 // in those two source trees. That is what lets the synthesized template's hash be pinned, and it is
@@ -238,7 +244,8 @@ function verifyTree(tree) {
   if (undeclared.length) {
     throw new Error(
       `the ${tree.label} tree has importable units the allow-list does not name: ${undeclared.join(", ")}. ` +
-        "Add them to PACKAGE_TREES in scripts/stage-asset.mjs so the deployment package stays complete.",
+        "Name them in PACKAGE_TREES in scripts/stage-asset.mjs if they ship with the package; a module, test " +
+        "tree or scratch package that is local-only does not ship, so keep it outside these two trees.",
     );
   }
 }
