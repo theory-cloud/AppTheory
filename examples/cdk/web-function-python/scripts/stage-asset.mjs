@@ -29,6 +29,17 @@
 // asset either way — the residue that stays out silently is exactly the residue that Python cannot
 // import.
 //
+// The walk classifies each entry by its own type, so it can only be trusted on trees that hold the
+// two types it knows: every entry in either tree has to be a regular file or a regular directory.
+// A symbolic link — to a file or to a directory — is neither, so a `.py` module reached through a
+// link, or a package directory reached through a link, would be invisible here: classified as
+// nothing, named by nothing, checked by nothing, copied by nothing, and Python would import it from
+// the source tree while the archive it synthesized into could not. That is the same silent omission
+// the recursive walk exists to prevent, so links are refused by name instead of followed, at any
+// depth, whatever they point at. Following them is not the gentle option it looks like: the guard
+// would then be judging a target that is not in the tree it guards, and a link that points outside
+// the tree, at a missing file, or in a cycle has no answer the allow-list can state.
+//
 // The directory is rebuilt from scratch on every run, so the result depends only on the named files
 // in those two source trees. That is what lets the synthesized template's hash be pinned, and it is
 // why the doc tells you to run with `PYTHONDONTWRITEBYTECODE=1` when you serve the application by
@@ -142,6 +153,45 @@ const PACKAGE_TREES = [
   },
 ];
 
+/**
+ * Every entry in a tree that is not a regular file or a regular directory, at any depth.
+ *
+ * The two checks below classify entries by their own type — `isFile()` and `isDirectory()` — and
+ * both are false for anything else, so an entry the filesystem calls something other than a regular
+ * file or a regular directory is an entry neither of them can see. A symbolic link is the case that
+ * matters: Python imports a linked `.py` module and a linked package directory from the source tree
+ * exactly as it imports the file or the directory they stand for, but the walk would classify them
+ * as nothing, name nothing, copy nothing, and deploy an archive that cannot satisfy the import — the
+ * silent omission this guard exists to refuse, arriving through a different door.
+ *
+ * So the rule is the whole shape of the tree: every entry is a regular file or a regular directory.
+ * A link is reported by name and not followed, because following it would put the guard's judgement
+ * outside the tree it guards — a target that is missing, that lives elsewhere in the repo, or that
+ * leads back into the tree has no answer the allow-list can state. Special files (a socket, a fifo,
+ * a device) are refused the same way: they are not entries a Python package is built from.
+ *
+ * Nothing here is residue the allow-list drops in silence: silence is for what Python cannot import,
+ * and a link is not a verdict about its target, it is an absence of one.
+ */
+function specialEntries(directory, prefix = "") {
+  const found = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isSymbolicLink()) {
+      found.push(`${relative} (a symbolic link)`);
+      continue;
+    }
+    if (entry.isDirectory()) {
+      found.push(...specialEntries(path.join(directory, entry.name), relative));
+      continue;
+    }
+    if (!entry.isFile()) {
+      found.push(`${relative} (not a regular file or a regular directory)`);
+    }
+  }
+  return found;
+}
+
 /** The module names directly inside one directory of a tree, sorted. */
 function modulesIn(directory) {
   return readdirSync(directory, { withFileTypes: true })
@@ -225,13 +275,30 @@ function undeclaredUnits(tree, declared) {
 /**
  * Hold a tree to its allow-list, and fail closed when the two disagree.
  *
- * Two directions matter. A declared file that is not there means the package would deploy broken —
- * an import the archive cannot satisfy — so the build stops and names it. An importable unit the
- * list does not name means the package would deploy *incomplete*, silently missing code the source
- * tree has, so the build stops and names that too.
+ * Three directions matter. An entry that is not a regular file or a regular directory is a shape
+ * the walk cannot classify, so it would be checked by nothing and copied by nothing however
+ * importable it is — the build stops and names every one of them before it reads the allow-list at
+ * all. A declared file that is not there means the package would deploy broken — an import the
+ * archive cannot satisfy — so the build stops and names it. An importable unit the list does not
+ * name means the package would deploy *incomplete*, silently missing code the source tree has, so
+ * the build stops and names that too.
  */
 function verifyTree(tree) {
   const declared = [...tree.modules, ...tree.data];
+
+  const special = specialEntries(tree.source);
+  if (special.length) {
+    throw new Error(
+      `the ${tree.label} tree has entries that are not a regular file or a regular directory: ${special.join(", ")}. ` +
+        "Every entry in these two trees has to be a regular file or a regular directory, so a symbolic link to a " +
+        "file or a directory is refused by name rather than followed: a linked module or a linked package " +
+        "directory imports from the source tree but cannot be checked against the allow-list or shipped in the " +
+        "archive, which is exactly how the package used to deploy incomplete. Replace the link with the file or " +
+        "the directory itself, name it in PACKAGE_TREES in scripts/stage-asset.mjs if it ships, or keep it " +
+        "outside these two trees.",
+    );
+  }
+
   const missing = declared.filter((relative) => {
     const target = path.join(tree.source, relative);
     return !existsSync(target) || !statSync(target).isFile();
