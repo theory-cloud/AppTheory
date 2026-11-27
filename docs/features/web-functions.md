@@ -252,10 +252,14 @@ curl -sS -N http://127.0.0.1:3000/stream     # chunked events, one every 120 ms
 
 ```bash
 # ASGI, the way Lambda loads it: main:app
-cd examples/cdk/web-function-python/app && PYTHONPATH=../../../py/src python3 -m uvicorn main:app --port 3000
+cd examples/cdk/web-function-python/app && PYTHONPATH=../../../../py/src python3 -m uvicorn main:app --port 3000
 # WSGI, the way Lambda calls it: wsgi:main_wsgi:application
-cd examples/cdk/web-function-python && PYTHONPATH=../../py/src PORT=3000 python3 scripts/serve-wsgi.py
+cd examples/cdk/web-function-python && PYTHONPATH=../../../py/src PORT=3000 python3 scripts/serve-wsgi.py
 ```
+
+Both paths reach this checkout's `py/src`, which is where the runtime lives until a deployment puts it in the archive
+root; the example's README says the same thing and
+`scripts/local/test_examples_local.py` runs both lines as written, in an environment with no AppTheory installed.
 
 The row asserts status codes, headers, incremental delivery (the first of three events arrives as soon as the
 response opens and the last about 0.37 s later, with no `content-length` to buffer it), and isolation between two

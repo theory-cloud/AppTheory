@@ -20,6 +20,7 @@ template will see it — in the revisions' descriptions.
 | `app/main.py` | The ASGI entry point: `app = ASGIApp(build_app())`. |
 | `app/main_wsgi.py` | The WSGI entry point: `application = WSGIApp(build_app())`. |
 | `app/lib/application.py` | The AppTheory application both entry points serve: `/`, `/health` and a streamed `/stream`. |
+| `scripts/stage-asset.mjs` | Builds the deployment package the stack stages: `app/` at the archive root with the `apptheory` runtime beside it. |
 | `scripts/serve-wsgi.py` | A local stand-in for the server Lambda manages: the standard library's WSGI server with a threading mixin. Not part of the deployment package. |
 
 The application is written once. `apptheory.ASGIApp` and `apptheory.WSGIApp` turn a request into an AppTheory request,
@@ -36,15 +37,25 @@ call the runtime, and write the response back chunk by chunk, so `Response.html_
 
 ## Run the application on its own
 
-A Python Web Function's server is Lambda's, so locally you supply one. Nothing in the application changes:
+A Python Web Function's server is Lambda's, so locally you supply one. Nothing in the application changes — the
+`PYTHONPATH` below is the only local scaffolding: it puts this checkout's `py/src` on the path in place of the
+`apptheory` package a deployment carries in the archive root. Run each command from the example directory
+(`examples/cdk/web-function-python`), exactly as written:
 
 ```bash
 # ASGI, exactly as the runtime loads it: asgi:main:app
-cd app && PYTHONPATH=../../../py/src python3 -m uvicorn main:app --host 127.0.0.1 --port 3000
+cd app && PYTHONPATH=../../../../py/src python3 -m uvicorn main:app --host 127.0.0.1 --port 3000
 
 # WSGI, exactly as the runtime calls it: wsgi:main_wsgi:application
-cd .. && PYTHONPATH=../../py/src PORT=3000 python3 scripts/serve-wsgi.py
+PYTHONPATH=../../../py/src PORT=3000 python3 scripts/serve-wsgi.py
 ```
+
+`scripts/local/test_examples_local.py` runs both of those lines as written, in an environment with no AppTheory
+installed anywhere, so a command that stops reaching the runtime fails the harness instead of a reader's afternoon.
+
+`PYTHONDONTWRITEBYTECODE=1` is what the local rows set, and it is worth setting here too: `scripts/stage-asset.mjs`
+never copies a byte-code cache into the deployment package, so a cache cannot move the pinned template hash, but an
+untracked `__pycache__` in the tree is still noise.
 
 ```bash
 curl -sS -D- http://127.0.0.1:3000/            # 200, text/html page
@@ -119,11 +130,28 @@ refuses that variable — as it refuses `AWS_LAMBDA_PYTHON_ENTRYPOINT` — so no
 
 ## Package and deploy
 
-The deployment package is the **archive root** Lambda expects: `main.py`, `main_wsgi.py`, `lib/` and the `apptheory`
-package (plus its dependencies), zipped together. AppTheory is distributed as a pinned GitHub Releases asset — see
-[Installation](../../../docs/getting-started.md) — so the packaging step installs that wheel into a build directory and
-zips it with `app/`. `lambda.WebFunctionCode.fromAssetToManagedBucket("app")` stages `app/` as-is, which is what makes
-`synthesis` and the local rows work without a packaging step.
+A Python Web Function's archive root is its import root: Lambda loads `main:app` (or the entry point the revision
+names), so the entry module and the `apptheory` package it imports have to sit at the top of the package together.
+That is exactly what the stack stages — one directory, `.cdk-asset-stage/python-app/`, built by
+`scripts/stage-asset.mjs` during `cdk synth`, and one asset both revisions share:
+
+```text
+main.py            main_wsgi.py        lib/application.py     ← app/, at the archive root
+apptheory/         py.typed                                   ← this checkout's py/src/apptheory
+```
+
+`lambda.WebFunctionCode.fromAssetToManagedBucket(...)` stages that directory and nothing else, so synthesis and
+deployment hand Lambda the same bytes: there is no separate packaging step to run before `cdk synth`, and no build
+directory that exists only in this page. The example vendors the runtime from `py/src` so synthesis works offline
+and reproducibly; a deployed application ends up with the identical layout by unzipping the pinned `apptheory`
+wheel, from GitHub Releases — see [Installation](../../../docs/getting-started.md) — into the same archive root.
+Those three routes import only the standard library, so nothing else is staged; an application that reaches
+`apptheory.jobs` or the microvm session registry also needs the wheel's declared `tabletheory-py`, which belongs in
+the same archive root.
+
+Byte-code caches and build residue are left out (`scripts/stage-asset.mjs` skips them, and the asset's `exclude`
+patterns repeat it), which is what keeps the template's pinned hash a property of the source and not of the last
+local run.
 
 ```bash
 npx cdk deploy --all     # or: theory app up
