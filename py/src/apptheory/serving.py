@@ -200,28 +200,6 @@ async def _watch_disconnect(receive: ASGIReceive, disconnected: asyncio.Event) -
         await asyncio.sleep(0)
 
 
-async def _stop_watcher(watcher: asyncio.Future[None]) -> None:
-    """Cancel the disconnect watcher and absorb however it stopped.
-
-    A conforming server reports a disconnect as an ``http.disconnect`` message and never raises, so
-    the watcher normally ends cancelled. A channel that is not the one ASGI defines can fail inside
-    ``receive()`` instead, and that failure belongs to the watcher: it is logged and discarded here
-    so a response the server already received in full is not followed by a spurious error, and so an
-    exception already on its way out of the request is not replaced by the watcher's. Nothing here
-    changes when a body stops — a stream is released by the response path, not by this join.
-    """
-    watcher.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        try:
-            await watcher
-        except Exception as exc:  # noqa: BLE001 - a nonconforming receive() must not mask the response
-            _LOGGER.warning(
-                "apptheory: the ASGI receive() channel failed while watching for a disconnect "
-                "(the value is percent-encoded, so it cannot forge a log field): %s",
-                log_safe_value(exc),
-            )
-
-
 def _next_chunk(iterator: Any) -> bytes | None:
     """Return the next streamed chunk, or ``None`` when the stream ended.
 
@@ -284,7 +262,22 @@ class ASGIApp:
                 return
             await _send_asgi_response(response, request.method.upper() == "HEAD", send, disconnected)
         finally:
-            await _stop_watcher(watcher)
+            # The join is here, at the site that launched the watcher, so it dominates every way out
+            # of this request. A conforming server reports a disconnect as a message and the watcher
+            # ends cancelled; a channel that fails inside `receive()` is the watcher's problem, and
+            # its failure is logged rather than raised over a response the server already has — or
+            # over an exception already on its way out. The body is released by the response path,
+            # never by this join.
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                try:
+                    await watcher
+                except Exception as exc:  # noqa: BLE001 - a nonconforming receive() must not mask the response
+                    _LOGGER.warning(
+                        "apptheory: the ASGI receive() channel failed while watching for a disconnect "
+                        "(the value is percent-encoded, so it cannot forge a log field): %s",
+                        log_safe_value(exc),
+                    )
 
 
 async def _serve_lifespan(receive: ASGIReceive, send: ASGISend) -> None:
