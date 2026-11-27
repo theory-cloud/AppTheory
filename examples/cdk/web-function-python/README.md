@@ -155,8 +155,11 @@ stages exactly those. Whatever else is lying in `app/` or in `py/src/apptheory` 
 local `tests/` tree, a `.pytest_cache`, an editor swap file. That is what keeps the template's pinned hash a property
 of the source and not of the last local run, and `scripts/local/test_examples_local.py` proves it by planting those
 files in both trees, synthesizing, and requiring the asset and its hash to come out unchanged. The allow-list also
-fails closed on growth: a runtime module it does not name stops the build, naming the module, instead of deploying an
-archive that is missing code the tree has.
+fails closed on growth, and it holds both trees to it recursively: every importable unit has to be named — a `.py`
+module, a package directory with `__init__.py`, or a namespace package directory (a directory with no `__init__.py`
+that Python imports because it holds modules) — at any depth, in `app/` or in `py/src/apptheory`. An unnamed one stops
+the build, naming the directory or module and the files it would have brought in, instead of deploying an archive that
+is missing code the tree has.
 
 ```bash
 npx cdk deploy --all     # or: theory app up

@@ -17,8 +17,10 @@
 // deployed.
 //
 // The allow-list cannot quietly fall behind the source trees either. `verifyTree` fails the build
-// when a declared file is missing, or when a tree carries an importable module the list does not
-// name — a new runtime module is importable as `apptheory.<name>` and belongs in the package, so
+// when a declared file is missing, or when a tree carries an importable unit the list does not name
+// — at any depth, in any of the three shapes Python makes importable: a `.py` module, a package
+// directory with `__init__.py`, or a namespace package directory (Python 3 imports a directory with
+// no `__init__.py` too, as long as it holds modules). Every one of them belongs in the package, so
 // growing the runtime is a deliberate one-line act here rather than a silently incomplete archive.
 //
 // The directory is rebuilt from scratch on every run, so the result depends only on the named files
@@ -45,9 +47,11 @@ const STAGE_DIR = path.join(EXAMPLE_DIR, ".cdk-asset-stage", "python-app");
  * that is the import root Lambda loads its entry module from, and the runtime under `apptheory/`,
  * because that is the name the application imports.
  *
- * `moduleDirs` are the directories whose `.py` files belong to the package. Anything outside them is
- * not part of it, so a local `tests/` or `.pytest_cache/` tree cannot join it by being adjacent to
- * the code. `data` is package data that is not a module: the runtime declares `py.typed` in
+ * `modules` is every file that ships as code or as declared package data — whatever the tree's shape,
+ * nothing else joins the package. A directory is not a unit of the allow-list: it is walked, and the
+ * files it contributes are named individually, because a directory that ships (a local `tests/`, a
+ * `.pytest_cache/`, a namespace directory) is exactly what a list of directories cannot distinguish
+ * from a package. `data` is package data that is not a module: the runtime declares `py.typed` in
  * `py/pyproject.toml`, so it ships with the modules that carry the annotations.
  */
 const PACKAGE_TREES = [
@@ -55,7 +59,6 @@ const PACKAGE_TREES = [
     label: "application",
     source: APP_DIR,
     destination: "",
-    moduleDirs: ["", "lib"],
     modules: ["main.py", "main_wsgi.py", "lib/application.py"],
     data: [],
   },
@@ -63,7 +66,6 @@ const PACKAGE_TREES = [
     label: "AppTheory runtime",
     source: RUNTIME_DIR,
     destination: "apptheory",
-    moduleDirs: ["", "limited", "mcp", "microvm", "oauth"],
     modules: [
       "__init__.py",
       "_safe_log.py",
@@ -142,11 +144,83 @@ function modulesIn(directory) {
     .sort();
 }
 
+/** Every `.py` file anywhere beneath a directory, as paths relative to it, sorted. */
+function pythonFilesBelow(directory, prefix = "") {
+  const found = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      found.push(...pythonFilesBelow(path.join(directory, entry.name), relative));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".py")) {
+      found.push(relative);
+    }
+  }
+  return found.sort();
+}
+
+/**
+ * Every importable unit in a tree that the allow-list does not name, at any depth.
+ *
+ * Python imports three shapes, and all three are walked here, because all three would deploy
+ * incomplete if they were left out: a `.py` module, a package directory holding `__init__.py`, and a
+ * namespace package — a directory with no `__init__.py` that Python still imports because it holds
+ * modules. Depth is irrelevant to importability: `apptheory.oauth.newsub` imports from
+ * `apptheory/oauth/newsub/` just as `apptheory.router` imports from `apptheory/router.py`, so a walk
+ * that stops at the directories somebody thought to list is a walk that misses growth. (A directory
+ * with no Python beneath it is not importable, which is what keeps `__pycache__` and a local
+ * `.pytest_cache` out of the findings.)
+ *
+ * A directory the allow-list names nothing inside is reported once, together with the files it would
+ * have brought in; a directory it partly names is descended into, so its own undeclared units are
+ * reported by name.
+ */
+function undeclaredUnits(tree, declared) {
+  const named = new Set(declared);
+  const namesInside = (relative) => {
+    const prefix = relative ? `${relative}/` : "";
+    return declared.some((name) => name.startsWith(prefix) && name.length > prefix.length);
+  };
+  const found = [];
+
+  const walk = (relative) => {
+    const absolute = relative ? path.join(tree.source, relative) : tree.source;
+    for (const name of modulesIn(absolute)) {
+      const file = relative ? `${relative}/${name}` : name;
+      if (!named.has(file)) {
+        found.push(`${file} (a module the allow-list does not name)`);
+      }
+    }
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      if (namesInside(childRelative)) {
+        walk(childRelative);
+        continue;
+      }
+      const below = pythonFilesBelow(path.join(absolute, entry.name));
+      if (!below.length) {
+        continue;
+      }
+      const kind = existsSync(path.join(absolute, entry.name, "__init__.py"))
+        ? "a package"
+        : "a namespace package";
+      found.push(`${childRelative}/ (${kind} the allow-list does not walk: ${below.join(", ")})`);
+    }
+  };
+
+  walk("");
+  return found;
+}
+
 /**
  * Hold a tree to its allow-list, and fail closed when the two disagree.
  *
  * Two directions matter. A declared file that is not there means the package would deploy broken —
- * an import the archive cannot satisfy — so the build stops and names it. An importable module the
+ * an import the archive cannot satisfy — so the build stops and names it. An importable unit the
  * list does not name means the package would deploy *incomplete*, silently missing code the source
  * tree has, so the build stops and names that too.
  */
@@ -160,30 +234,10 @@ function verifyTree(tree) {
     throw new Error(`the allow-list names ${tree.label} files that are not there: ${missing.join(", ")}`);
   }
 
-  const undeclared = [];
-  for (const directory of tree.moduleDirs) {
-    const absolute = directory ? path.join(tree.source, directory) : tree.source;
-    if (!existsSync(absolute)) {
-      continue;
-    }
-    for (const name of modulesIn(absolute)) {
-      const relative = directory ? `${directory}/${name}` : name;
-      if (!declared.includes(relative)) {
-        undeclared.push(relative);
-      }
-    }
-  }
-  for (const entry of readdirSync(tree.source, { withFileTypes: true })) {
-    if (!entry.isDirectory() || tree.moduleDirs.includes(entry.name)) {
-      continue;
-    }
-    if (existsSync(path.join(tree.source, entry.name, "__init__.py"))) {
-      undeclared.push(`${entry.name}/ (a package the allow-list does not walk)`);
-    }
-  }
+  const undeclared = undeclaredUnits(tree, declared);
   if (undeclared.length) {
     throw new Error(
-      `the ${tree.label} tree has modules the allow-list does not name: ${undeclared.join(", ")}. ` +
+      `the ${tree.label} tree has importable units the allow-list does not name: ${undeclared.join(", ")}. ` +
         "Add them to PACKAGE_TREES in scripts/stage-asset.mjs so the deployment package stays complete.",
     );
   }

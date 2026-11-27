@@ -1231,6 +1231,11 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
     operator deploys depends on what the author happened to leave in the tree. Both trees are now
     bounded by an explicit allow-list of the importable modules and the declared package data, and
     these tests plant the shapes that used to leak.
+
+    The allow-list is held to the trees recursively (SAN-AT-W1B-05). Every importable unit in either
+    tree has to be named — a `.py` module, a package directory with `__init__.py`, or a namespace
+    package directory that Python imports because it holds modules — at any depth, because staging
+    refuses rather than deploying an archive that is missing code the source tree has.
     """
 
     def test_local_only_files_stay_out_of_the_synthesized_cdk_asset(self) -> None:
@@ -1381,6 +1386,98 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
         refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
         self.assertTrue(refused, f"the staging failure does not report an error: {result.stderr.strip()}")
         print(f"\nundeclared runtime module: staging refused with {refused[0]}")
+
+    def test_growth_anywhere_in_either_tree_fails_staging(self) -> None:
+        """Depth and shape do not make a unit unimportable. (SAN-AT-W1B-05 / ADV-W1B-R2-01)
+
+        The growth guard used to look only at the directories its allow-list walked: a top-level
+        module was refused, but a subpackage under an existing package, a module two directories
+        down, and a namespace package at the runtime root were all accepted and silently left out of
+        the asset — the build said nothing, the pin did not move, and the deployed function failed at
+        import. Python imports all three shapes, so the walk covers both trees at every depth.
+        """
+        runtime = harness.ROOT / "py" / "src" / "apptheory"
+        application = harness.WEB_FUNCTION_PYTHON_ASGI_APP
+        cases: dict[str, tuple[Path, dict[str, str], tuple[str, str]]] = {
+            "a subpackage under an existing runtime package": (
+                runtime,
+                {
+                    "oauth/newsub/__init__.py": '"""A subpackage the allow-list does not walk."""\n',
+                    "oauth/newsub/client.py": "VALUE = 1\n",
+                },
+                ("oauth/newsub/", "a package the allow-list does not walk"),
+            ),
+            "a module nested two directories down": (
+                runtime,
+                {"oauth/nesteddir/helper.py": "VALUE = 2\n"},
+                ("oauth/nesteddir/", "a namespace package the allow-list does not walk"),
+            ),
+            "a namespace package at the runtime root": (
+                runtime,
+                {"nsx/mod.py": "VALUE = 3\n"},
+                ("nsx/", "a namespace package the allow-list does not walk"),
+            ),
+            "a namespace directory deep in the application tree": (
+                application,
+                {"lib/deeper/mod.py": "VALUE = 4\n"},
+                ("lib/deeper/", "a namespace package the allow-list does not walk"),
+            ),
+        }
+        for label, (tree, plants, expected) in cases.items():
+            with self.subTest(label):
+                with planted_local_only_files([tree], plants) as planted:
+                    result = subprocess.run(
+                        [
+                            shutil.which("node") or "node",
+                            str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"),
+                        ],
+                        cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                self.assertNotEqual(
+                    0,
+                    result.returncode,
+                    f"staging accepted {label}, planted as {[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                )
+                refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+                self.assertTrue(refused, f"the staging failure for {label} does not report an error: {result.stderr.strip()}")
+                for fragment in expected:
+                    self.assertIn(
+                        fragment,
+                        refused[0],
+                        f"the staging refusal for {label} does not name it: {refused[0]}",
+                    )
+                print(f"\n{label}: staging refused with {refused[0]}")
+
+    def test_the_allow_list_walk_matches_the_tree_it_guards(self) -> None:
+        """The trees as they ship pass the guard: the walk names nothing it should not. (SAN-AT-W1B-05)
+
+        A walk that is too shallow is a silent omission; a walk that is too eager refuses the tree
+        that exists. This runs staging on the real trees as committed, so a recursive walk that
+        caught a byte-code cache, a local test tree, or a directory the package legitimately holds
+        as a namespace would fail here rather than at the next author's synth.
+        """
+        result = subprocess.run(
+            [
+                shutil.which("node") or "node",
+                str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"),
+            ],
+            cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, f"staging refused the trees as committed: {result.stderr.strip()}")
+        staged = Path(result.stdout.strip())
+        files = sorted(path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file())
+        self.assertEqual(
+            [],
+            [name for name in files if "__pycache__" in name or name.endswith(".pyc")],
+            "a byte-code cache reached the deployment package",
+        )
+        print(f"\nthe trees as committed stage {len(files)} files and the recursive walk refuses nothing in them")
 
 
 class WebFunctionPythonDisconnectTests(unittest.TestCase):
