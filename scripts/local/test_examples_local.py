@@ -1144,6 +1144,43 @@ def planted_local_only_files(trees: list[Path], plants: dict[str, str]):
                 directory.rmdir()
 
 
+@contextlib.contextmanager
+def planted_links(entries: list[tuple[Path, str, Path]]):
+    """Point an entry of a package tree at another path, and take the link back out again.
+
+    A symbolic link is the entry shape the staging walk cannot classify: `Dirent.isFile()` and
+    `Dirent.isDirectory()` are both false for it, so an entry that trusts them sees nothing at all.
+    Python sees the opposite — a linked `.py` module and a linked package directory import from the
+    archive root exactly like the file or the directory they stand for — which is why the link has to
+    be planted in the real tree and refused by name (SAN-AT-W1B-05). Every link this adds is recorded
+    and removed in `finally`, so a failed assertion cannot leave one behind for the next test.
+    """
+    planted: list[Path] = []
+    try:
+        for tree, name, target in entries:
+            link = tree / name
+            if link.exists() or link.is_symlink():
+                raise harness.HarnessFailure(f"{link} already exists; refusing to overwrite it")
+            os.symlink(target, link)
+            planted.append(link)
+        yield planted
+    finally:
+        for link in planted:
+            with contextlib.suppress(FileNotFoundError):
+                link.unlink()
+
+
+def run_web_function_python_staging() -> subprocess.CompletedProcess[str]:
+    """Run the example's own staging step — the one `cdk synth` runs — and report what it said."""
+    return subprocess.run(
+        [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
+        cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def ensure_web_function_python_cdk_dependencies() -> None:
     """Install the example's CDK dependency tree the way the synth gate does.
 
@@ -1246,6 +1283,13 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
     total, and it decides what happens to local residue: what Python cannot import (a `.env`, a
     `.pytest_cache`, a swap file, a note) stays out in silence, while a local *Python* test tree is
     importable from the archive root, so it is refused by name instead of being dropped or shipped.
+
+    The walk reads entry types, so the trees may hold only the two types it reads (ADV-W1B-R3-01): a
+    `.py` module, a package directory and a namespace directory are importable through a symbolic link
+    just as they are directly, but `isFile()`/`isDirectory()` are false for the link, so a linked entry
+    used to pass unchecked and unshipped. Every entry that is not a regular file or a regular directory
+    is now refused by name and not followed, and that is asserted per tree and per shape in
+    test_a_linked_entry_in_either_tree_fails_staging.
     """
 
     def test_local_only_files_stay_out_of_the_synthesized_cdk_asset(self) -> None:
@@ -1479,6 +1523,101 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
                         f"the staging refusal for {label} does not name it: {refused[0]}",
                     )
                 print(f"\n{label}: staging refused with {refused[0]}")
+
+    def test_a_linked_entry_in_either_tree_fails_staging(self) -> None:
+        """A link is a shape the walk cannot classify, so staging refuses it by name. (SAN-AT-W1B-05 / ADV-W1B-R3-01)
+
+        The walk classifies each entry with `Dirent.isFile()` / `isDirectory()`, and both are false
+        for a symbolic link, so a linked `.py` module or a linked package directory was neither
+        checked nor shipped: staging exited 0, the staged package stayed byte-identical, and the
+        entry point imported from the source tree but not from the asset — the same silent omission
+        the recursive walk refuses, arriving through a linked entry. Python imports through a link,
+        so the guard cannot classify it as nothing; the rule is the shape of the whole tree: every
+        entry in `app/` or `py/src/apptheory` is a regular file or a regular directory, and any other
+        entry stops the build by name.
+
+        Both shapes are planted in both trees, because the runtime tree is the one that ships under
+        `apptheory/` and the application tree is the archive root. The committed trees still stage
+        without complaint afterwards, which is the other half of the rule: it refuses links, not the
+        package.
+        """
+        runtime = harness.ROOT / "py" / "src" / "apptheory"
+        application = harness.WEB_FUNCTION_PYTHON_ASGI_APP
+        cases: dict[str, tuple[Path, str, Path, str]] = {
+            "a linked module in the application tree": (
+                application,
+                "aliased_module.py",
+                application / "lib" / "application.py",
+                "aliased_module.py (a symbolic link)",
+            ),
+            "a linked package directory in the application tree": (
+                application,
+                "aliased_pkg",
+                application / "lib",
+                "aliased_pkg (a symbolic link)",
+            ),
+            "a linked module in the runtime tree": (
+                runtime,
+                "aliased_module.py",
+                runtime / "router.py",
+                "aliased_module.py (a symbolic link)",
+            ),
+            "a linked package directory in the runtime tree": (
+                runtime,
+                "aliased_pkg",
+                runtime / "limited",
+                "aliased_pkg (a symbolic link)",
+            ),
+        }
+
+        clean = run_web_function_python_staging()
+        self.assertEqual(0, clean.returncode, f"staging refused the trees as committed: {clean.stderr.strip()}")
+        committed = self._staged_files(clean)
+
+        for label, (tree, name, target, expected) in cases.items():
+            with self.subTest(label):
+                with planted_links([(tree, name, target)]) as planted:
+                    result = run_web_function_python_staging()
+                self.assertNotEqual(
+                    0,
+                    result.returncode,
+                    f"staging accepted {label}, planted as {[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                )
+                refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+                self.assertTrue(
+                    refused,
+                    f"the staging failure for {label} does not report an error: {result.stderr.strip()}",
+                )
+                self.assertIn(
+                    expected,
+                    refused[0],
+                    f"the staging refusal for {label} does not name the linked entry: {refused[0]}",
+                )
+                self.assertIn(
+                    "not a regular file or a regular directory",
+                    refused[0],
+                    f"the staging refusal for {label} does not state the rule: {refused[0]}",
+                )
+                print(f"\n{label}: staging refused with {refused[0]}")
+
+        after = run_web_function_python_staging()
+        self.assertEqual(
+            0,
+            after.returncode,
+            f"the trees as committed stopped staging after the links were removed: {after.stderr.strip()}",
+        )
+        self.assertEqual(
+            committed,
+            self._staged_files(after),
+            "the trees as committed no longer stage the package they staged before the linked entries were planted",
+        )
+        print(f"\nthe trees as committed still stage {len(committed)} files")
+
+    @staticmethod
+    def _staged_files(result: subprocess.CompletedProcess[str]) -> list[str]:
+        """The files one staging run produced, relative to the staged directory."""
+        staged = Path(result.stdout.strip())
+        return sorted(path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file())
 
     def test_the_allow_list_walk_matches_the_tree_it_guards(self) -> None:
         """The trees as they ship pass the guard: the walk names nothing it should not. (SAN-AT-W1B-05)
