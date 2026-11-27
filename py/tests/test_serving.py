@@ -39,7 +39,11 @@ def _scope(
 
 
 class _Receiver:
-    """An ASGI receive channel that hands out the request and then holds the connection open."""
+    """An ASGI receive channel that hands out the request and then holds the connection open.
+
+    After the request has been delivered it behaves the way a server does: ``receive()`` sleeps until
+    the client does something, and the something it can do is disconnect.
+    """
 
     def __init__(self, body: bytes = b"", *, chunks: list[bytes] | None = None, disconnect: bool = False) -> None:
         parts: list[bytes] = [] if disconnect else ([body] if chunks is None else chunks)
@@ -48,13 +52,30 @@ class _Receiver:
             for index, chunk in enumerate(parts)
         ]
         self._disconnect = disconnect
+        self._idle = asyncio.Event()
 
     async def __call__(self) -> dict:
         if self._messages:
             return self._messages.pop(0)
         if self._disconnect:
             return {"type": "http.disconnect"}
-        return {"type": "http.request", "body": b"", "more_body": False}
+        await self._idle.wait()
+        return {"type": "http.disconnect"}
+
+
+class _DisconnectingReceiver:
+    """Delivers the request body, then waits until the test says the client went away."""
+
+    def __init__(self) -> None:
+        self.request_read = False
+        self.disconnected = asyncio.Event()
+
+    async def __call__(self) -> dict:
+        if not self.request_read:
+            self.request_read = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await self.disconnected.wait()
+        return {"type": "http.disconnect"}
 
 
 def _collector() -> tuple[list[dict], list[float], object]:
@@ -233,6 +254,82 @@ class ASGIResponseTests(unittest.TestCase):
             asyncio.run(app({"type": "websocket", "path": "/ws"}, _Receiver(), send))
         self.assertIn("serves HTTP requests only", str(raised.exception))
         self.assertEqual([], sent)
+
+
+class ASGIReleaseTests(unittest.TestCase):
+    """Every way out of a streamed response releases the producer behind it.
+
+    A response nobody is reading must stop being produced. A client that goes away is reported by
+    ASGI through ``receive()`` — a send on the dead transport does not fail under the reference
+    server — and a send failure is reported by a raise. Both have to release the stream.
+    """
+
+    def test_a_failed_start_send_still_releases_the_producer(self) -> None:
+        producer = _Producer()
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, producer))
+
+        async def send(_message: dict) -> None:
+            raise ConnectionError("the transport is gone before the response starts")
+
+        with self.assertRaises(ConnectionError):
+            asyncio.run(ASGIApp(app)(_scope("GET", "/stream"), _Receiver(), send))
+        self.assertTrue(producer.closed, "a send that fails before the response starts must release the producer")
+
+    def test_a_disconnect_during_the_response_stops_the_producer(self) -> None:
+        ticks = 40
+        produced: list[int] = []
+        released: list[str] = []
+
+        def chunks():
+            try:
+                for tick in range(1, ticks + 1):
+                    produced.append(tick)
+                    yield f"tick {tick}\n".encode()
+                    time.sleep(0.01)
+            finally:
+                released.append("closed")
+
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, chunks()))
+        receiver = _DisconnectingReceiver()
+        _, _, send = _collector()
+
+        async def drive() -> None:
+            task = asyncio.ensure_future(ASGIApp(app)(_scope("GET", "/stream"), receiver, send))
+            while len(produced) < 3:
+                await asyncio.sleep(0.01)
+            receiver.disconnected.set()
+            await asyncio.wait_for(task, timeout=15)
+
+        asyncio.run(drive())
+        self.assertEqual(["closed"], released, "the client went away, so the producer must be released")
+        self.assertLess(len(produced), ticks, "the producer ran to exhaustion after the client went away")
+
+    def test_a_disconnect_before_the_response_starts_is_not_answered(self) -> None:
+        started = threading.Event()
+        producer = _Producer()
+
+        def handler(_ctx: Context) -> Response:
+            started.set()
+            time.sleep(0.05)
+            return html_stream(200, producer)
+
+        app = App()
+        app.get("/stream", handler)
+        receiver = _DisconnectingReceiver()
+        sent, _, send = _collector()
+
+        async def drive() -> None:
+            task = asyncio.ensure_future(ASGIApp(app)(_scope("GET", "/stream"), receiver, send))
+            while not started.is_set():
+                await asyncio.sleep(0.01)
+            receiver.disconnected.set()
+            await asyncio.wait_for(task, timeout=15)
+
+        asyncio.run(drive())
+        self.assertEqual([], sent, "a client that left before the response started must not be answered")
+        self.assertTrue(producer.closed, "the release must reach the producer when nobody is left to answer")
 
 
 class ASGIConcurrencyTests(unittest.TestCase):

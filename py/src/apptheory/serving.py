@@ -19,6 +19,11 @@ Where the handler runs, and why it is safe to run it there:
   endpoint, and it is the shape upstream documents for AWS: "when you create a synchronous endpoint
   using ``def`` instead of ``async def``, ASGI frameworks such as FastAPI and Starlette can run the
   endpoint in a thread pool".
+* **A client that goes away is observed through ``receive()``, never through ``send()``.** ASGI
+  reports a disconnect as an ``http.disconnect`` message, and a server is free to accept writes on a
+  transport nobody is reading — uvicorn does. The ASGI wrapper therefore watches ``receive()`` for
+  the whole life of the request, not only while it reads the request body, and releases the response
+  body's producer when the client disappears.
 * **WSGI** — the server calls the wrapper on one of its worker threads, which is upstream's WSGI
   concurrency model ("a pool of worker threads, with each request running in its own thread"), and
   the handler runs on that thread.
@@ -37,6 +42,7 @@ applications: "avoid storing request-specific data in global variables".
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from http import HTTPStatus
 from typing import Any, Protocol
@@ -61,6 +67,7 @@ _LIFESPAN_SHUTDOWN_COMPLETE = "lifespan.shutdown.complete"
 
 _CONTENT_LENGTH = "content-length"
 _COOKIE_HEADER = "set-cookie"
+_DISCONNECT = "http.disconnect"
 
 
 class ServingApp(Protocol):
@@ -161,7 +168,7 @@ async def _asgi_body(receive: ASGIReceive) -> bytes | None:
     chunks: list[bytes] = []
     while True:
         message = await receive()
-        if message.get("type") == "http.disconnect":
+        if message.get("type") == _DISCONNECT:
             return None
         if message.get("type") != "http.request":
             continue
@@ -169,6 +176,22 @@ async def _asgi_body(receive: ASGIReceive) -> bytes | None:
         chunks.append(bytes(chunk))
         if not message.get("more_body"):
             return b"".join(chunks)
+
+
+async def _watch_disconnect(receive: ASGIReceive, disconnected: asyncio.Event) -> None:
+    """Set ``disconnected`` as soon as the server reports that the client went away.
+
+    The request body has already been read when this starts, so ``http.disconnect`` is the only
+    message an HTTP connection has left to deliver, and a conforming server sleeps in ``receive()``
+    until it has one. A channel that answers without suspending — a test double, or a server that
+    repeats the request message — is not allowed to spin the loop, hence the yield.
+    """
+    while True:
+        message = await receive()
+        if message.get("type") == _DISCONNECT:
+            disconnected.set()
+            return
+        await asyncio.sleep(0)
 
 
 def _next_chunk(iterator: Any) -> bytes | None:
@@ -218,8 +241,24 @@ class ASGIApp:
             headers=_asgi_headers(scope.get("headers")),
             body=body,
         )
-        response = await asyncio.to_thread(self._app.serve, request)
-        await _send_asgi_response(response, request.method.upper() == "HEAD", send)
+        # The client can go away while the handler runs or while the response is being written, and
+        # the only place ASGI reports that is `receive()`. Watching it for the rest of the request is
+        # what lets a streamed response stop producing once nobody is reading: under uvicorn a send
+        # on a dead transport does not fail, so a failed send is not the signal.
+        disconnected = asyncio.Event()
+        watcher = asyncio.ensure_future(_watch_disconnect(receive, disconnected))
+        try:
+            response = await asyncio.to_thread(self._app.serve, request)
+            if disconnected.is_set():
+                # The client that asked is gone, so there is no response to start and nothing left
+                # to write it to. Release the producer instead of running it.
+                _close_stream(response.body_stream)
+                return
+            await _send_asgi_response(response, request.method.upper() == "HEAD", send, disconnected)
+        finally:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
 
 
 async def _serve_lifespan(receive: ASGIReceive, send: ASGISend) -> None:
@@ -233,37 +272,54 @@ async def _serve_lifespan(receive: ASGIReceive, send: ASGISend) -> None:
             return
 
 
-async def _send_asgi_response(response: Response, head_only: bool, send: ASGISend) -> None:
+async def _send_asgi_response(
+    response: Response,
+    head_only: bool,
+    send: ASGISend,
+    disconnected: asyncio.Event,
+) -> None:
     stream = response.body_stream
     headers = _response_headers(response, has_body_length=stream is None)
-    await send(
-        {
-            "type": "http.response.start",
-            "status": int(response.status),
-            "headers": [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers],
-        }
-    )
-
-    if head_only:
-        _close_stream(stream)
-        await send({"type": "http.response.body", "body": b"", "more_body": False})
-        return
-    if stream is None:
-        await send({"type": "http.response.body", "body": bytes(response.body), "more_body": False})
-        return
-
-    iterator = iter(stream)
     try:
-        while True:
-            chunk = await asyncio.to_thread(_next_chunk, iterator)
-            if chunk is None:
-                break
-            await send({"type": "http.response.body", "body": chunk, "more_body": True})
-        await send({"type": "http.response.body", "body": b"", "more_body": False})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": int(response.status),
+                "headers": [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers],
+            }
+        )
+
+        if head_only:
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
+        if stream is None:
+            await send({"type": "http.response.body", "body": bytes(response.body), "more_body": False})
+            return
+        await _send_asgi_stream(stream, send, disconnected)
     finally:
-        # A disconnect surfaces here as a failed send; releasing the stream is what lets a producer
-        # blocked on its next write stop instead of running until the revision times out.
+        # Every way out of a response ends here — the stream finished, a send failed, the client
+        # disconnected — and each of them has to release the producer: a producer waiting on its next
+        # write stops instead of running to the end of a response nobody will read.
         _close_stream(stream)
+
+
+async def _send_asgi_stream(stream: Any, send: ASGISend, disconnected: asyncio.Event) -> None:
+    """Deliver a streamed body chunk by chunk, and stop when the client goes away.
+
+    The check between chunks is what bounds the work: the wrapper stops at the first chunk boundary
+    after the disconnect, and releases the stream in the caller's ``finally``. A producer that never
+    yields another chunk cannot be interrupted from here — the same limit a WSGI server has on a
+    blocked write.
+    """
+    iterator = iter(stream)
+    while True:
+        if disconnected.is_set():
+            return
+        chunk = await asyncio.to_thread(_next_chunk, iterator)
+        if chunk is None:
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
+        await send({"type": "http.response.body", "body": chunk, "more_body": True})
 
 
 def _close_stream(stream: Any) -> None:
