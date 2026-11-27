@@ -24,8 +24,10 @@ Where the handler runs, and why it is safe to run it there:
   transport nobody is reading — uvicorn does. The ASGI wrapper therefore watches ``receive()`` for
   the whole life of the request, not only while it reads the request body, and releases the response
   body's producer when the client disappears. A channel that fails instead of reporting a disconnect
-  is the watcher's problem: its failure is logged and never raised over the response, so a delivery
-  that completed stays completed and an exception already on its way out is the one the server sees.
+  is the watcher's problem: its failure is reported by exception type and never raised over the
+  response, so a delivery that completed stays completed and an exception already on its way out is
+  the one the server sees. The report deliberately leaves out the exception's own text — a server's
+  exception can be carrying the request — and it is guarded, so reporting a failure cannot become one.
 * **WSGI** — the server calls the wrapper on one of its worker threads, which is upstream's WSGI
   concurrency model ("a pool of worker threads, with each request running in its own thread"), and
   the handler runs on that thread.
@@ -212,6 +214,41 @@ def _next_chunk(iterator: Any) -> bytes | None:
         return None
 
 
+def _receive_failure_name(exc: BaseException) -> str:
+    """Name the exception's type, and take nothing else from it.
+
+    A ``receive()`` channel is server code, and the exception it raises is free to describe the
+    request it was serving — a path, a query string, a header, a body fragment. Copying
+    ``str(exc)`` into a log line therefore copies request data into a place the request never
+    agreed to, so the type name is all this reports: it identifies the failure without carrying
+    anything the failure happened to be holding.
+    """
+    try:
+        name = type(exc).__name__
+        # A class name is normally a plain `str`, but a synthetic type can set anything, including
+        # a `str` subclass whose own conversion fails. Percent-encoding a plain `str` is what keeps
+        # the log line from being forged; anything else is not worth the risk of trusting.
+        return log_safe_value(name) if type(name) is str else "unknown"
+    except Exception:  # noqa: BLE001 - naming the failure must not become a failure of its own
+        return "unknown"
+
+
+def _warn_receive_failure(exc: BaseException) -> None:
+    """Report a failing ``receive()`` channel without letting the report become the outcome.
+
+    This runs in the wrapper's ``finally``, where the watcher's failure has to stay internal: an
+    exception raised here becomes the request's result, replacing a response that was already
+    delivered or an error that was already on its way out. Formatting an exception is not
+    guaranteed to succeed either — ``__str__`` can raise — so both the value and the call are
+    guarded, and a log line that cannot be written is dropped rather than promoted.
+    """
+    with contextlib.suppress(Exception):
+        _LOGGER.warning(
+            "apptheory: the ASGI receive() channel failed while watching for a disconnect (%s)",
+            _receive_failure_name(exc),
+        )
+
+
 class ASGIApp:
     """An ASGI 3.0 application that serves an AppTheory runtime.
 
@@ -265,19 +302,16 @@ class ASGIApp:
             # The join is here, at the site that launched the watcher, so it dominates every way out
             # of this request. A conforming server reports a disconnect as a message and the watcher
             # ends cancelled; a channel that fails inside `receive()` is the watcher's problem, and
-            # its failure is logged rather than raised over a response the server already has — or
-            # over an exception already on its way out. The body is released by the response path,
-            # never by this join.
+            # its failure is reported rather than raised over a response the server already has — or
+            # over an exception already on its way out. The report names the exception's type and
+            # never its text, because a channel's exception can be carrying the request. The body is
+            # released by the response path, never by this join.
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 try:
                     await watcher
                 except Exception as exc:  # noqa: BLE001 - a nonconforming receive() must not mask the response
-                    _LOGGER.warning(
-                        "apptheory: the ASGI receive() channel failed while watching for a disconnect "
-                        "(the value is percent-encoded, so it cannot forge a log field): %s",
-                        log_safe_value(exc),
-                    )
+                    _warn_receive_failure(exc)
 
 
 async def _serve_lifespan(receive: ASGIReceive, send: ASGISend) -> None:

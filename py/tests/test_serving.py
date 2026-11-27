@@ -14,6 +14,7 @@ from apptheory.app import App  # noqa: E402
 from apptheory.context import Context  # noqa: E402
 from apptheory.response import Response, html, html_stream, text  # noqa: E402
 from apptheory.serving import ASGIApp, WSGIApp  # noqa: E402
+from apptheory._safe_log import log_safe_value  # noqa: E402
 
 
 def _scope(
@@ -95,6 +96,17 @@ class _RaisingReceiver:
             self._served = True
             return {"type": "http.request", "body": b"", "more_body": False}
         raise self._error
+
+
+class _RequestLikeError(RuntimeError):
+    """A channel failure that is carrying the request it was serving, as server code's own can."""
+
+
+class _UnstringableError(RuntimeError):
+    """A channel failure that cannot describe itself: its own ``str()`` raises."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("this exception cannot describe itself")
 
 
 def _collector() -> tuple[list[dict], list[float], object]:
@@ -388,6 +400,84 @@ class ASGIReceiveFailureTests(unittest.TestCase):
 
         with self.assertRaises(ConnectionError):
             asyncio.run(ASGIApp(app)(_scope("GET", "/stream"), _RaisingReceiver(), failing_send))
+        self.assertTrue(in_flight.closed, "a failed send must still release the producer")
+
+    def test_the_warning_names_the_exception_type_and_carries_none_of_its_text(self) -> None:
+        """The warning identifies the failure without copying what it was holding. (SAN-AT-W1B-06)
+
+        A `receive()` channel is server code, and the exception it raises is free to describe the
+        request it was serving — the path, a query string, a header. The wrapper's warning used to
+        log `str(exc)`: percent-encoded, so it could not forge a log field, but the request-shaped
+        text was still recoverable from the log. The type name is the whole report now.
+        """
+        marker = "REQLIKE-MARKER-9f3c"
+        text = f"GET /admin/tenants?token={marker}"
+        producer = _Producer([b"one\n"])
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, producer))
+        sent, _, send = _collector()
+
+        with self.assertLogs("apptheory.serving", level="WARNING") as captured:
+            asyncio.run(
+                ASGIApp(app)(_scope("GET", "/stream"), _RaisingReceiver(_RequestLikeError(text)), send)
+            )
+        log = "\n".join(captured.output)
+
+        self.assertIn(
+            "_RequestLikeError",
+            log,
+            f"the warning does not name the failing exception's type: {log!r}",
+        )
+        self.assertNotIn(
+            marker,
+            log,
+            f"the warning copied the exception's own text into the log: {log!r}",
+        )
+        self.assertNotIn(
+            log_safe_value(text),
+            log,
+            f"the warning logged the exception's message in its percent-encoded form: {log!r}",
+        )
+        self.assertNotIn("admin", log, f"the warning carries request-shaped text from the exception: {log!r}")
+        self.assertEqual(b"one\n", _body(sent), "the response was not delivered in full")
+        self.assertTrue(producer.closed, "the delivery must release the producer")
+
+    def test_a_warning_that_cannot_be_formatted_neither_escapes_nor_masks_a_send_error(self) -> None:
+        """Reporting a failure must not become one. (SAN-AT-W1B-06)
+
+        The warning runs in the wrapper's `finally`, where an exception raised by *formatting* would
+        take the request's outcome: it escaped after a delivery that had completed, and it replaced
+        an in-flight `ConnectionError` with the formatter's own error. An exception whose `str()`
+        raises is the case that produced both, so both are driven here.
+        """
+        completed = _Producer([b"one\n", b"two\n"])
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, completed))
+        sent, _, send = _collector()
+
+        with self.assertLogs("apptheory.serving", level="WARNING") as captured:
+            asyncio.run(ASGIApp(app)(_scope("GET", "/stream"), _RaisingReceiver(_UnstringableError()), send))
+        self.assertEqual(b"one\ntwo\n", _body(sent), "the delivery must survive the watcher's failure")
+        self.assertTrue(completed.closed, "the delivery must release the producer")
+        self.assertIn(
+            "_UnstringableError",
+            "\n".join(captured.output),
+            "an exception that cannot describe itself must still be named by type",
+        )
+
+        in_flight = _Producer([b"one\n", b"two\n"])
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, in_flight))
+
+        async def failing_send(message: dict) -> None:
+            if message["type"] == "http.response.body":
+                raise ConnectionError("the transport is gone")
+
+        with self.assertLogs("apptheory.serving", level="WARNING"):
+            with self.assertRaises(ConnectionError):
+                asyncio.run(
+                    ASGIApp(app)(_scope("GET", "/stream"), _RaisingReceiver(_UnstringableError()), failing_send)
+                )
         self.assertTrue(in_flight.closed, "a failed send must still release the producer")
 
 
