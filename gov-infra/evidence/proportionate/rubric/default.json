@@ -5,16 +5,16 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 289.115,
+      "durationSeconds": 526.452,
       "executed": true,
-      "exitCode": 2,
-      "finishedAt": "2026-11-27T14:57:18Z",
+      "exitCode": 0,
+      "finishedAt": "2026-11-27T15:19:30Z",
       "id": "rubric",
-      "inputsDigest": "sha256:d85651a1da56089509349db3913960cddab9cba65ada1b79e4b97d04bfe58f56",
-      "logDigest": "sha256:a57f462224e9103f9103150f4f2fd62af868d112fecaccfee134860fd4950313",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261127T145229Z-3479.log",
+      "inputsDigest": "sha256:583157112715d646b6ce0be5c329014e62c63c2d07b1baa09f40439b7117158d",
+      "logDigest": "sha256:56931c58cef12d684181555089ae1eb32b4f876068b5054e5341d4a65f61dcbf",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261127T151043Z-45153.log",
       "reused": false,
-      "startedAt": "2026-11-27T14:52:29Z"
+      "startedAt": "2026-11-27T15:10:43Z"
     }
   ],
   "consumed": [
@@ -22,6 +22,26 @@
       "digest": "sha256:be49e43d4e5d8daa72f887faacf5f8f3a4f54bc9c82fc8d5ee5e549b0748b3bb",
       "gate": "cdk-go-drift",
       "recordedAt": "2026-11-27T04:36:41Z"
+    },
+    {
+      "digest": "sha256:f1bd0e89c8f55306441a6fc2751fd3dec85dbc9076f487486dc4aab5de15bd58",
+      "gate": "contract-tests",
+      "recordedAt": "2026-11-27T14:47:46Z"
+    },
+    {
+      "digest": "sha256:3cdbad9c6585e6107c2e899d3249ca83738133e6b559490b5b4adc79abb9d2fa",
+      "gate": "deterministic-builds",
+      "recordedAt": "2026-11-27T14:48:48Z"
+    },
+    {
+      "digest": "sha256:6d73984a1a9a47a7e68a6e18cd64628c9d3e1f577153df1393f14fdee05a9b4d",
+      "gate": "go",
+      "recordedAt": "2026-11-27T14:59:16Z"
+    },
+    {
+      "digest": "sha256:1a354570cdec9be99e27c2207a35e2ed49869a39a699c5f3aee01889aa2d8cad",
+      "gate": "unit",
+      "recordedAt": "2026-11-27T15:10:04Z"
     }
   ],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
@@ -41,8 +61,8 @@
     "tool": "scripts/evidence/validation_evidence.py"
   },
   "profile": "default",
-  "reason": "command failed: rubric exit=2",
-  "recordedAt": "2026-11-27T14:57:18Z",
+  "reason": "",
+  "recordedAt": "2026-11-27T15:19:30Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -52,7 +72,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:087d6f2b8cff7c22eabfc7f9a7ebd48c485752a027bce1fe12f790fbb987dfe4",
+    "digest": "sha256:9de0352e24b2a53a440ee2bfe01bcff47af4a51d0f78357397174ed8600385d9",
     "fileCount": 3401,
     "paths": [
       "**"
@@ -60,8 +80,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:9e489bf57d3f9e6d26a36fbb82731538afee0b112a10c5b6c74e668d3392149e",
+    "digest": "sha256:01c2f1cc5035087342c14b8098ccba812e784b5eb25123a50b5c5c276d4217dc",
     "fileCount": 2852
   },
-  "verdict": "FAIL"
+  "verdict": "PASS"
 }
