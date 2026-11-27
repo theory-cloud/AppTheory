@@ -253,6 +253,60 @@ const EXAMPLE_PACKAGES = {
       ],
     },
   },
+  "lambda-packaging": {
+    runtime: false,
+    assets: {
+      "python-handler": [
+        {
+          label: "lambda-packaging Python handler",
+          source: "handlers/python",
+          destination: "",
+          modules: ["app.py"],
+          data: [],
+        },
+      ],
+      // The layer's archive is extracted into /opt, so its module sits under `python/` and its tool
+      // under `bin/`. Neither path is the archive root, and neither ships the runtime: the layer
+      // exists to prove a zip layer loads, not to carry AppTheory.
+      "python-layer": [
+        {
+          label: "lambda-packaging Python layer",
+          source: "layers/python",
+          destination: "",
+          modules: ["python/layer_tool.py"],
+          data: ["bin/layer-tool"],
+        },
+      ],
+    },
+  },
+  "local-iam": {
+    runtime: false,
+    assets: {
+      "python-package": [
+        {
+          label: "local-iam Python caller",
+          source: "handlers/python",
+          destination: "",
+          modules: ["caller.py"],
+          data: [],
+        },
+      ],
+    },
+  },
+  "local-tls": {
+    runtime: false,
+    assets: {
+      "python-package": [
+        {
+          label: "local-tls Python caller",
+          source: "handlers/python",
+          destination: "",
+          modules: ["caller.py"],
+          data: [],
+        },
+      ],
+    },
+  },
 };
 
 /**

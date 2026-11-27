@@ -1100,6 +1100,9 @@ PYTHON_PACKAGE_EXAMPLES: tuple[PythonPackageExample, ...] = (
     PythonPackageExample("web-function-python", "AppTheoryWebFunctionPythonExample", (), True),
     PythonPackageExample("hello-world", "AppTheoryHelloWorldPy", ("-c", "lang=py"), True),
     PythonPackageExample("multilang", "AppTheoryMultilangDemo", (), True),
+    PythonPackageExample("lambda-packaging", "AppTheoryLambdaPackagingExample", (), False),
+    PythonPackageExample("local-iam", "local-iam", (), False),
+    PythonPackageExample("local-tls", "AppTheoryLocalTls", (), False),
 )
 
 # Synthetic local-only files, planted in every packaged tree of every Python example to prove they

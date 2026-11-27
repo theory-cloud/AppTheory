@@ -32,6 +32,18 @@ lambda-packaging/
 └── tsconfig.json
 ```
 
+## Python packaging
+
+Both Python archives — the layer's and the function's — are built by
+`examples/cdk/_shared/python-package-asset.mjs`, the one rule every Python asset
+under `examples/cdk/` is built by, so what they contain is a declared list of
+files rather than their directories with a list of names to skip. A `.env`, a
+`.pytest_cache` or a note left in `handlers/python` or `layers/python` stays on
+your machine instead of reaching an asset and moving the pinned template hash;
+an importable unit neither tree declares is refused by name. Neither archive
+ships the AppTheory runtime, because neither handler imports it — the layer's
+module is imported from `/opt/python` and the function's from the archive root.
+
 ## Deploy
 
 ```bash

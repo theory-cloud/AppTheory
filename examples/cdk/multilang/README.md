@@ -56,7 +56,9 @@ the pinned template hash does not move because of what a local run left in the t
 instead: an importable unit the list does not declare, and an entry that is not a regular file or a regular directory
 (a symbolic link, a socket, a fifo). The rules follow from that: this example's Python test lives in
 `tests/handler_test.py`, outside the packaged tree, and the WebSocket authorizer's asset is its one declared module
-rather than a directory template over `handlers/`. The same script packages `hello-world` and `web-function-python`.
+rather than a directory template over `handlers/`. The same script packages every Python asset under `examples/cdk/`: `hello-world`, `web-function-python`, this
+example, both of `lambda-packaging`'s (its Python function and its Python layer), and the `local-iam` and
+`local-tls` Python callers.
 
 ## Configuration
 

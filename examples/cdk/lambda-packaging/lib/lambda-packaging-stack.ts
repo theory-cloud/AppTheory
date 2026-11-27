@@ -1,9 +1,29 @@
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
+
+/**
+ * Stage one of the example's Python assets: the files its allow-list names and nothing else.
+ *
+ * Both Python archives here — the function's and the layer's — are built by
+ * `examples/cdk/_shared/python-package-asset.mjs`, the one rule every Python asset under
+ * `examples/cdk/` is built by. That rule is what makes the layer's `/opt/python` content and the
+ * function's archive root the declared files, so a `.env`, a `.pytest_cache` or a note left in
+ * `handlers/python` or `layers/python` stays on the author's machine instead of reaching an asset
+ * and moving its hash. Before it, both assets were pointed at their directories directly, and a
+ * planted `.env` reached both of them.
+ *
+ * The asset name picks which declaration is staged; neither asset ships the AppTheory runtime,
+ * because nothing here imports it.
+ */
+function stagePythonPackage(exampleDir: string, asset: string): string {
+  const script = path.join(exampleDir, "..", "_shared", "python-package-asset.mjs");
+  return execFileSync(process.execPath, [script, exampleDir, asset], { encoding: "utf8" }).trim();
+}
 
 /**
  * Lambda layers and container-image functions.
@@ -32,7 +52,7 @@ export class LambdaPackagingStack extends cdk.Stack {
         });
         const pythonLayer = new lambda.LayerVersion(this, "PythonLayer", {
             layerVersionName: "apptheory-local-python-layer",
-            code: lambda.Code.fromAsset(path.join(root, "layers/python")),
+            code: lambda.Code.fromAsset(stagePythonPackage(root, "python-layer")),
             compatibleRuntimes: [lambda.Runtime.PYTHON_3_14],
             description: "python module and bin content for the local runner",
         });
@@ -48,7 +68,7 @@ export class LambdaPackagingStack extends cdk.Stack {
         const layerPython = new lambda.Function(this, "LayerPythonFn", {
             runtime: lambda.Runtime.PYTHON_3_14,
             handler: "app.handler",
-            code: lambda.Code.fromAsset(path.join(root, "handlers/python")),
+            code: lambda.Code.fromAsset(stagePythonPackage(root, "python-handler")),
             layers: [pythonLayer],
             timeout: cdk.Duration.seconds(10),
             description: "Imports a module from /opt/python and runs /opt/bin/layer-tool",
