@@ -17,6 +17,7 @@ claim is only worth what its negative control proves.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -1073,6 +1074,313 @@ class WebFunctionPythonPackageTests(unittest.TestCase):
         ):
             page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", "staged wsgi")
         print(f"\nstaged package, WSGI: {page}")
+
+
+WEB_FUNCTION_PYTHON_STACK = "AppTheoryWebFunctionPythonExample"
+
+# Synthetic local-only files, planted in both package trees to prove they stay out of the deployment
+# package. None of them is or contains a credential: the values are this test's own strings, and what
+# the plant is about is the file's *presence*, never its contents. They are the shapes a developer
+# leaves behind — a dotenv, a local test tree, a pytest cache, a dot-file, a note.
+WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS: dict[str, str] = {
+    ".env": "APPTHEORY_LOCAL_ONLY_PLANT=this-is-not-a-credential\n",
+    "tests/test_local_only.py": "def test_local_only():\n    assert True\n",
+    ".pytest_cache/v/cache/lastfailed": "{}\n",
+    ".dotfile-local-only": "a dot-file nobody declared\n",
+    "local-notes.txt": "a note nobody declared\n",
+}
+
+
+def web_function_python_package_trees() -> list[Path]:
+    """The two trees the deployment package is built from: the application and the runtime."""
+    return [
+        harness.WEB_FUNCTION_PYTHON_ASGI_APP,
+        harness.ROOT / "py" / "src" / "apptheory",
+    ]
+
+
+@contextlib.contextmanager
+def planted_local_only_files(trees: list[Path], plants: dict[str, str]):
+    """Place synthetic local-only files in the package trees, and take them back out again.
+
+    They go into the real trees, because the real trees are what synthesis reads: planting in a copy
+    would prove nothing about the asset. Every file this adds is recorded and removed in `finally`,
+    and so is every directory it had to create, so a failed assertion cannot leave residue behind
+    for the next test or the next gate.
+    """
+    planted: list[Path] = []
+    created: list[Path] = []
+    try:
+        for tree in trees:
+            for relative, content in plants.items():
+                staged = tree / relative
+                if staged.exists():
+                    raise harness.HarnessFailure(f"{staged} already exists; refusing to overwrite it")
+                missing: list[Path] = []
+                parent = staged.parent
+                while parent != tree and not parent.exists():
+                    missing.append(parent)
+                    parent = parent.parent
+                for directory in reversed(missing):
+                    directory.mkdir()
+                    created.append(directory)
+                staged.write_text(content, encoding="utf-8")
+                os.chmod(staged, 0o644)
+                planted.append(staged)
+        yield planted
+    finally:
+        for staged in planted:
+            with contextlib.suppress(FileNotFoundError):
+                staged.unlink()
+        for directory in reversed(created):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+
+
+def ensure_web_function_python_cdk_dependencies() -> None:
+    """Install the example's CDK dependency tree the way the synth gate does.
+
+    The finding was observed through a real synthesis, so the test runs the real thing rather than
+    a stand-in. `npm ci` is the same prerequisite `scripts/verify-cdk-synth.sh` provisions for every
+    example, and it is skipped when the tree is already installed.
+    """
+    example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+    if (example / "node_modules" / "aws-cdk-lib" / "package.json").is_file():
+        return
+    result = subprocess.run(
+        ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        cwd=str(example),
+        env=clean_python_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=900,
+    )
+    if result.returncode != 0:
+        raise harness.HarnessFailure(
+            f"installing the example's CDK dependencies failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def synthesize_web_function_python(output: Path) -> str:
+    """Synthesize the example exactly as the synth gate does, and return the template's sha256.
+
+    The epoch and the environment are the gate's: `SOURCE_DATE_EPOCH` from HEAD, and no
+    `CDK_DEFAULT_*` folded into an environment-agnostic template. That is what makes the committed
+    pin the oracle for the asset hash this test is about.
+    """
+    example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+    ensure_web_function_python_cdk_dependencies()
+    epoch = subprocess.run(
+        ["git", "show", "-s", "--format=%ct", "HEAD"],
+        cwd=str(harness.ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if epoch.returncode != 0 or not epoch.stdout.strip():
+        raise harness.HarnessFailure(f"reading HEAD's commit time for SOURCE_DATE_EPOCH failed: {epoch.stderr.strip()}")
+    env = clean_python_env(SOURCE_DATE_EPOCH=epoch.stdout.strip())
+    for key in ("CDK_DEFAULT_ACCOUNT", "CDK_DEFAULT_REGION", "CDK_CONTEXT_JSON"):
+        env.pop(key, None)
+    result = subprocess.run(
+        [
+            str(example / "node_modules" / ".bin" / "cdk"),
+            "synth",
+            "--quiet",
+            "--no-notices",
+            "--no-version-reporting",
+            "-o",
+            str(output),
+        ],
+        cwd=str(example),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=900,
+    )
+    if result.returncode != 0:
+        raise harness.HarnessFailure(
+            f"synthesizing the example failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+    template = output / f"{WEB_FUNCTION_PYTHON_STACK}.template.json"
+    if not template.is_file():
+        raise harness.HarnessFailure(f"the synthesis produced no {template.name}")
+    return hashlib.sha256(template.read_bytes()).hexdigest()
+
+
+def web_function_python_package_asset(output: Path) -> Path:
+    """The asset directory CDK staged for the function's code: the package, as it would deploy.
+
+    Synthesis also emits asset directories for the construct's supporting code, so the package is
+    identified by what only it carries: the application's two entry modules at the archive root.
+    """
+    for candidate in sorted(output.glob("asset.*")):
+        if candidate.is_dir() and (candidate / "main.py").is_file() and (candidate / "main_wsgi.py").is_file():
+            return candidate
+    raise harness.HarnessFailure(f"no asset directory under {output} carries the staged package")
+
+
+class WebFunctionPythonPackageInputTests(unittest.TestCase):
+    """The deployed package is its allow-list, and local-only files cannot join it. (SAN-AT-W1B-04)
+
+    The package used to be every file under `app/` and every file under `py/src/apptheory` minus a
+    list of names to skip. A deny-list cannot promise a stable package: a `.env`, a local test tree
+    or a `.pytest_cache` nobody predicted lands in the CDK asset and moves its hash, so what an
+    operator deploys depends on what the author happened to leave in the tree. Both trees are now
+    bounded by an explicit allow-list of the importable modules and the declared package data, and
+    these tests plant the shapes that used to leak.
+    """
+
+    def test_local_only_files_stay_out_of_the_synthesized_cdk_asset(self) -> None:
+        """Plant residue in both trees, synthesize, and hold the actual asset to the allow-list."""
+        example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+        trees = web_function_python_package_trees()
+        pinned = (example / "snapshots" / f"{WEB_FUNCTION_PYTHON_STACK}.template.sha256").read_text(encoding="utf-8")
+        pinned = pinned.strip()
+        self.assertEqual(64, len(pinned), f"the committed template pin is not a sha256: {pinned!r}")
+        with tempfile.TemporaryDirectory(prefix="apptheory-web-function-clean-") as clean_dir:
+            clean = synthesize_web_function_python(Path(clean_dir))
+            asset = web_function_python_package_asset(Path(clean_dir))
+            self.assertEqual(pinned, clean, "the synthesis of the clean tree does not reproduce the committed pin")
+            print(f"\nclean tree: template {clean[:12]}, package asset {asset.name} with {len(list(asset.rglob('*')))} entries")
+
+            with planted_local_only_files(trees, WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS) as planted:
+                with tempfile.TemporaryDirectory(prefix="apptheory-web-function-planted-") as planted_dir:
+                    observed = synthesize_web_function_python(Path(planted_dir))
+                    package = web_function_python_package_asset(Path(planted_dir))
+                    self.assertEqual(
+                        pinned,
+                        observed,
+                        "local-only files in the package trees changed the synthesized template (and its "
+                        f"asset hash): planted {[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                    )
+                    self.assertEqual(
+                        clean,
+                        observed,
+                        "the synthesized template differs between a clean tree and one carrying local-only files",
+                    )
+                    self.assertEqual(
+                        [],
+                        self._undeclared_package_files(package),
+                        "the synthesized asset carries files the package does not declare",
+                    )
+                    self._assert_both_entry_points_import_and_serve(package)
+                    print(
+                        f"planted {len(planted)} local-only files in both trees: template still {observed[:12]}, "
+                        f"package asset {package.name} and both entry points still serve from it alone"
+                    )
+
+    def _undeclared_package_files(self, package: Path) -> list[str]:
+        """Every file in the asset that the package does not declare.
+
+        The declared package is small enough to state as a shape: the application's entry modules,
+        the application module they import, the runtime's importable modules, and the runtime's one
+        package-data file. Anything else is local residue that reached the deployment package.
+        """
+        declared = {"main.py", "main_wsgi.py", "lib/application.py", "apptheory/py.typed"}
+        undeclared: list[str] = []
+        for path in sorted(package.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(package).as_posix()
+            if relative in declared:
+                continue
+            if relative.startswith("apptheory/") and relative.endswith(".py"):
+                continue
+            undeclared.append(relative)
+        return undeclared
+
+    def _assert_both_entry_points_import_and_serve(self, package: Path) -> None:
+        """The allow-listed package is complete: both entry points import and serve from it alone."""
+        env = clean_python_env()
+        self.assertFalse(
+            apptheory_is_importable(env, Path(tempfile.gettempdir())),
+            "this test needs an environment with no ambient AppTheory install",
+        )
+        for module in ("main", "main_wsgi"):
+            result = subprocess.run(
+                [sys.executable, "-c", f"import {module}"],
+                cwd=str(package),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                0, result.returncode, f"import {module} from the synthesized asset failed: {result.stderr}"
+            )
+
+        asgi_port = ephemeral_port()
+        with StartedServer(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(asgi_port),
+                "--log-level",
+                "warning",
+            ],
+            cwd=package,
+            env=env,
+            port=asgi_port,
+            label="synthesized asset ASGI entry point",
+        ):
+            asgi = harness._assert_web_function_python_page(f"http://127.0.0.1:{asgi_port}", "synthesized asgi")
+
+        wsgi_port = ephemeral_port()
+        with StartedServer(
+            [
+                sys.executable,
+                str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "serve-wsgi.py"),
+                str(package),
+            ],
+            cwd=package,
+            env=clean_python_env(PORT=str(wsgi_port)),
+            port=wsgi_port,
+            label="synthesized asset WSGI entry point",
+        ):
+            wsgi = harness._assert_web_function_python_page(f"http://127.0.0.1:{wsgi_port}", "synthesized wsgi")
+        print(f"\n  {asgi}; {wsgi}")
+
+    def test_a_module_the_allow_list_does_not_name_fails_staging(self) -> None:
+        """Growth is a decision, not a silent omission: an undeclared module must stop the build.
+
+        The allow-list is only safe if it cannot quietly fall behind the runtime. A new module at the
+        runtime's root is importable as `apptheory.<name>`, so it belongs in the package; staging
+        refuses instead of deploying a package that is missing what the source tree has.
+        """
+        tree = harness.ROOT / "py" / "src" / "apptheory"
+        undeclared = tree / "undeclared_growth.py"
+        if undeclared.exists():
+            raise harness.HarnessFailure(f"{undeclared} already exists; refusing to overwrite it")
+        try:
+            undeclared.write_text("VALUE = 1\n", encoding="utf-8")
+            os.chmod(undeclared, 0o644)
+            result = subprocess.run(
+                [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
+                cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                undeclared.unlink()
+        self.assertNotEqual(0, result.returncode, "staging accepted a runtime module the allow-list does not name")
+        self.assertIn(
+            "undeclared_growth.py",
+            result.stderr,
+            "the staging failure does not name the module that made the allow-list incomplete",
+        )
+        refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+        self.assertTrue(refused, f"the staging failure does not report an error: {result.stderr.strip()}")
+        print(f"\nundeclared runtime module: staging refused with {refused[0]}")
 
 
 class WebFunctionPythonDisconnectTests(unittest.TestCase):

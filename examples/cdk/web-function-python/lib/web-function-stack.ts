@@ -22,22 +22,6 @@ import type { Construct } from "constructs";
  * runtime, so the example labels that where an operator will see it.
  */
 /**
- * Byte-code caches and build residue are not part of the deployment package. The staged package is
- * rebuilt from source on every synthesis (see `scripts/stage-asset.mjs`) and already skips caches,
- * and these patterns are the second lock on the same door.
- */
-const assetExclude = [
-  "__pycache__",
-  "**/__pycache__",
-  "*.pyc",
-  "**/*.pyc",
-  "*.pyo",
-  "**/*.pyo",
-  "*.egg-info",
-  "**/*.egg-info",
-];
-
-/**
  * Build the package both revisions stage: `app/` at the archive root with the AppTheory runtime
  * beside it.
  *
@@ -45,6 +29,12 @@ const assetExclude = [
  * cannot start — the entry module's `from apptheory import ASGIApp` has nothing to import. Staging
  * through the example's own script instead of pointing the asset at `app/` is what keeps the
  * synthesized package and the running package the same thing.
+ *
+ * The script's allow-list is the whole bound on what deploys: the directory it prints holds exactly
+ * the application's modules and the runtime's modules and package data, and nothing else. No
+ * patterns filter the asset afterwards, because a pattern list is a list of things to skip — it can
+ * only exclude the residue someone anticipated, and byte-code caches, local test trees or a `.env`
+ * nobody anticipated would still reach the archive.
  */
 function stagePythonPackage(): string {
   const script = path.join(__dirname, "..", "scripts", "stage-asset.mjs");
@@ -55,9 +45,7 @@ export class WebFunctionPythonStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
     super(scope, id, props);
 
-    const code = lambda.WebFunctionCode.fromAssetToManagedBucket(stagePythonPackage(), {
-      exclude: assetExclude,
-    });
+    const code = lambda.WebFunctionCode.fromAssetToManagedBucket(stagePythonPackage());
     const runtime = lambda.WebFunctionRuntime.of("python3.15");
 
     // The default interface for a Python Web Function: one event loop, concurrent requests. The

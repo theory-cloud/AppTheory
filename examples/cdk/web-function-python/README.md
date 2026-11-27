@@ -54,8 +54,8 @@ PYTHONPATH=../../../py/src PORT=3000 python3 scripts/serve-wsgi.py
 installed anywhere, so a command that stops reaching the runtime fails the harness instead of a reader's afternoon.
 
 `PYTHONDONTWRITEBYTECODE=1` is what the local rows set, and it is worth setting here too: `scripts/stage-asset.mjs`
-never copies a byte-code cache into the deployment package, so a cache cannot move the pinned template hash, but an
-untracked `__pycache__` in the tree is still noise.
+stages only the files its allow-list names, so a byte-code cache cannot reach the deployment package or move the
+pinned template hash, but an untracked `__pycache__` in the tree is still noise.
 
 ```bash
 curl -sS -D- http://127.0.0.1:3000/            # 200, text/html page
@@ -149,9 +149,14 @@ Those three routes import only the standard library, so nothing else is staged; 
 `apptheory.jobs` or the microvm session registry also needs the wheel's declared `tabletheory-py`, which belongs in
 the same archive root.
 
-Byte-code caches and build residue are left out (`scripts/stage-asset.mjs` skips them, and the asset's `exclude`
-patterns repeat it), which is what keeps the template's pinned hash a property of the source and not of the last
-local run.
+The package is an allow-list, not a list of things to skip. `scripts/stage-asset.mjs` names every file that ships —
+the application's three modules, the runtime's modules, and the runtime's declared package data (`py.typed`) — and
+stages exactly those. Whatever else is lying in `app/` or in `py/src/apptheory` stays on your machine: a `.env`, a
+local `tests/` tree, a `.pytest_cache`, an editor swap file. That is what keeps the template's pinned hash a property
+of the source and not of the last local run, and `scripts/local/test_examples_local.py` proves it by planting those
+files in both trees, synthesizing, and requiring the asset and its hash to come out unchanged. The allow-list also
+fails closed on growth: a runtime module it does not name stops the build, naming the module, instead of deploying an
+archive that is missing code the tree has.
 
 ```bash
 npx cdk deploy --all     # or: theory app up

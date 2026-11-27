@@ -946,7 +946,7 @@
   "examples/cdk/web-function-python/scripts/stage-asset.mjs": {
    "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
    "class": "I",
-   "description": "Builds the deployment package the stack stages: app/ at the archive root with the AppTheory runtime copied in beside it, byte-code caches skipped, rebuilt from scratch on every synthesis. The synth row hash-checks the template that stages it, and the harness self-tests build it and run both entry points out of it with no AppTheory on the path."
+   "description": "Builds the deployment package the stack stages: app/ at the archive root with the AppTheory runtime copied in beside it, staging exactly the files an explicit allow-list names — the application's modules, the runtime's importable modules and its declared package data — and failing closed when the list and a tree disagree, rebuilt from scratch on every synthesis. The synth row hash-checks the template that stages it; the harness self-tests build it and run both entry points out of it with no AppTheory on the path, and plant local-only files in both trees to prove they never reach the synthesized asset."
   },
   "examples/mcp/resumable-sse/main.go": {
    "run": "mcp-go-resumable-sse",
