@@ -78,6 +78,25 @@ class _DisconnectingReceiver:
         return {"type": "http.disconnect"}
 
 
+class _RaisingReceiver:
+    """Delivers the request body, then fails: a channel that is not the one ASGI defines.
+
+    A conforming server reports a disconnect as `http.disconnect` and never raises, so this is the
+    nonconforming edge: `receive()` itself blows up once the body is in. What the wrapper owes the
+    server here is the response it already has, and nothing else.
+    """
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self._error = error if error is not None else RuntimeError("receive() raised after the body")
+        self._served = False
+
+    async def __call__(self) -> dict:
+        if not self._served:
+            self._served = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        raise self._error
+
+
 def _collector() -> tuple[list[dict], list[float], object]:
     sent: list[dict] = []
     at: list[float] = []
@@ -330,6 +349,46 @@ class ASGIReleaseTests(unittest.TestCase):
         asyncio.run(drive())
         self.assertEqual([], sent, "a client that left before the response started must not be answered")
         self.assertTrue(producer.closed, "the release must reach the producer when nobody is left to answer")
+
+
+class ASGIReceiveFailureTests(unittest.TestCase):
+    """A `receive()` that raises must not disturb a response that is already under way.
+
+    ADV-W1B-R1-01: the disconnect watcher dies with the channel's exception. Awaiting it in the
+    wrapper's `finally` then re-raised that exception after a delivery that had completed — the
+    server saw a spurious error for a response it had been given in full — and, worse, replaced an
+    exception already on its way out of the request. The watcher's failure is the watcher's problem:
+    the wrapper logs it and lets the response's own outcome stand.
+    """
+
+    def test_a_raising_receive_channel_leaves_a_completed_delivery_alone(self) -> None:
+        producer = _Producer([b"one\n", b"two\n"])
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, producer))
+        sent, _, send = _collector()
+
+        # A completed delivery: the body is written in full, the producer is released, and the
+        # channel's failure must not surface as an error from the application.
+        asyncio.run(ASGIApp(app)(_scope("GET", "/stream"), _RaisingReceiver(), send))
+        self.assertEqual(b"one\ntwo\n", _body(sent), "the response was not delivered in full")
+        self.assertTrue(producer.closed, "the delivery must release the producer")
+        starts = [message for message in sent if message["type"] == "http.response.start"]
+        self.assertEqual(1, len(starts), "the response was started more than once")
+
+        # An in-flight failure: the send fails mid-response while the watcher is also failing. The
+        # send's exception is the request's outcome; the watcher must not mask it.
+        in_flight = _Producer([b"one\n", b"two\n"])
+        app = App()
+        app.get("/stream", lambda _ctx: html_stream(200, in_flight))
+
+        async def failing_send(message: dict) -> None:
+            if message["type"] == "http.response.body":
+                raise ConnectionError("the transport is gone")
+            sent.append(message)
+
+        with self.assertRaises(ConnectionError):
+            asyncio.run(ASGIApp(app)(_scope("GET", "/stream"), _RaisingReceiver(), failing_send))
+        self.assertTrue(in_flight.closed, "a failed send must still release the producer")
 
 
 class ASGIConcurrencyTests(unittest.TestCase):
