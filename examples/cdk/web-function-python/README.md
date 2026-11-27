@@ -20,7 +20,7 @@ template will see it — in the revisions' descriptions.
 | `app/main.py` | The ASGI entry point: `app = ASGIApp(build_app())`. |
 | `app/main_wsgi.py` | The WSGI entry point: `application = WSGIApp(build_app())`. |
 | `app/lib/application.py` | The AppTheory application both entry points serve: `/`, `/health` and a streamed `/stream`. |
-| `scripts/stage-asset.mjs` | Builds the deployment package the stack stages: `app/` at the archive root with the `apptheory` runtime beside it. |
+| `../_shared/python-package-asset.mjs` | Builds the deployment package the stack stages: `app/` at the archive root with the `apptheory` runtime beside it. Shared with every example that ships Python, so the rule that decides what a package contains is stated once. |
 | `scripts/serve-wsgi.py` | A local stand-in for the server Lambda manages: the standard library's WSGI server with a threading mixin. Not part of the deployment package. |
 
 The application is written once. `apptheory.ASGIApp` and `apptheory.WSGIApp` turn a request into an AppTheory request,
@@ -53,7 +53,7 @@ PYTHONPATH=../../../py/src PORT=3000 python3 scripts/serve-wsgi.py
 `scripts/local/test_examples_local.py` runs both of those lines as written, in an environment with no AppTheory
 installed anywhere, so a command that stops reaching the runtime fails the harness instead of a reader's afternoon.
 
-`PYTHONDONTWRITEBYTECODE=1` is what the local rows set, and it is worth setting here too: `scripts/stage-asset.mjs`
+`PYTHONDONTWRITEBYTECODE=1` is what the local rows set, and it is worth setting here too: the staging step
 stages only the files its allow-list names, so a byte-code cache cannot reach the deployment package or move the
 pinned template hash, but an untracked `__pycache__` in the tree is still noise.
 
@@ -132,8 +132,8 @@ refuses that variable — as it refuses `AWS_LAMBDA_PYTHON_ENTRYPOINT` — so no
 
 A Python Web Function's archive root is its import root: Lambda loads `main:app` (or the entry point the revision
 names), so the entry module and the `apptheory` package it imports have to sit at the top of the package together.
-That is exactly what the stack stages — one directory, `.cdk-asset-stage/python-app/`, built by
-`scripts/stage-asset.mjs` during `cdk synth`, and one asset both revisions share:
+That is exactly what the stack stages — one directory, `.cdk-asset-stage/python-package/`, built by
+`examples/cdk/_shared/python-package-asset.mjs` during `cdk synth`, and one asset both revisions share:
 
 ```text
 main.py            main_wsgi.py        lib/application.py     ← app/, at the archive root
@@ -149,7 +149,7 @@ Those three routes import only the standard library, so nothing else is staged; 
 `apptheory.jobs` or the microvm session registry also needs the wheel's declared `tabletheory-py`, which belongs in
 the same archive root.
 
-The package is an allow-list, not a list of things to skip. `scripts/stage-asset.mjs` names every file that ships —
+The package is an allow-list, not a list of things to skip. `examples/cdk/_shared/python-package-asset.mjs` names every file that ships —
 the application's three modules, the runtime's modules, and the runtime's declared package data (`py.typed`) — and
 stages exactly those. Whatever else is lying in `app/` or in `py/src/apptheory` stays on your machine: a `.env`, a
 `.pytest_cache`, an editor swap file, a note. That is what keeps the template's pinned hash a property of the source
@@ -176,8 +176,8 @@ the link, so the guard cannot call it nothing; it refuses it instead, and it doe
 move the guard's judgement outside the tree it guards, where a missing target, a target elsewhere in the repo, or a
 link that leads back into the tree has no answer the allow-list can state — and it is why a link is refused even when
 it points at residue Python could not import: silence is for what Python cannot import, and a link is not a verdict
-about its target. Ship the file or the directory itself, name it in `PACKAGE_TREES` if it is meant to ship, or keep it
-outside these two trees. `WebFunctionPythonPackageInputTests` plants a linked module and a linked package directory in
+about its target. Ship the file or the directory itself, name it in `EXAMPLE_TREES` or `RUNTIME_TREE` if it is meant to ship, or keep
+it outside these two trees. `WebFunctionPythonPackageInputTests` plants a linked module and a linked package directory in
 each tree and requires each to be refused by name, then requires the committed trees to keep staging the same package.
 
 ```bash

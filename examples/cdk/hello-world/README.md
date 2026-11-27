@@ -16,6 +16,16 @@ GET /hello/{name}  -> { "message": "hello {name}", "runtime": "<lang>", "request
 
 The checked-in tests use the AppTheory testkit only; they do not call AWS.
 
+The Python variant's deployment package is an allow-list, not a list of things to skip:
+`examples/cdk/_shared/python-package-asset.mjs` stages `handlers/py/handler.py` at the archive root and the AppTheory
+runtime beside it under `apptheory/`, and it stages exactly the files it names. Anything else lying in either tree — a
+`.env`, a `.pytest_cache`, an editor swap file, a note — stays on your machine, so the pinned template hash is a
+property of the source and not of your last local run. The rule is total: an importable unit it does not name is
+refused by name (grow the list deliberately, in that script), and so is an entry that is not a regular file or a
+regular directory. A local *Python* test tree is importable from the archive root, so it cannot live inside a packaged
+tree — which is why this example's Python test is `tests/handler_test.py`, beside `handlers/` rather than in it. The
+same script packages `multilang` and `web-function-python`.
+
 ## Prerequisites
 
 - Node.js `>=24` and `npm`

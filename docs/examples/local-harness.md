@@ -258,9 +258,9 @@ these rules, so a validator that stops failing closed fails the harness.
 
 ## Fidelity table
 
-`scripts/local/examples-local.json` classifies 152 rows: 151 entrypoints plus the
-`runtime-api-conformance` suite. The classes are 34 L1, 93 L2, 10 L3 and 15 I;
-110 rows execute a runner (109 entrypoints and the suite) and 42 entrypoints are
+`scripts/local/examples-local.json` classifies 153 rows: 152 entrypoints plus the
+`runtime-api-conformance` suite. The classes are 34 L1, 92 L2, 10 L3 and 16 I;
+110 rows execute a runner (109 entrypoints and the suite) and 43 entrypoints are
 covered by another row's real run. The harness's `counts:` line reports every
 row as passed or failed; a covered row shares its target's result.
 
@@ -418,7 +418,7 @@ build.
 
 | Row | Class | How it is verified | Fail-closed reason |
 | --- | --- | --- | --- |
-| `examples/cdk/hello-world/bin/apptheory-hello-world.ts`, `examples/cdk/codebuild-job-runner/bin/app.ts`, `examples/cdk/import-pipeline/bin/app.ts`, `examples/cdk/kinesis-cloudwatch-logs/bin/app.ts`, `examples/cdk/lambda-packaging/bin/app.ts`, `examples/cdk/lambda-role/bin/app.ts`, `examples/cdk/lesser-parity/bin/app.ts`, `examples/cdk/local-mcp-auth-facade/bin/local-mcp-auth-facade.ts`, `examples/cdk/microvm-controller/bin/app.ts`, `examples/cdk/multilang/bin/apptheory-multilang.ts`, `examples/cdk/restv1-router/bin/app.ts`, `examples/cdk/s3-vectors-semantic-search/bin/app.ts`, `examples/cdk/sqs-queue/bin/app.ts`, `examples/cdk/web-function/bin/app.ts`, `examples/cdk/web-function-python/bin/app.ts`, `examples/cdk/web-function-python/scripts/stage-asset.mjs` | I | CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets). | Infrastructure-only: the CDK app entrypoint is synthesized and hash-checked by this row; it has no runtime process to serve, so it is never invoked. |
+| `examples/cdk/hello-world/bin/apptheory-hello-world.ts`, `examples/cdk/codebuild-job-runner/bin/app.ts`, `examples/cdk/import-pipeline/bin/app.ts`, `examples/cdk/kinesis-cloudwatch-logs/bin/app.ts`, `examples/cdk/lambda-packaging/bin/app.ts`, `examples/cdk/lambda-role/bin/app.ts`, `examples/cdk/lesser-parity/bin/app.ts`, `examples/cdk/local-mcp-auth-facade/bin/local-mcp-auth-facade.ts`, `examples/cdk/microvm-controller/bin/app.ts`, `examples/cdk/multilang/bin/apptheory-multilang.ts`, `examples/cdk/restv1-router/bin/app.ts`, `examples/cdk/s3-vectors-semantic-search/bin/app.ts`, `examples/cdk/sqs-queue/bin/app.ts`, `examples/cdk/web-function/bin/app.ts`, `examples/cdk/web-function-python/bin/app.ts`, `examples/cdk/_shared/python-package-asset.mjs` | I | CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets). The row also carries the one staging script every Python example's package is built by, which the harness self-tests drive directly. | Infrastructure-only: the CDK app entrypoint is synthesized and hash-checked by this row; it has no runtime process to serve, so it is never invoked. |
 
 ## Runtime API conformance
 

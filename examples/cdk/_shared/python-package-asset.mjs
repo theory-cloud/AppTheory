@@ -1,37 +1,42 @@
 #!/usr/bin/env node
-// Build the deployment package the stack stages.
+// Build the Python deployment package an example's stack stages.
 //
-// A Python Web Function's archive root is the import root: Lambda loads `main:app` (or the entry
-// point the revision names), so the entry module and everything it imports have to sit at the top of
-// the package. `app/` holds the application, and `py/src/apptheory` holds the AppTheory runtime this
-// checkout builds — staging the two together is what makes the synthesized asset the thing that
-// would actually run, instead of a package that fails at init on an import nobody shipped.
+// A Lambda's archive root is the import root: the entry module and everything it imports have to sit
+// at the top of the package. Every example that ships Python stages the same two things — its own
+// handler modules at the archive root, and the AppTheory runtime this checkout builds under
+// `apptheory/` — so the rule that decides what a package may contain is one rule, stated once, here,
+// and each example contributes only its declaration of which trees it packages and which files in
+// them ship.
 //
-// The package is defined by what it is allowed to contain, not by what it excludes. `PACKAGE_TREES`
-// below names every file that ships: the application's modules and the runtime's importable modules
-// plus its declared package data. Local-only files that happen to be lying in either tree — a
-// `.env`, a `.pytest_cache`, an editor swap file, a note — are not named, so they stay on the
-// author's machine and out of the CDK asset, and the asset's hash depends only on files that belong
-// in the package. A list of names to skip cannot promise that: it has to anticipate every kind of
-// local residue, and each kind nobody thought of changes what gets deployed.
+// The package is defined by what it is allowed to contain, not by what it excludes. `EXAMPLE_TREES`
+// and `RUNTIME_TREE` below name every file that ships: an example's handler modules, the runtime's
+// importable modules and its declared package data. Local-only files that happen to be lying in a
+// tree — a `.env`, a `.pytest_cache`, an editor swap file, a note — are not named, so they stay on
+// the author's machine and out of the CDK asset, and the asset's hash depends only on files that
+// belong in the package. A list of names to skip cannot promise that: it has to anticipate every
+// kind of local residue, and each kind nobody thought of changes what gets deployed. That is what
+// the hello-world and multilang examples used to do, and a `.env`, a local `tests/` tree and a
+// `.pytest_cache` planted in either of their trees reached the synthesized asset.
 //
 // The allow-list cannot quietly fall behind the source trees either. `verifyTree` fails the build
 // when a declared file is missing, or when a tree carries an importable unit the list does not name
 // — at any depth, in any of the three shapes Python makes importable: a `.py` module, a package
 // directory with `__init__.py`, or a namespace package directory (Python 3 imports a directory with
 // no `__init__.py` too, as long as it holds modules). Every one of them belongs in the package, so
-// growing the runtime is a deliberate one-line act here rather than a silently incomplete archive.
+// growing any of these trees is a deliberate act of naming the file here rather than a silently
+// incomplete archive.
 //
-// That rule is deliberately total, and it is why a local *Python* test tree cannot live inside
-// these two trees while a `.env` can: a directory of test modules is importable from the archive
-// root, so it is indistinguishable from code the package needs, and the guard refuses it by name
-// instead of guessing which unnamed importable unit was meant to ship. Nothing unnamed reaches the
-// asset either way — the residue that stays out silently is exactly the residue that Python cannot
-// import.
+// That rule is deliberately total, and it is why a local *Python* test tree cannot live inside these
+// trees while a `.env` can: a directory of test modules is importable from the archive root, so it is
+// indistinguishable from code the package needs, and the guard refuses it by name instead of guessing
+// which unnamed importable unit was meant to ship. Nothing unnamed reaches the asset either way — the
+// residue that stays out silently is exactly the residue that Python cannot import. A handler's
+// local test therefore lives outside the packaged tree (`examples/cdk/<example>/tests/`), and the
+// handler tree holds exactly the modules that ship and nothing else.
 //
 // The walk classifies each entry by its own type, so it can only be trusted on trees that hold the
-// two types it knows: every entry in either tree has to be a regular file or a regular directory.
-// A symbolic link — to a file or to a directory — is neither, so a `.py` module reached through a
+// two types it knows: every entry in a tree has to be a regular file or a regular directory. A
+// symbolic link — to a file or to a directory — is neither, so a `.py` module reached through a
 // link, or a package directory reached through a link, would be invisible here: classified as
 // nothing, named by nothing, checked by nothing, copied by nothing, and Python would import it from
 // the source tree while the archive it synthesized into could not. That is the same silent omission
@@ -41,117 +46,146 @@
 // the tree, at a missing file, or in a cycle has no answer the allow-list can state.
 //
 // The directory is rebuilt from scratch on every run, so the result depends only on the named files
-// in those two source trees. That is what lets the synthesized template's hash be pinned, and it is
-// why the doc tells you to run with `PYTHONDONTWRITEBYTECODE=1` when you serve the application by
-// hand.
+// in those trees. That is what lets the synthesized template's hash be pinned, and it is why a
+// hand-run of a Python example needs `PYTHONDONTWRITEBYTECODE=1` (a `__pycache__` is not residue a
+// package ships, but leaving one to be walked is still leaving one to be walked).
 //
-// Usage: node scripts/stage-asset.mjs      # prints the staged directory
+// Usage:
+//   node examples/cdk/_shared/python-package-asset.mjs <example-dir>          # stages, prints the dir
+//   node examples/cdk/_shared/python-package-asset.mjs --trees <example-dir>  # prints one tree per line
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const EXAMPLE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REPO_ROOT = path.resolve(EXAMPLE_DIR, "..", "..", "..");
-const APP_DIR = path.join(EXAMPLE_DIR, "app");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
 const RUNTIME_DIR = path.join(REPO_ROOT, "py", "src", "apptheory");
-const STAGE_DIR = path.join(EXAMPLE_DIR, ".cdk-asset-stage", "python-app");
+const STAGE_PARENT = ".cdk-asset-stage";
+const STAGE_NAME = "python-package";
 
 /**
- * The package, one named file at a time.
+ * The AppTheory runtime, one named file at a time — the same package in every example.
  *
- * `destination` is where the tree lands in the archive: the application at the archive root, because
- * that is the import root Lambda loads its entry module from, and the runtime under `apptheory/`,
- * because that is the name the application imports.
- *
- * `modules` is every file that ships as code or as declared package data — whatever the tree's shape,
- * nothing else joins the package. A directory is not a unit of the allow-list: it is walked, and the
- * files it contributes are named individually, because a directory that ships (a local `tests/`, a
- * `.pytest_cache/`, a namespace directory) is exactly what a list of directories cannot distinguish
- * from a package. `data` is package data that is not a module: the runtime declares `py.typed` in
- * `py/pyproject.toml`, so it ships with the modules that carry the annotations.
+ * `destination` is where the tree lands in the archive: under `apptheory/`, because that is the
+ * name an application imports. `modules` is every file that ships as code or as declared package
+ * data; `py.typed` is package data rather than a module, and the runtime declares it in
+ * `py/pyproject.toml`, so it ships with the modules that carry the annotations. A directory is not
+ * a unit of this list: it is walked, and the files it contributes are named individually.
  */
-const PACKAGE_TREES = [
-  {
-    label: "application",
-    source: APP_DIR,
-    destination: "",
-    modules: ["main.py", "main_wsgi.py", "lib/application.py"],
-    data: [],
-  },
-  {
-    label: "AppTheory runtime",
-    source: RUNTIME_DIR,
-    destination: "apptheory",
-    modules: [
-      "__init__.py",
-      "_safe_log.py",
-      "app.py",
-      "aws_events.py",
-      "aws_http.py",
-      "bind_handler.py",
-      "cache.py",
-      "clock.py",
-      "cloudfront.py",
-      "context.py",
-      "emf.py",
-      "errors.py",
-      "event_workloads.py",
-      "ids.py",
-      "jobs.py",
-      "kinesis_cloudwatch_logs.py",
-      "kinesis_producer.py",
-      "limited/__init__.py",
-      "limited/errors.py",
-      "limited/limiter.py",
-      "limited/models.py",
-      "limited/strategies.py",
-      "limited/types.py",
-      "logger.py",
-      "logging_profile.py",
-      "mcp/__init__.py",
-      "mcpfacade.py",
-      "mcproutes.py",
-      "microvm/__init__.py",
-      "microvm/aws_provider.py",
-      "microvm/contracts.py",
-      "microvm/controller.py",
-      "microvm/fake.py",
-      "microvm/foundation.py",
-      "microvm/model.py",
-      "microvm/registry.py",
-      "microvm/session.py",
-      "microvm/shared.py",
-      "middleware.py",
-      "naming.py",
-      "oauth/__init__.py",
-      "oauth/autheory.py",
-      "oauth/fake_provider.py",
-      "oauth/jwks.py",
-      "oauth/provider.py",
-      "oauth/store.py",
-      "objectstore.py",
-      "openapi.py",
-      "request.py",
-      "request_id_source.py",
-      "response.py",
-      "router.py",
-      "sanitization.py",
-      "secure_openapi.py",
-      "secure_types.py",
-      "serving.py",
-      "source_provenance.py",
-      "sse.py",
-      "streamer.py",
-      "testkit.py",
-      "trace_context.py",
-      "util.py",
-      "validate.py",
-      "vectorstore.py",
-    ],
-    data: ["py.typed"],
-  },
-];
+const RUNTIME_TREE = {
+  label: "AppTheory runtime",
+  source: RUNTIME_DIR,
+  destination: "apptheory",
+  modules: [
+    "__init__.py",
+    "_safe_log.py",
+    "app.py",
+    "aws_events.py",
+    "aws_http.py",
+    "bind_handler.py",
+    "cache.py",
+    "clock.py",
+    "cloudfront.py",
+    "context.py",
+    "emf.py",
+    "errors.py",
+    "event_workloads.py",
+    "ids.py",
+    "jobs.py",
+    "kinesis_cloudwatch_logs.py",
+    "kinesis_producer.py",
+    "limited/__init__.py",
+    "limited/errors.py",
+    "limited/limiter.py",
+    "limited/models.py",
+    "limited/strategies.py",
+    "limited/types.py",
+    "logger.py",
+    "logging_profile.py",
+    "mcp/__init__.py",
+    "mcpfacade.py",
+    "mcproutes.py",
+    "microvm/__init__.py",
+    "microvm/aws_provider.py",
+    "microvm/contracts.py",
+    "microvm/controller.py",
+    "microvm/fake.py",
+    "microvm/foundation.py",
+    "microvm/model.py",
+    "microvm/registry.py",
+    "microvm/session.py",
+    "microvm/shared.py",
+    "middleware.py",
+    "naming.py",
+    "oauth/__init__.py",
+    "oauth/autheory.py",
+    "oauth/fake_provider.py",
+    "oauth/jwks.py",
+    "oauth/provider.py",
+    "oauth/store.py",
+    "objectstore.py",
+    "openapi.py",
+    "request.py",
+    "request_id_source.py",
+    "response.py",
+    "router.py",
+    "sanitization.py",
+    "secure_openapi.py",
+    "secure_types.py",
+    "serving.py",
+    "source_provenance.py",
+    "sse.py",
+    "streamer.py",
+    "testkit.py",
+    "trace_context.py",
+    "util.py",
+    "validate.py",
+    "vectorstore.py",
+  ],
+  data: ["py.typed"],
+};
+
+/**
+ * Each example that ships a Python package, and the trees it contributes.
+ *
+ * `source` is relative to the example directory, and `destination` is where the tree lands in the
+ * archive: the handler at the root, because that is where the runtime loads its entry module from.
+ * The runtime is not repeated here — it is `RUNTIME_TREE`, declared once, because every example
+ * ships the same one.
+ *
+ * The key is the example's directory name. An example with no entry here cannot be staged: the
+ * alternative is guessing, and a guess is what produced a deny-list.
+ */
+const EXAMPLE_TREES = {
+  "web-function-python": [
+    {
+      label: "application",
+      source: "app",
+      destination: "",
+      modules: ["main.py", "main_wsgi.py", "lib/application.py"],
+      data: [],
+    },
+  ],
+  "hello-world": [
+    {
+      label: "hello-world handler",
+      source: "handlers/py",
+      destination: "",
+      modules: ["handler.py"],
+      data: [],
+    },
+  ],
+  multilang: [
+    {
+      label: "multilang handler",
+      source: "handlers/py",
+      destination: "",
+      modules: ["handler.py"],
+      data: [],
+    },
+  ],
+};
 
 /**
  * Every entry in a tree that is not a regular file or a regular directory, at any depth.
@@ -290,12 +324,12 @@ function verifyTree(tree) {
   if (special.length) {
     throw new Error(
       `the ${tree.label} tree has entries that are not a regular file or a regular directory: ${special.join(", ")}. ` +
-        "Every entry in these two trees has to be a regular file or a regular directory, so a symbolic link to a " +
+        "Every entry in a packaged tree has to be a regular file or a regular directory, so a symbolic link to a " +
         "file or a directory is refused by name rather than followed: a linked module or a linked package " +
         "directory imports from the source tree but cannot be checked against the allow-list or shipped in the " +
-        "archive, which is exactly how the package used to deploy incomplete. Replace the link with the file or " +
-        "the directory itself, name it in PACKAGE_TREES in scripts/stage-asset.mjs if it ships, or keep it " +
-        "outside these two trees.",
+        "archive, which is exactly how a package deploys incomplete. Replace the link with the file or the " +
+        "directory itself, name it in EXAMPLE_TREES or RUNTIME_TREE in " +
+        "examples/cdk/_shared/python-package-asset.mjs if it ships, or keep it outside the packaged trees.",
     );
   }
 
@@ -311,29 +345,69 @@ function verifyTree(tree) {
   if (undeclared.length) {
     throw new Error(
       `the ${tree.label} tree has importable units the allow-list does not name: ${undeclared.join(", ")}. ` +
-        "Name them in PACKAGE_TREES in scripts/stage-asset.mjs if they ship with the package; a module, test " +
-        "tree or scratch package that is local-only does not ship, so keep it outside these two trees.",
+        "Name them in EXAMPLE_TREES or RUNTIME_TREE in examples/cdk/_shared/python-package-asset.mjs if they " +
+        "ship with the package; a module, test tree or scratch package that is local-only does not ship, so keep " +
+        "it outside the packaged trees (a handler's local test lives in examples/cdk/<example>/tests/).",
     );
   }
 }
 
-/** Rebuild the deployment package and return its directory. */
-export function stagePythonApp() {
-  for (const tree of PACKAGE_TREES) {
+/** The trees one example packages, with its handler trees resolved against the example directory. */
+export function packageTrees(exampleDir) {
+  const example = path.resolve(exampleDir);
+  const declared = EXAMPLE_TREES[path.basename(example)];
+  if (!declared) {
+    throw new Error(
+      `${path.basename(example)} declares no Python package: name the trees it ships in EXAMPLE_TREES in ` +
+        "examples/cdk/_shared/python-package-asset.mjs, or do not stage a Python asset for it.",
+    );
+  }
+  return [
+    ...declared.map((tree) => ({ ...tree, source: path.join(example, tree.source) })),
+    RUNTIME_TREE,
+  ];
+}
+
+/** Rebuild one example's deployment package and return its directory. */
+export function stagePythonPackage(exampleDir) {
+  const example = path.resolve(exampleDir);
+  const trees = packageTrees(example);
+  for (const tree of trees) {
     verifyTree(tree);
   }
-  rmSync(STAGE_DIR, { force: true, recursive: true });
-  mkdirSync(STAGE_DIR, { recursive: true });
-  for (const tree of PACKAGE_TREES) {
+  const stageDir = path.join(example, STAGE_PARENT, STAGE_NAME);
+  rmSync(stageDir, { force: true, recursive: true });
+  mkdirSync(stageDir, { recursive: true });
+  for (const tree of trees) {
     for (const relative of [...tree.modules, ...tree.data]) {
-      const to = path.join(STAGE_DIR, tree.destination, relative);
+      const to = path.join(stageDir, tree.destination, relative);
       mkdirSync(path.dirname(to), { recursive: true });
       copyFileSync(path.join(tree.source, relative), to);
     }
   }
-  return STAGE_DIR;
+  return stageDir;
+}
+
+function main(argv) {
+  const [first, second] = argv;
+  if (first === "--trees") {
+    if (!second) {
+      throw new Error("--trees needs the example directory");
+    }
+    process.stdout.write(`${packageTrees(second).map((tree) => tree.source).join("\n")}\n`);
+    return;
+  }
+  if (!first) {
+    throw new Error("usage: python-package-asset.mjs [--trees] <example-dir>");
+  }
+  process.stdout.write(`${stagePythonPackage(first)}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.stdout.write(`${stagePythonApp()}\n`);
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
 }
