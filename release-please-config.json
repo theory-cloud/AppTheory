@@ -135,6 +135,11 @@
           "type": "json",
           "path": "examples/cdk/web-function/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/web-function-python/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
         }
       ]
     }

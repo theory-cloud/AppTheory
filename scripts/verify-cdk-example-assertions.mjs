@@ -115,6 +115,45 @@ const assertions = {
     }
   },
 
+  AppTheoryWebFunctionPythonExample() {
+    // The example exists to show both interfaces a Python Web Function can serve, over one
+    // application: two complete compositions, two python3.15 revisions, and the entry point each
+    // one declares instead of an environment variable an operator could override.
+    assert.equal(byType("AWS::Lambda::WebFunction").length, 2, "expected two Web Functions");
+    assert.equal(byType("AWS::Lambda::WebFunctionRevision").length, 2, "expected one revision each");
+    const endpoints = byType("AWS::Lambda::WebFunctionEndpoint");
+    assert.equal(endpoints.length, 2, "expected one endpoint each");
+
+    const authTypes = endpoints.map(([, endpoint]) => endpoint.Properties.AuthType).sort();
+    assert.deepEqual(authTypes, ["IamAuth", "IamAuth"], "both endpoints must keep the safe default");
+    const endpointNames = endpoints.map(([, endpoint]) => endpoint.Properties.EndpointName).sort();
+    assert.deepEqual(endpointNames, ["asgi", "wsgi"]);
+    for (const [id, endpoint] of endpoints) {
+      const weights = endpoint.Properties.RevisionWeights;
+      assert.equal(weights.length, 1, `${id} must send its traffic to one revision`);
+      assert.equal(weights[0].Weight, 100);
+    }
+
+    const entryPoints = [];
+    for (const [id, revision] of byType("AWS::Lambda::WebFunctionRevision")) {
+      assert.equal(
+        revision.Properties.BuildConfig.RuntimeConfig.Runtime,
+        "python3.15",
+        `${id} must run the Python Web Function runtime`,
+      );
+      const environment = revision.Properties.ServiceConfig.EnvironmentVariables;
+      entryPoints.push(environment.AWS_LAMBDA_PYTHON_ENTRYPOINT);
+      // A Python application never learns where to listen, so the variable the Node.js side reads
+      // must not appear here.
+      assert.equal(
+        Object.hasOwn(environment, "AWS_LAMBDA_HTTP_ENDPOINT"),
+        false,
+        `${id} must not set the variable only a Node.js application reads`,
+      );
+    }
+    assert.deepEqual(entryPoints.sort(), ["asgi:main:app", "wsgi:main_wsgi:application"]);
+  },
+
   AppTheoryCodeBuildJobRunnerExample() {
     const projects = byType("AWS::CodeBuild::Project");
     assert.equal(projects.length, 1, "expected one CodeBuild project");
