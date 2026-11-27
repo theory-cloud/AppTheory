@@ -71,6 +71,21 @@ const assetExclude = [
   "**/*.egg-info",
 ];
 
+/**
+ * Stage the deployment package the Python handler ships: `handler.py` at the archive root and the
+ * AppTheory runtime beside it.
+ *
+ * The package is built by `examples/cdk/_shared/python-package-asset.mjs`, which holds both trees
+ * to an explicit allow-list of the files that ship; this stack only names the example. The asset
+ * carries no exclude patterns and no local bundling step afterwards, because a pattern list is a
+ * list of things to skip: it can only exclude the residue someone anticipated, and a `.env`, a
+ * local test tree or a `.pytest_cache` nobody anticipated would still reach the archive.
+ */
+function stagePythonPackage(exampleDir: string): string {
+  const script = path.join(exampleDir, "..", "_shared", "python-package-asset.mjs");
+  return execFileSync(process.execPath, [script, exampleDir], { encoding: "utf8" }).trim();
+}
+
 function resetAssetStage(exampleDir: string, name: string): string {
   const stageDir = path.join(exampleDir, ".cdk-asset-stage", name);
   rmSync(stageDir, { force: true, recursive: true });
@@ -202,27 +217,11 @@ export class MultiLangStack extends Stack {
       environment: { ...commonEnv, APPTHEORY_LANG: "ts" },
     });
 
-    const pyHandlersDir = path.join(__dirname, "..", "handlers", "py");
-    const pyStageDir = resetAssetStage(path.join(__dirname, ".."), "py");
-    stageHandlerFiles(pyHandlersDir, pyStageDir, ["handler.py"]);
-    copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(pyStageDir, "apptheory"));
+    const pyStageDir = stagePythonPackage(path.join(__dirname, ".."));
     const pyHandler = new AppTheoryFunction(this, "PyHandler", {
       runtime: lambda.Runtime.PYTHON_3_14,
       handler: "handler.handler",
-      code: lambda.Code.fromAsset(pyStageDir, {
-        exclude: assetExclude,
-        bundling: {
-          image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-          command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
-          local: {
-            tryBundle(outputDir: string) {
-              cleanOutputDir(outputDir);
-              copyDir(pyStageDir, outputDir);
-              return true;
-            },
-          },
-        },
-      }),
+      code: lambda.Code.fromAsset(pyStageDir),
       environment: { ...commonEnv, APPTHEORY_LANG: "py" },
     });
 
@@ -428,14 +427,19 @@ export class MultiLangStack extends Stack {
     // returns an IAM policy. The local runner runs it and matches the policy
     // against the $connect method ARN. The L1 resources are deliberate:
     // AppTheoryWebSocketApi has no authorizer property.
+    //
+    // The authorizer is one self-contained module, so its asset is that module and
+    // nothing else. A directory asset over `handlers/` shipped whatever else was
+    // lying in the tree — a host-side Python run writes handlers/py/__pycache__
+    // beside the source — and an exclude list can only name the kinds of residue
+    // someone thought to anticipate. Staging the declared file is the same rule the
+    // Python package follows.
+    const wsAuthorizerStageDir = resetAssetStage(path.join(__dirname, ".."), "ws-authorizer");
+    stageHandlerFiles(path.join(__dirname, "..", "handlers"), wsAuthorizerStageDir, ["ws-authorizer.mjs"]);
     const wsAuthorizerFn = new lambda.Function(this, "WsAuthorizerFn", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "ws-authorizer.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers"), {
-        // A host-side Python run writes handlers/py/__pycache__ next to the
-        // source; without the exclude the in-place synth hash drifts.
-        exclude: assetExclude,
-      }),
+      code: lambda.Code.fromAsset(wsAuthorizerStageDir),
       timeout: cdk.Duration.seconds(10),
       description: "WebSocket $connect REQUEST authorizer; returns an IAM policy",
     });

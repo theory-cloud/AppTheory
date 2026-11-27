@@ -5,9 +5,11 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[5]
+ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "py" / "src"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The handler lives in the tree the deployment package stages, which holds only the modules
+# that ship; this test lives outside it so the allow-list never has to name a test module.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "handlers" / "py"))
 
 os.environ["APPTHEORY_TIER"] = "p0"
 os.environ["APPTHEORY_DEMO_NAME"] = "demo"
@@ -112,7 +114,7 @@ def main() -> None:
     )
     assert ddb["batchItemFailures"] == []
 
-    print("examples/cdk/multilang/handlers/py/handler_test.py: PASS")
+    print("examples/cdk/multilang/tests/handler_test.py: PASS")
 
 
 if __name__ == "__main__":

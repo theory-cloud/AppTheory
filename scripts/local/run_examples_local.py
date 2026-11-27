@@ -2130,13 +2130,20 @@ def run_dev_loop_watch(harness: Harness, lang: str) -> str:
                     raise HarnessFailure(
                         f"watch {lang}: unaffected {prefix} answered {body!r}, not its unchanged handler body"
                     )
-            # The WebSocket authorizer's CDK asset is the whole handlers/
-            # directory, so every handler edit changes its asset hash; the
-            # runner must restart it too (and only because its asset changed).
+            # The WebSocket authorizer's CDK asset is its own module, not the
+            # whole handlers/ directory, so a handler edit does not change its
+            # hash and the runner must not replace its execution environment: a
+            # function whose asset did not change keeps serving from the one it
+            # already mounts. (It used to be a directory asset over handlers/,
+            # which every handler edit moved — a restart nobody's code asked
+            # for.)
             authorizers = [function for function in before if function.startswith("WsAuthorizer")]
-            if len(authorizers) == 1 and before.get(authorizers[0]) == after.get(authorizers[0]):
+            if len(authorizers) != 1:
+                raise HarnessFailure(f"watch {lang}: want one WsAuthorizer function, got {authorizers}")
+            if after.get(authorizers[0]) != before[authorizers[0]]:
                 raise HarnessFailure(
-                    f"watch {lang}: the shared-asset {authorizers[0]} did not restart after its asset changed"
+                    f"watch {lang}: the WebSocket authorizer restarted although its asset did not change "
+                    f"({before[authorizers[0]]} -> {after.get(authorizers[0])})"
                 )
         finally:
             handler.write_text(original, encoding="utf-8")
@@ -2149,8 +2156,8 @@ def run_dev_loop_watch(harness: Harness, lang: str) -> str:
             raise HarnessFailure(f"watch {lang}: the runner did not report a rebuild", log[-4000:])
         return (
             f"{lang} handler edit re-synthesized through cdk synth and the new response arrived on the "
-            "same listener URL; the other two language functions were not restarted, and the shared-asset "
-            "WebSocket authorizer was restarted only because its handlers/ asset changed"
+            "same listener URL; the other two language functions were not restarted, and neither was the "
+            "WebSocket authorizer, whose asset is its own module and did not change"
         )
     finally:
         stop_local_session(harness, session)

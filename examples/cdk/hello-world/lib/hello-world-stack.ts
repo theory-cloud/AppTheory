@@ -80,6 +80,23 @@ function cleanOutputDir(outputDir: string): void {
   mkdirSync(outputDir, { recursive: true });
 }
 
+/**
+ * Stage the deployment package the Python function ships: the handler at the archive root and the
+ * AppTheory runtime beside it.
+ *
+ * Lambda imports the entry module from the archive root, so an asset that carries `handlers/py`
+ * alone cannot start — `from apptheory import ...` would have nothing to import. The package is
+ * built by `examples/cdk/_shared/python-package-asset.mjs`, which holds both trees to an explicit
+ * allow-list of the files that ship; this stack only names the example. No patterns filter the
+ * asset afterwards, because a pattern list is a list of things to skip: it can only exclude the
+ * residue someone anticipated, and a `.env`, a local test tree or a `.pytest_cache` nobody
+ * anticipated would still reach the archive.
+ */
+function stagePythonPackage(exampleDir: string): string {
+  const script = path.join(exampleDir, "..", "_shared", "python-package-asset.mjs");
+  return execFileSync(process.execPath, [script, exampleDir], { encoding: "utf8" }).trim();
+}
+
 function resetAssetStage(exampleDir: string, name: string): string {
   const stageDir = path.join(exampleDir, ".cdk-asset-stage", name);
   cleanOutputDir(stageDir);
@@ -285,27 +302,11 @@ export class HelloWorldStack extends Stack {
         });
       }
       case "py": {
-        const handlerDir = path.join(__dirname, "..", "handlers", "py");
-        const stageDir = resetAssetStage(path.join(__dirname, ".."), "py");
-        stageHandlerFiles(handlerDir, stageDir, ["handler.py"]);
-        copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(stageDir, "apptheory"));
+        const stageDir = stagePythonPackage(path.join(__dirname, ".."));
         return new AppTheoryFunction(this, "Handler", {
           runtime: lambda.Runtime.PYTHON_3_14,
           handler: "handler.handler",
-          code: lambda.Code.fromAsset(stageDir, {
-            exclude: assetExclude,
-            bundling: {
-              image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-              command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
-              local: {
-                tryBundle(outputDir: string) {
-                  cleanOutputDir(outputDir);
-                  copyDir(stageDir, outputDir);
-                  return true;
-                },
-              },
-            },
-          }),
+          code: lambda.Code.fromAsset(stageDir),
           environment: { APPTHEORY_HELLO_LANG: "py", APPTHEORY_TIER: "p2" },
         });
       }

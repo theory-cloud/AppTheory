@@ -46,6 +46,20 @@ cd examples/cdk/multilang
 npx cdk deploy --all
 ```
 
+## Packaging
+
+The Python handler ships as an allow-list, not as "everything under `handlers/py` minus a list of names":
+`examples/cdk/_shared/python-package-asset.mjs` stages `handlers/py/handler.py` at the archive root and the AppTheory
+runtime beside it under `apptheory/`, and it stages exactly the files it names. Residue that Python cannot import — a
+`.env`, a `.pytest_cache`, an editor swap file, a note — stays out of the CDK asset without being listed anywhere, so
+the pinned template hash does not move because of what a local run left in the tree. Two shapes are refused by name
+instead: an importable unit the list does not declare, and an entry that is not a regular file or a regular directory
+(a symbolic link, a socket, a fifo). The rules follow from that: this example's Python test lives in
+`tests/handler_test.py`, outside the packaged tree, and the WebSocket authorizer's asset is its one declared module
+rather than a directory template over `handlers/`. The same script packages every Python asset under `examples/cdk/`: `hello-world`, `web-function-python`, this
+example, both of `lambda-packaging`'s (its Python function and its Python layer), and the `local-iam` and
+`local-tls` Python callers.
+
 ## Configuration
 
 The CDK stack injects a shared configuration story across languages:

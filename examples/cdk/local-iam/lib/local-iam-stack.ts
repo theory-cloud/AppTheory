@@ -5,9 +5,24 @@ import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Construct } from "constructs";
+
+/**
+ * Stage the deployment package the Python caller ships: the module its allow-list names.
+ *
+ * Lambda imports the entry module from the archive root, so the archive is exactly the declared
+ * files of `handlers/python` — built by `examples/cdk/_shared/python-package-asset.mjs`, the one
+ * rule every Python asset under `examples/cdk/` is built by. The asset used to be pointed at the
+ * directory with a list of names to skip, and a planted `.env` reached it; a skip list can only
+ * exclude the residue somebody anticipated. The caller imports the standard library and botocore,
+ * so the AppTheory runtime is not part of this package.
+ */
+function stagePythonCaller(exampleDir: string): string {
+  const script = path.join(exampleDir, "..", "_shared", "python-package-asset.mjs");
+  return execFileSync(process.execPath, [script, exampleDir], { encoding: "utf8" }).trim();
+}
 
 /**
  * The local IAM example: one REST API, one HTTP API and one Function URL whose
@@ -194,9 +209,7 @@ export class LocalIamStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       environment: { APPTHEORY_LOCAL_IAM_ROLE: "caller-py" },
       description: "Python caller: signs an execute-api call with botocore's SigV4Auth",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "python"), {
-        exclude: ["__pycache__", "**/__pycache__", "*.pyc", "**/*.pyc"],
-      }),
+      code: lambda.Code.fromAsset(stagePythonCaller(path.join(__dirname, ".."))),
     });
 
     // The API's resource policy is the one policy kind a REST API carries. Each

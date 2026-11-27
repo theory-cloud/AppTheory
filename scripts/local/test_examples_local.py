@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import os
+import py_compile
 import re
 import shutil
 import socket
@@ -33,6 +35,7 @@ import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import NamedTuple
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -979,8 +982,9 @@ class WebFunctionPythonPackageTests(unittest.TestCase):
 
     SAN-AT-W1B-02: the stack staged `app/` alone, so neither entry point could import `apptheory`
     from the staged asset, and the README described a build directory nothing staged. The stack now
-    stages what `scripts/stage-asset.mjs` builds; these tests build that directory and prove both
-    entry points import and serve from it with no other AppTheory on the path.
+    stages what `examples/cdk/_shared/python-package-asset.mjs` builds; these tests build that
+    directory and prove both entry points import and serve from it with no other AppTheory on the
+    path.
     """
 
     @classmethod
@@ -989,17 +993,7 @@ class WebFunctionPythonPackageTests(unittest.TestCase):
 
     @classmethod
     def _stage(cls) -> Path:
-        script = harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"
-        self_check = shutil.which("node")
-        if self_check is None:
-            raise harness.HarnessFailure("staging the Python package needs node on PATH")
-        result = subprocess.run(
-            [self_check, str(script)],
-            cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = run_python_package_staging(harness.WEB_FUNCTION_PYTHON_EXAMPLE)
         if result.returncode != 0:
             raise harness.HarnessFailure(f"staging the Python package failed: {result.stderr.strip()}")
         return Path(result.stdout.strip())
@@ -1078,15 +1072,49 @@ class WebFunctionPythonPackageTests(unittest.TestCase):
 
 WEB_FUNCTION_PYTHON_STACK = "AppTheoryWebFunctionPythonExample"
 
-# Synthetic local-only files, planted in both package trees to prove they stay out of the deployment
-# package. None of them is or contains a credential: the values are this test's own strings, and what
-# the plant is about is the file's *presence*, never its contents. They are the shapes a developer
-# leaves behind that Python cannot import — a dotenv, a pytest cache, a dot-file, a note, an editor
-# swap file — which is exactly the residue the allow-list drops in silence. A local *test tree* is
-# not in this set, because a directory of test modules is importable from the archive root and
-# staging refuses it by name (SAN-AT-W1B-05); that case lives in
-# WebFunctionPythonPackageInputTests.test_growth_anywhere_in_either_tree_fails_staging.
-WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS: dict[str, str] = {
+# One script builds every example's Python deployment package, so there is one rule to test:
+# `examples/cdk/_shared/python-package-asset.mjs`.
+PYTHON_PACKAGE_ASSET = harness.ROOT / "examples" / "cdk" / "_shared" / "python-package-asset.mjs"
+
+class PythonPackageExample(NamedTuple):
+    """One example that stages a Python asset, with the stack the synth gate pins for it.
+
+    `runtime` is what the example declares about the AppTheory runtime it ships: hello-world,
+    multilang and web-function-python handlers import `apptheory`, so their packages carry it under
+    `apptheory/`; lambda-packaging's handler and layer, and the local-iam and local-tls callers,
+    import the standard library or botocore, so their packages carry no runtime. The tests read the
+    declaration from the staging step — the runtime is the last tree `--trees` prints when the
+    package ships it — rather than restating it here.
+    """
+
+    name: str
+    stack: str
+    args: tuple[str, ...]
+    runtime: bool
+
+
+# Every example that stages a Python asset, with the stack the synth gate pins and the context the
+# example needs. The stack name and the pin are the gate's: `scripts/verify-cdk-synth.sh`
+# synthesizes each of these rows and compares the template with the committed snapshot.
+PYTHON_PACKAGE_EXAMPLES: tuple[PythonPackageExample, ...] = (
+    PythonPackageExample("web-function-python", "AppTheoryWebFunctionPythonExample", (), True),
+    PythonPackageExample("hello-world", "AppTheoryHelloWorldPy", ("-c", "lang=py"), True),
+    PythonPackageExample("multilang", "AppTheoryMultilangDemo", (), True),
+    PythonPackageExample("lambda-packaging", "AppTheoryLambdaPackagingExample", (), False),
+    PythonPackageExample("local-iam", "local-iam", (), False),
+    PythonPackageExample("local-tls", "AppTheoryLocalTls", (), False),
+)
+
+# Synthetic local-only files, planted in every packaged tree of every Python example to prove they
+# stay out of the deployment package. None of them is or contains a credential: the values are this
+# test's own strings, and what the plant is about is the file's *presence*, never its contents. They
+# are the shapes a developer leaves behind that Python cannot import — a dotenv, a pytest cache, a
+# dot-file, a note, an editor swap file — which is exactly the residue the allow-list drops in
+# silence. A local *test tree* is not in this set, because a directory of test modules is importable
+# from the archive root and staging refuses it by name (SAN-AT-W1B-05); those cases live in
+# WebFunctionPythonPackageInputTests.test_growth_anywhere_in_either_tree_fails_staging and
+# PythonPackageAllowListTests.
+PYTHON_LOCAL_ONLY_PLANTS: dict[str, str] = {
     ".env": "APPTHEORY_LOCAL_ONLY_PLANT=this-is-not-a-credential\n",
     ".pytest_cache/v/cache/lastfailed": "{}\n",
     ".dotfile-local-only": "a dot-file nobody declared\n",
@@ -1096,11 +1124,8 @@ WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS: dict[str, str] = {
 
 
 def web_function_python_package_trees() -> list[Path]:
-    """The two trees the deployment package is built from: the application and the runtime."""
-    return [
-        harness.WEB_FUNCTION_PYTHON_ASGI_APP,
-        harness.ROOT / "py" / "src" / "apptheory",
-    ]
+    """The trees the deployment package is built from, as the staging step declares them."""
+    return python_package_trees(harness.WEB_FUNCTION_PYTHON_EXAMPLE)
 
 
 @contextlib.contextmanager
@@ -1110,7 +1135,9 @@ def planted_local_only_files(trees: list[Path], plants: dict[str, str]):
     They go into the real trees, because the real trees are what synthesis reads: planting in a copy
     would prove nothing about the asset. Every file this adds is recorded and removed in `finally`,
     and so is every directory it had to create, so a failed assertion cannot leave residue behind
-    for the next test or the next gate.
+    for the next test or the next gate. The content is text for the shapes the interpreter never
+    writes and bytes for the ones it does — a `.pyc` plant is real byte-code, because a stand-in
+    would leave the test silently unable to tell a cache from a sourceless module.
     """
     planted: list[Path] = []
     created: list[Path] = []
@@ -1128,7 +1155,10 @@ def planted_local_only_files(trees: list[Path], plants: dict[str, str]):
                 for directory in reversed(missing):
                     directory.mkdir()
                     created.append(directory)
-                staged.write_text(content, encoding="utf-8")
+                if isinstance(content, bytes):
+                    staged.write_bytes(content)
+                else:
+                    staged.write_text(content, encoding="utf-8")
                 # Narrow mode on purpose: a plant is nobody's input, and the harness keeps its own
                 # scratch files owner-only (os.chmod(..., 0o600) there too). The plant's *presence* is
                 # what the tests are about, never its mode, so nothing here needs a wider bit.
@@ -1170,25 +1200,90 @@ def planted_links(entries: list[tuple[Path, str, Path]]):
                 link.unlink()
 
 
+def run_python_package_staging(example: Path, asset: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Run the shared staging step — the one `cdk synth` runs — and report what it said.
+
+    One script builds every Python asset, so a test names the example and, when the example stages
+    more than one, the asset; the rule is the same rule the stack runs:
+    `examples/cdk/_shared/python-package-asset.mjs`.
+    """
+    command = [shutil.which("node") or "node", str(PYTHON_PACKAGE_ASSET), str(example)]
+    if asset is not None:
+        command.append(asset)
+    return subprocess.run(command, cwd=str(example), capture_output=True, text=True, check=False)
+
+
+def byte_code_module() -> bytes:
+    """Real byte-code, as the interpreter writes it: what the `.pyc` plants are made of.
+
+    A textual stand-in would be a `.pyc` in name only, and the tests would then be unable to tell a
+    cache the interpreter wrote from a sourceless module an author kept on purpose — the two shapes
+    they are about. This compiles a module in a throwaway directory and reads the file back.
+    """
+    with tempfile.TemporaryDirectory(prefix="apptheory-byte-code-") as directory:
+        source = Path(directory) / "helper_source.py"
+        source.write_text('MESSAGE = "helper"\n\n\ndef greet():\n    return MESSAGE\n', encoding="utf-8")
+        return Path(py_compile.compile(str(source), doraise=True)).read_bytes()
+
+
 def run_web_function_python_staging() -> subprocess.CompletedProcess[str]:
-    """Run the example's own staging step — the one `cdk synth` runs — and report what it said."""
-    return subprocess.run(
-        [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
-        cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+    """Run the staging step for the Python Web Function example."""
+    return run_python_package_staging(harness.WEB_FUNCTION_PYTHON_EXAMPLE)
+
+
+def python_package_assets(example: Path) -> list[str]:
+    """The names of the Python assets one example stages, as the staging step declares them.
+
+    An example may stage more than one (lambda-packaging stages a function and a layer), and each is
+    staged on its own so two archives never merge into one. The tests read the names back from the
+    script rather than restating them, for the same reason they read the trees back.
+    """
+    result = subprocess.run(
+        [shutil.which("node") or "node", str(PYTHON_PACKAGE_ASSET), "--assets", str(example)],
+        cwd=str(example),
         capture_output=True,
         text=True,
         check=False,
     )
+    if result.returncode != 0:
+        raise harness.HarnessFailure(f"reading the staged assets failed: {result.stderr.strip()}")
+    assets = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not assets:
+        raise harness.HarnessFailure(f"{example} declares no staged assets")
+    return assets
 
 
-def ensure_web_function_python_cdk_dependencies() -> None:
-    """Install the example's CDK dependency tree the way the synth gate does.
+def python_package_trees(example: Path, asset: str | None = None) -> list[Path]:
+    """The trees one asset is built from, as the staging step declares them.
+
+    The declaration is the thing the guard holds the trees to, so the tests plant residue in the
+    trees the script names rather than in a second list that could drift from it. A plant in a tree
+    the script does not package would prove nothing about the package.
+    """
+    command = [shutil.which("node") or "node", str(PYTHON_PACKAGE_ASSET), "--trees", str(example)]
+    if asset is not None:
+        command.append(asset)
+    result = subprocess.run(command, cwd=str(example), capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise harness.HarnessFailure(f"reading the packaged trees failed: {result.stderr.strip()}")
+    trees = [Path(line.strip()) for line in result.stdout.splitlines() if line.strip()]
+    if not trees:
+        raise harness.HarnessFailure(f"{example} declares no packaged trees")
+    return trees
+
+
+def python_asset_trees(example: Path) -> list[tuple[str, list[Path]]]:
+    """Every asset one example stages, paired with the trees each is built from."""
+    return [(asset, python_package_trees(example, asset)) for asset in python_package_assets(example)]
+
+
+def ensure_example_cdk_dependencies(example: Path) -> None:
+    """Install an example's CDK dependency tree the way the synth gate does.
 
     The finding was observed through a real synthesis, so the test runs the real thing rather than
     a stand-in. `npm ci` is the same prerequisite `scripts/verify-cdk-synth.sh` provisions for every
     example, and it is skipped when the tree is already installed.
     """
-    example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
     if (example / "node_modules" / "aws-cdk-lib" / "package.json").is_file():
         return
     result = subprocess.run(
@@ -1206,15 +1301,14 @@ def ensure_web_function_python_cdk_dependencies() -> None:
         )
 
 
-def synthesize_web_function_python(output: Path) -> str:
-    """Synthesize the example exactly as the synth gate does, and return the template's sha256.
+def synthesize_example(example: Path, stack: str, output: Path, *args: str) -> str:
+    """Synthesize an example exactly as the synth gate does, and return the template's sha256.
 
     The epoch and the environment are the gate's: `SOURCE_DATE_EPOCH` from HEAD, and no
     `CDK_DEFAULT_*` folded into an environment-agnostic template. That is what makes the committed
-    pin the oracle for the asset hash this test is about.
+    pin the oracle for the asset hash these tests are about.
     """
-    example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
-    ensure_web_function_python_cdk_dependencies()
+    ensure_example_cdk_dependencies(example)
     epoch = subprocess.run(
         ["git", "show", "-s", "--format=%ct", "HEAD"],
         cwd=str(harness.ROOT),
@@ -1236,6 +1330,7 @@ def synthesize_web_function_python(output: Path) -> str:
             "--no-version-reporting",
             "-o",
             str(output),
+            *args,
         ],
         cwd=str(example),
         env=env,
@@ -1246,24 +1341,56 @@ def synthesize_web_function_python(output: Path) -> str:
     )
     if result.returncode != 0:
         raise harness.HarnessFailure(
-            f"synthesizing the example failed: {result.stderr.strip() or result.stdout.strip()}"
+            f"synthesizing {example.name} failed: {result.stderr.strip() or result.stdout.strip()}"
         )
-    template = output / f"{WEB_FUNCTION_PYTHON_STACK}.template.json"
+    template = output / f"{stack}.template.json"
     if not template.is_file():
         raise harness.HarnessFailure(f"the synthesis produced no {template.name}")
     return hashlib.sha256(template.read_bytes()).hexdigest()
 
 
-def web_function_python_package_asset(output: Path) -> Path:
-    """The asset directory CDK staged for the function's code: the package, as it would deploy.
+def synthesize_web_function_python(output: Path) -> str:
+    """Synthesize the Python Web Function example as the synth gate does."""
+    return synthesize_example(
+        harness.WEB_FUNCTION_PYTHON_EXAMPLE, WEB_FUNCTION_PYTHON_STACK, output
+    )
 
-    Synthesis also emits asset directories for the construct's supporting code, so the package is
-    identified by what only it carries: the application's two entry modules at the archive root.
+
+def python_package_asset(output: Path, staged_files: list[str]) -> Path:
+    """The asset directory CDK staged that holds exactly the files the staging step built.
+
+    A stack also emits asset directories for its other code — a Go bootstrap, a Docker build
+    context, a Node bundle — so the Python package is identified by the one thing only it can be:
+    the exact set of files staging put in it. An entry module alone would not do:
+    lambda-packaging's Docker context carries an `app.py` too, and the layer's archive root holds no
+    entry module at all.
+
+    Exactly one directory has to match. Two would mean two assets claim the same package, and the
+    template the tests then compare with the pin would be ambiguous about which one they read.
     """
-    for candidate in sorted(output.glob("asset.*")):
-        if candidate.is_dir() and (candidate / "main.py").is_file() and (candidate / "main_wsgi.py").is_file():
-            return candidate
-    raise harness.HarnessFailure(f"no asset directory under {output} carries the staged package")
+    wanted = sorted(staged_files)
+    matches = [
+        candidate
+        for candidate in sorted(output.glob("asset.*"))
+        if candidate.is_dir() and python_package_files(candidate) == wanted
+    ]
+    if len(matches) != 1:
+        raise harness.HarnessFailure(
+            f"no single asset directory under {output} holds the {len(wanted)} files the staging step built "
+            f"(found {[candidate.name for candidate in matches]}): the synthesized package is not the staged "
+            "package"
+        )
+    return matches[0]
+
+
+# A module named like a test: `test_*.py` or `*_test.py`. The runtime legitimately ships
+# `testkit.py`, so the name is matched as a shape rather than by substring.
+PY_TEST_MODULE_RE = re.compile(r"^(?:test_.*\.py|.*_test\.py)$")
+
+
+def python_package_files(package: Path) -> list[str]:
+    """Every file in a staged package, relative to it."""
+    return sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
 
 
 class WebFunctionPythonPackageInputTests(unittest.TestCase):
@@ -1306,16 +1433,19 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
         pinned = (example / "snapshots" / f"{WEB_FUNCTION_PYTHON_STACK}.template.sha256").read_text(encoding="utf-8")
         pinned = pinned.strip()
         self.assertEqual(64, len(pinned), f"the committed template pin is not a sha256: {pinned!r}")
+        staged = run_web_function_python_staging()
+        self.assertEqual(0, staged.returncode, f"staging refused the trees as committed: {staged.stderr.strip()}")
+        staged_files = python_package_files(Path(staged.stdout.strip()))
         with tempfile.TemporaryDirectory(prefix="apptheory-web-function-clean-") as clean_dir:
             clean = synthesize_web_function_python(Path(clean_dir))
-            asset = web_function_python_package_asset(Path(clean_dir))
+            asset = python_package_asset(Path(clean_dir), staged_files)
             self.assertEqual(pinned, clean, "the synthesis of the clean tree does not reproduce the committed pin")
             print(f"\nclean tree: template {clean[:12]}, package asset {asset.name} with {len(list(asset.rglob('*')))} entries")
 
-            with planted_local_only_files(trees, WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS) as planted:
+            with planted_local_only_files(trees, PYTHON_LOCAL_ONLY_PLANTS) as planted:
                 with tempfile.TemporaryDirectory(prefix="apptheory-web-function-planted-") as planted_dir:
                     observed = synthesize_web_function_python(Path(planted_dir))
-                    package = web_function_python_package_asset(Path(planted_dir))
+                    package = python_package_asset(Path(planted_dir), staged_files)
                     self.assertEqual(
                         pinned,
                         observed,
@@ -1430,13 +1560,7 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
             # Owner-only, like the other scratch files this harness writes: the module's presence is
             # the subject, and a world-readable mode is a finding the scanner reports, not a need.
             os.chmod(undeclared, 0o600)
-            result = subprocess.run(
-                [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
-                cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = run_web_function_python_staging()
         finally:
             with contextlib.suppress(FileNotFoundError):
                 undeclared.unlink()
@@ -1499,16 +1623,7 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
         for label, (tree, plants, expected) in cases.items():
             with self.subTest(label):
                 with planted_local_only_files([tree], plants) as planted:
-                    result = subprocess.run(
-                        [
-                            shutil.which("node") or "node",
-                            str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"),
-                        ],
-                        cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
+                    result = run_web_function_python_staging()
                 self.assertNotEqual(
                     0,
                     result.returncode,
@@ -1627,16 +1742,7 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
         caught a byte-code cache, a local test tree, or a directory the package legitimately holds
         as a namespace would fail here rather than at the next author's synth.
         """
-        result = subprocess.run(
-            [
-                shutil.which("node") or "node",
-                str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"),
-            ],
-            cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = run_web_function_python_staging()
         self.assertEqual(0, result.returncode, f"staging refused the trees as committed: {result.stderr.strip()}")
         staged = Path(result.stdout.strip())
         files = sorted(path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file())
@@ -1646,6 +1752,465 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
             "a byte-code cache reached the deployment package",
         )
         print(f"\nthe trees as committed stage {len(files)} files and the recursive walk refuses nothing in them")
+
+
+class PythonPackageAllowListTests(unittest.TestCase):
+    """Every example that stages Python is packaged by its allow-list. (ADV-W1B-R2-02 / ADV-W1C-R0-01)
+
+    The Python Web Function example was brought onto an allow-list first (SAN-AT-W1B-04); the
+    hello-world and multilang examples still vendored the runtime by *copying every file and
+    skipping a list of names*, so a `.env`, a local `tests/` tree or a `.pytest_cache` in either
+    tree reached the synthesized asset and moved its pinned hash — what an operator deploys depended
+    on what the author happened to leave lying in the tree. All three now stage through
+    `examples/cdk/_shared/python-package-asset.mjs`, which is one rule stated once: the files a
+    package contains are the files its trees name, an importable unit the list does not name fails
+    the build by name, an entry that is not a regular file or a regular directory fails it by name,
+    and the residue Python cannot import stays out in silence.
+
+    That claim is only true of *every* Python asset, so the same rule now builds lambda-packaging's
+    function and layer, and the local-iam and local-tls callers (ADV-W1C-R0-01). Those four assets
+    were still `lambda.Code.fromAsset(handlers/python)` with nothing but a list of names to skip,
+    and a planted `.env` reached them; pointing them at their directories is what the rule exists to
+    replace.
+
+    These tests are the examples' own: they plant the shapes in the trees the staging step declares
+    — read back from the script, so a plant cannot land in a tree the package does not read — and
+    then hold both halves of the rule. Residue that Python cannot import changes neither the asset
+    nor the pinned template hash. A local test tree and a symbolic link are refused by name, because
+    Python imports both from the archive root and neither is a thing the guard can call nothing.
+
+    The importable shapes are the whole of what the rule decides, so each is asserted directly
+    (SAN-AT-W1C-01): a `.py` module, a sourceless `<module>.pyc` kept beside its siblings, an
+    extension module (`.so`, `.pyd`), a package directory and a namespace directory. A sourceless
+    module is the one that used to fall through: the walk listed `.py` files, so a `helper.pyc` was
+    neither declared, refused nor copied, staging exited 0, and the asset could not import a module
+    its own source tree could. The same omission had a second door, which round 1 left open: a
+    `<module>.pyc` inside a `__pycache__` is a module of the namespace package `__pycache__`, so
+    residue is now exactly the tagged cache the interpreter writes and every other byte-code file in
+    a `__pycache__` is refused by name like any other unit.
+    """
+
+    @staticmethod
+    def _example(name: str) -> Path:
+        return harness.ROOT / "examples" / "cdk" / name
+
+    @staticmethod
+    def _pinned(example: Path, stack: str) -> str:
+        pin = (example / "snapshots" / f"{stack}.template.sha256").read_text(encoding="utf-8").strip()
+        if len(pin) != 64:
+            raise harness.HarnessFailure(f"{example.name}: the committed template pin is not a sha256: {pin!r}")
+        return pin
+
+    @staticmethod
+    def _staged_files(result: subprocess.CompletedProcess[str]) -> list[str]:
+        """The files one staging run produced, relative to the staged directory."""
+        staged = Path(result.stdout.strip())
+        return sorted(path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file())
+
+    def _stage(self, example: Path, asset: str | None = None) -> list[str]:
+        """Stage one asset as the stack does, and return the package it built."""
+        result = run_python_package_staging(example, asset)
+        self.assertEqual(
+            0,
+            result.returncode,
+            f"{example.name}: staging refused the trees as committed ({asset or 'default asset'}): "
+            f"{result.stderr.strip()}",
+        )
+        return self._staged_files(result)
+
+    def test_local_only_residue_stays_out_of_the_synthesized_asset(self) -> None:
+        """Residue Python cannot import changes neither the asset nor the pinned hash.
+
+        The trees are read from the staging step, so this asserts the rule where it is applied. The
+        clean synthesis must reproduce the committed pin — that is what makes the pin the oracle —
+        and the planted one must reproduce it byte for byte, with no planted name anywhere in the
+        asset and no file in the asset that the staged package does not hold.
+
+        A tagged byte-code cache is among the plants, at the root of every tree and under a nested
+        `__pycache__`, because it is the one shape inside a `__pycache__` the rule drops in silence
+        and the asset is only byte-identical if dropping it changes nothing (SAN-AT-W1C-01).
+        """
+        cache_name = Path(importlib.util.cache_from_source("helper.py")).name
+        cache_plants: dict[str, str | bytes] = {
+            f"__pycache__/{cache_name}": byte_code_module(),
+            f"nested/__pycache__/{cache_name}": byte_code_module(),
+        }
+        plants: dict[str, str | bytes] = {**PYTHON_LOCAL_ONLY_PLANTS, **cache_plants}
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name, stack = example_spec.name, example_spec.stack
+            with self.subTest(name):
+                example = self._example(name)
+                pinned = self._pinned(example, stack)
+                for asset, trees in python_asset_trees(example):
+                    self.assertEqual(
+                        example_spec.runtime,
+                        trees[-1] == harness.ROOT / "py" / "src" / "apptheory",
+                        f"{name}: the runtime tree is not the last tree of the {asset} package, or it ships "
+                        "a runtime the example does not declare",
+                    )
+                    staged_files = self._stage(example, asset)
+                    with tempfile.TemporaryDirectory(prefix=f"apptheory-{name}-clean-") as clean_dir:
+                        clean = synthesize_example(example, stack, Path(clean_dir), *example_spec.args)
+                        package = python_package_asset(Path(clean_dir), staged_files)
+                        self.assertEqual(
+                            pinned,
+                            clean,
+                            f"{name}: the synthesis of the clean tree does not reproduce the committed pin",
+                        )
+
+                        with planted_local_only_files(trees, plants) as planted:
+                            with tempfile.TemporaryDirectory(prefix=f"apptheory-{name}-planted-") as planted_dir:
+                                observed = synthesize_example(example, stack, Path(planted_dir), *example_spec.args)
+                                self.assertEqual(
+                                    pinned,
+                                    observed,
+                                    f"{name}: local-only files in the packaged trees changed the synthesized "
+                                    f"template (and its asset hash): planted "
+                                    f"{[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                                )
+                                planted_package = python_package_asset(Path(planted_dir), staged_files)
+                                self.assertEqual(
+                                    [],
+                                    self._residue_in(planted_package),
+                                    f"{name}: the synthesized asset carries residue the package does not declare",
+                                )
+                                self.assertEqual(
+                                    [],
+                                    [
+                                        relative
+                                        for relative in python_package_files(planted_package)
+                                        if "__pycache__" in relative or relative.endswith((".pyc", ".pyo"))
+                                    ],
+                                    f"{name}: the synthesized asset carries a byte-code cache, planted as "
+                                    f"{[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                                )
+                                self.assertEqual(
+                                    staged_files,
+                                    python_package_files(planted_package),
+                                    f"{name}: the planted tree and the clean tree staged different packages",
+                                )
+                                print(
+                                    f"\n{name}/{asset}: {len(planted)} local-only files in {len(trees)} trees, "
+                                    f"template still {observed[:12]}, package {planted_package.name} with "
+                                    f"{len(staged_files)} files"
+                                )
+
+    @staticmethod
+    def _residue_in(package: Path) -> list[str]:
+        """Every planted name that reached the asset, at any depth."""
+        names = {"tests"} | {Path(relative).name for relative in PYTHON_LOCAL_ONLY_PLANTS}
+        return sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.name in names)
+
+    def test_the_committed_examples_stage_the_package_they_pin(self) -> None:
+        """The trees as committed pass the rule, and each asset is exactly what staging built.
+
+        A guard that refuses the tree that exists is as broken as one that ships a tree it never
+        read. Every asset of every example stages without complaint, the staged directory holds
+        exactly the declared files and no test module or byte-code cache, and the synthesized asset
+        holds exactly the staged files — one package, no second filtering pass that could add or
+        drop a file after staging.
+        """
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name, stack = example_spec.name, example_spec.stack
+            example = self._example(name)
+            for asset in python_package_assets(example):
+                with self.subTest(f"{name}/{asset}"):
+                    staged_files = self._stage(example, asset)
+                    self.assertEqual(
+                        example_spec.runtime,
+                        "apptheory/__init__.py" in staged_files,
+                        f"{name}: the {asset} package ships the runtime only when the example declares it",
+                    )
+                    self.assertEqual(
+                        [],
+                        [path for path in staged_files if PY_TEST_MODULE_RE.match(Path(path).name)],
+                        f"{name}: the {asset} package ships a test module",
+                    )
+                    self.assertEqual(
+                        [],
+                        [path for path in staged_files if "__pycache__" in path or path.endswith((".pyc", ".pyo"))],
+                        f"{name}: the {asset} package ships a byte-code cache",
+                    )
+            with tempfile.TemporaryDirectory(prefix=f"apptheory-{name}-pin-") as out_dir:
+                synthesized = synthesize_example(example, stack, Path(out_dir), *example_spec.args)
+                self.assertEqual(
+                    self._pinned(example, stack),
+                    synthesized,
+                    f"{name}: the committed template pin is not what the committed trees synthesize",
+                )
+                for asset in python_package_assets(example):
+                    staged_files = self._stage(example, asset)
+                    staged_asset = python_package_asset(Path(out_dir), staged_files)
+                    print(
+                        f"\n{name}/{asset}: {len(staged_files)} files staged, synthesized as pinned, asset "
+                        f"{staged_asset.name} identical"
+                    )
+
+    def test_a_local_test_tree_in_every_tree_is_refused_by_name(self) -> None:
+        """A directory of test modules is importable from the archive root, so it is refused.
+
+        It is not residue: Python imports it exactly like code the package might need, so a guard
+        that dropped it silently would be guessing which unnamed importable unit was meant to ship.
+        The refusal names the directory and the files it would have brought in, in every packaged
+        tree of every example.
+        """
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                for tree in trees:
+                    label = f"{name}: a local test tree in {tree.relative_to(harness.ROOT).as_posix()}"
+                    with self.subTest(label):
+                        plants = {"tests/test_local_only.py": "def test_local_only():\n    assert True\n"}
+                        with planted_local_only_files([tree], plants) as planted:
+                            result = run_python_package_staging(example, asset)
+                        self._assert_refused(result, label, [str(path.relative_to(harness.ROOT)) for path in planted])
+                        self.assertIn("tests/", self._refusal(result), f"{label}: the refusal does not name the tree")
+                        self.assertIn(
+                            "test_local_only.py",
+                            self._refusal(result),
+                            f"{label}: the refusal does not name the files the tree would have brought in",
+                        )
+
+    def test_a_linked_entry_in_every_tree_is_refused_by_name(self) -> None:
+        """A symbolic link is a shape the walk cannot classify, so staging refuses it by name.
+
+        `isFile()` and `isDirectory()` are both false for a link, so a linked module used to be
+        classified as nothing: not checked, not shipped, and staging exited 0 — an import Python
+        would satisfy from the source tree and the asset never could. The rule is the shape of the
+        whole tree, so a link is refused rather than followed, whatever it points at.
+        """
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                # Every declared tree gets both link shapes: a module somewhere in it becomes the
+                # target of a linked module, and its first directory the target of a linked one.
+                for tree in trees:
+                    module = next(iter(sorted(tree.rglob("*.py"))), None)
+                    subdirectory = next((path for path in sorted(tree.iterdir()) if path.is_dir()), None)
+                    cases = []
+                    if module is not None:
+                        cases.append(("a linked module", "linked_local.py", module))
+                    if subdirectory is not None:
+                        cases.append(("a linked directory", "linked_local_dir", subdirectory))
+                    for label, link_name, target in cases:
+                        with self.subTest(f"{name}/{asset}/{tree.name}: {label}"):
+                            with planted_links([(tree, link_name, target)]) as planted:
+                                result = run_python_package_staging(example, asset)
+                            self._assert_refused(
+                                result,
+                                f"{name}: {label} in {tree}",
+                                [str(path.relative_to(harness.ROOT)) for path in planted],
+                            )
+                            self.assertIn(
+                                f"{link_name} (a symbolic link)",
+                                self._refusal(result),
+                                f"{name}: the refusal for {label} does not name the link: {self._refusal(result)}",
+                            )
+                            self.assertIn(
+                                "not a regular file or a regular directory",
+                                self._refusal(result),
+                                f"{name}: the refusal for {label} does not state the rule",
+                            )
+
+    def test_an_undeclared_module_in_every_tree_is_refused_by_name(self) -> None:
+        """Growth is a decision, not a silent omission: an unnamed module stops the build."""
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                for tree in trees:
+                    label = f"{name}: an undeclared module in {tree.relative_to(harness.ROOT).as_posix()}"
+                    with self.subTest(label):
+                        with planted_local_only_files([tree], {"undeclared_growth.py": "VALUE = 1\n"}) as planted:
+                            result = run_python_package_staging(example, asset)
+                        self._assert_refused(result, label, [str(path.relative_to(harness.ROOT)) for path in planted])
+                        self.assertIn(
+                            "undeclared_growth.py",
+                            self._refusal(result),
+                            f"{label}: the refusal does not name the module that made the allow-list incomplete",
+                        )
+
+    def test_a_standalone_byte_code_module_in_every_tree_is_refused_by_name(self) -> None:
+        """A sourceless `<module>.pyc` is importable, so it is shipped or refused, never dropped.
+
+        Python 3 imports a `<module>.pyc` that sits beside its siblings with no `.py` anywhere: it is
+        a module in byte-code form, and the import system loads it exactly like the source it was
+        compiled from. The walk used to list `.py` files only, so a `helper.pyc` in a packaged tree
+        was not declared, not refused and not copied — staging exited 0, the asset shipped without
+        it, and the deployed function failed to import a module its own source tree could
+        (SAN-AT-W1C-01). Every declared tree of every example refuses it by name, which is the only
+        answer that fails closed.
+        """
+        byte_code = byte_code_module()
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                for tree in trees:
+                    label = f"{name}: a sourceless module in {tree.relative_to(harness.ROOT).as_posix()}"
+                    with self.subTest(label):
+                        with planted_local_only_files([tree], {"helper.pyc": byte_code}) as planted:
+                            result = run_python_package_staging(example, asset)
+                        self._assert_refused(result, label, [str(path.relative_to(harness.ROOT)) for path in planted])
+                        self.assertIn(
+                            "helper.pyc",
+                            self._refusal(result),
+                            f"{label}: the refusal does not name the sourceless module it would have dropped",
+                        )
+
+    def test_an_extension_module_in_every_tree_is_refused_by_name(self) -> None:
+        """An extension module is importable from the archive root, so it is named or refused.
+
+        `.so` and `.pyd` are the same module written for the two loader families, and the import
+        system loads either from a directory it has on `sys.path`. A walk that knows only `.py` would
+        leave one behind in silence, so both are planted, and each is refused by name.
+        """
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                for tree in trees:
+                    for planted_name in ("native.so", "native.pyd"):
+                        label = (
+                            f"{name}: an extension module {planted_name} in "
+                            f"{tree.relative_to(harness.ROOT).as_posix()}"
+                        )
+                        with self.subTest(label):
+                            with planted_local_only_files([tree], {planted_name: b"\x7fELF"}) as planted:
+                                result = run_python_package_staging(example, asset)
+                            self._assert_refused(
+                                result, label, [str(path.relative_to(harness.ROOT)) for path in planted]
+                            )
+                            self.assertIn(
+                                planted_name,
+                                self._refusal(result),
+                                f"{label}: the refusal does not name the extension module it would have dropped",
+                            )
+
+    def test_a_byte_code_cache_in_every_tree_stays_out_of_the_package(self) -> None:
+        """A tagged `__pycache__` entry is residue: the interpreter wrote it, and nothing imports it.
+
+        The interpreter writes `<module>.<tag>.pyc` beside the source it compiled, and the import
+        system never loads that name from inside a `__pycache__` — it looks for `<module>.py`,
+        `<module>.pyc` and `<module>.so` in the directory it is importing from. So a tagged cache is
+        dropped in silence, at any depth, in every declared tree of every example, and the package
+        it stages is the one it staged without a cache. The shape is planted as real byte-code:
+        the files are what `py_compile` writes, under the name the running interpreter uses.
+
+        The tag is the whole reason this is residue, so the same directory is not a blanket skip: an
+        untagged `<module>.pyc` there is a namespace-package module and is refused by name, which
+        `test_an_untagged_byte_code_file_in_a_cache_directory_is_refused_by_name` holds.
+        """
+        byte_code = byte_code_module()
+        cache_name = importlib.util.cache_from_source("helper.py")
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                clean = self._stage(example, asset)
+                for tree in trees:
+                    label = f"{name}: a byte-code cache in {tree.relative_to(harness.ROOT).as_posix()}"
+                    with self.subTest(label):
+                        plants = {cache_name: byte_code, f"nested/{cache_name}": byte_code}
+                        with planted_local_only_files([tree], plants) as planted:
+                            result = run_python_package_staging(example, asset)
+                        self.assertEqual(
+                            0,
+                            result.returncode,
+                            f"{label}: staging refused a byte-code cache it should drop in silence: "
+                            f"{result.stderr.strip()}",
+                        )
+                        staged_files = self._staged_files(result)
+                        self.assertEqual(
+                            clean,
+                            staged_files,
+                            f"{label}: the cache changed the package, planted as "
+                            f"{[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                        )
+                        self.assertEqual(
+                            [],
+                            [path for path in staged_files if "__pycache__" in path or path.endswith(".pyc")],
+                            f"{label}: the package ships the cache",
+                        )
+
+    def test_a_source_file_inside_a_cache_directory_is_still_refused(self) -> None:
+        """A cache is residue; a source file that happens to sit in a `__pycache__` is not.
+
+        `__pycache__` is a legal package name, and a `.py` file inside it imports — so a walk that
+        skips the directory wholesale would drop a unit it cannot say is residue. Only byte-code is
+        what the interpreter writes there, so only byte-code is dropped; a source file in the same
+        directory is refused by name like any other undeclared module.
+        """
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                tree = trees[0]
+                label = f"{name}: a source file inside a __pycache__ in {tree.relative_to(harness.ROOT).as_posix()}"
+                with self.subTest(label):
+                    with planted_local_only_files(
+                        [tree], {"__pycache__/smuggled.py": "VALUE = 1\n"}
+                    ) as planted:
+                        result = run_python_package_staging(example, asset)
+                    self._assert_refused(result, label, [str(path.relative_to(harness.ROOT)) for path in planted])
+                    self.assertIn(
+                        "smuggled.py",
+                        self._refusal(result),
+                        f"{label}: the refusal does not name the source file inside the cache directory",
+                    )
+
+    def test_an_untagged_byte_code_file_in_a_cache_directory_is_refused_by_name(self) -> None:
+        """Only the name the interpreter writes is residue; anything else in a `__pycache__` is a unit.
+
+        `__pycache__` is a legal directory name, so `<module>.pyc` inside one is a sourceless module
+        of the namespace package `__pycache__`: Python imports `__pycache__.helper` from it exactly
+        like any other sourceless module. The rule used to drop *every* `.pyc` under a `__pycache__`,
+        so that module was neither declared, refused nor copied — staging exited 0, the synthesized
+        asset omitted it, and the deployed function could not import a module its own tree could
+        (SAN-AT-W1C-01, the half the standalone sourceless case left open). Residue is now exactly
+        the tagged cache form the interpreter writes, `<module>.<implementation>-<version>[.opt-N].pyc`,
+        so an untagged byte-code module is refused by name — at the root of a tree and at depth, in
+        every declared tree of every example — while a tagged cache in the same directory is still
+        dropped in silence.
+        """
+        byte_code = byte_code_module()
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                for tree in trees:
+                    for relative in ("__pycache__/helper.pyc", "nested/__pycache__/helper.pyc"):
+                        label = (
+                            f"{name}: an untagged byte-code module {relative} in "
+                            f"{tree.relative_to(harness.ROOT).as_posix()}"
+                        )
+                        with self.subTest(label):
+                            with planted_local_only_files([tree], {relative: byte_code}) as planted:
+                                result = run_python_package_staging(example, asset)
+                            self._assert_refused(
+                                result, label, [str(path.relative_to(harness.ROOT)) for path in planted]
+                            )
+                            self.assertIn(
+                                "__pycache__/helper.pyc",
+                                self._refusal(result),
+                                f"{label}: the refusal does not name the byte-code module it would have dropped: "
+                                f"{self._refusal(result)}",
+                            )
+
+    def _assert_refused(self, result: subprocess.CompletedProcess[str], label: str, planted: list[str]) -> None:
+        self.assertNotEqual(0, result.returncode, f"staging accepted {label}, planted as {planted}")
+        self.assertTrue(
+            self._refusal(result),
+            f"the staging failure for {label} does not report an error: {result.stderr.strip()}",
+        )
+
+    @staticmethod
+    def _refusal(result: subprocess.CompletedProcess[str]) -> str:
+        """The refusal line staging printed, or an empty string when it printed none."""
+        refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+        return refused[0] if refused else ""
 
 
 class WebFunctionPythonDisconnectTests(unittest.TestCase):

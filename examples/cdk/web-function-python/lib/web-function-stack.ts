@@ -27,18 +27,21 @@ import type { Construct } from "constructs";
  *
  * Lambda imports the entry module from the archive root, so an asset that carries `app/` alone
  * cannot start — the entry module's `from apptheory import ASGIApp` has nothing to import. Staging
- * through the example's own script instead of pointing the asset at `app/` is what keeps the
- * synthesized package and the running package the same thing.
+ * through the allow-list instead of pointing the asset at `app/` is what keeps the synthesized
+ * package and the running package the same thing.
  *
- * The script's allow-list is the whole bound on what deploys: the directory it prints holds exactly
- * the application's modules and the runtime's modules and package data, and nothing else. No
- * patterns filter the asset afterwards, because a pattern list is a list of things to skip — it can
- * only exclude the residue someone anticipated, and byte-code caches, local test trees or a `.env`
- * nobody anticipated would still reach the archive.
+ * The allow-list is the whole bound on what deploys, and it is one rule for every example that
+ * ships Python: `examples/cdk/_shared/python-package-asset.mjs` holds each packaged tree to the
+ * files it names and stages exactly those, so the directory it prints holds the application's
+ * modules and the runtime's modules and package data, and nothing else. No patterns filter the
+ * asset afterwards, because a pattern list is a list of things to skip — it can only exclude the
+ * residue someone anticipated, and byte-code caches, local test trees or a `.env` nobody
+ * anticipated would still reach the archive.
  */
 function stagePythonPackage(): string {
-  const script = path.join(__dirname, "..", "scripts", "stage-asset.mjs");
-  return execFileSync(process.execPath, [script], { encoding: "utf8" }).trim();
+  const example = path.join(__dirname, "..");
+  const script = path.join(example, "..", "_shared", "python-package-asset.mjs");
+  return execFileSync(process.execPath, [script, example], { encoding: "utf8" }).trim();
 }
 
 export class WebFunctionPythonStack extends Stack {

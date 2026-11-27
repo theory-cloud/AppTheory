@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import * as path from "node:path";
 
 import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
@@ -10,6 +10,21 @@ import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
+
+/**
+ * Stage the deployment package the Python caller ships: the module its allow-list names.
+ *
+ * Lambda imports the entry module from the archive root, so the archive is exactly the declared
+ * files of `handlers/python` — built by `examples/cdk/_shared/python-package-asset.mjs`, the one
+ * rule every Python asset under `examples/cdk/` is built by. The asset used to be pointed at the
+ * directory with a list of names to skip, and a planted `.env` reached it; a skip list can only
+ * exclude the residue somebody anticipated. The caller imports the standard library only, so the
+ * AppTheory runtime is not part of this package.
+ */
+function stagePythonCaller(exampleDir: string): string {
+  const script = path.join(exampleDir, "..", "_shared", "python-package-asset.mjs");
+  return execFileSync(process.execPath, [script, exampleDir], { encoding: "utf8" }).trim();
+}
 
 // The local-TLS example declares every public listener the local runner
 // serves: an HTTP API, a REST API, a Function URL, a WebSocket API and a
@@ -105,9 +120,7 @@ export class LocalTlsStack extends Stack {
       description: "Python caller: fetches discovery and JWKS over verified TLS",
       timeout: Duration.seconds(20),
       environment: { APPTHEORY_LOCAL_TLS_ROLE: "caller-py" },
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "python"), {
-        exclude: ["__pycache__", "**/__pycache__", "*.pyc", "**/*.pyc"],
-      }),
+      code: lambda.Code.fromAsset(stagePythonCaller(path.join(__dirname, ".."))),
     });
 
     // The AWS SDK rows read a table the run provisions, so the DynamoDB call
