@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 0.75,
-      "executed": false,
+      "durationSeconds": 4.15,
+      "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-26T16:35:59Z",
+      "finishedAt": "2026-11-27T04:35:44Z",
       "id": "py-build",
-      "inputsDigest": "sha256:aa6874bdd05efaf541a35fd3b886c791754f5affcb27d3214a1b8be3115995c8",
-      "logDigest": "sha256:fd155253ad38919a2db937467c457d4ef2e8819cab72bc3a15ec891a1af4f0ad",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261126T163558Z-89022.log",
-      "reused": true,
-      "startedAt": "2026-11-26T16:35:58Z"
+      "inputsDigest": "sha256:04082af01c9b9aefb4c5df17a95509d0f534cada0e7f3977eab1921c8271c222",
+      "logDigest": "sha256:6e08e37a40706afa6769ace14ed997fb351caff2a3d88a1bb5d7566253ccff48",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261127T043540Z-59521.log",
+      "reused": false,
+      "startedAt": "2026-11-27T04:35:40Z"
     }
   ],
   "consumed": [],
@@ -36,18 +36,18 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-26T19:13:56Z",
+  "recordedAt": "2026-11-27T04:35:44Z",
   "releaseOnly": {
-    "digest": "sha256:bcbd1ab6ea7ac6a3317b2535995438cb920fd00d345290d99c4d139aa47d7a5a",
-    "fileCount": 546,
-    "normalizedDigest": "sha256:78a72278b93ac2f5e5515fcf6ad025ec8823cf368450a5ecae6dff7d001f942c",
+    "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
+    "fileCount": 549,
+    "normalizedDigest": "sha256:61b495727ef251b66d265d7a811254d48fe9718b8256e4c4fa833c2186775840",
     "version": "7.5.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:d01f78b9b3a0eb0b49ef0af1d5c0a037a47dad2e8f97bdb0a5e7ff2665a6e3b2",
-    "fileCount": 134,
+    "digest": "sha256:ed7bb813105286096ff09598a794169ea016b834a9ef0bce65d099f9966f28e1",
+    "fileCount": 136,
     "paths": [
       "py/",
       "scripts/verify-python-build.sh",
@@ -56,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:b06aed6d23473baa48c1769cdd403583207fe4dfa14dae14b653153271d59f30",
-    "fileCount": 2835
+    "digest": "sha256:96e53eb84c7a2ab194d61dcc33dd79150c93c0622dada4c68b90fcf1c2be0180",
+    "fileCount": 2851
   },
   "verdict": "PASS"
 }
