@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -193,9 +194,10 @@ class RealTreeTests(unittest.TestCase):
         # five co-residence/declared-port rows, the two mail-surface rows and
         # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
         # executing), the two LOCAL-W3-X6 rows with the versioning handler
-        # they cover, and the three Python Web Function rows: the ASGI entry
-        # point, the WSGI entry point and the local WSGI server that serves it.
-        self.assertEqual(152, len(classified))
+        # they cover, the three Python Web Function rows: the ASGI entry
+        # point, the WSGI entry point and the local WSGI server that serves it,
+        # and the staging script that builds the package the stack ships.
+        self.assertEqual(153, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -679,6 +681,496 @@ class WebFunctionPythonDeliveryControlTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("so one request read another's state", message)
         print(f"\npython module-level-tag control output: {message}")
+
+
+def clean_python_env(**overrides: str) -> dict[str, str]:
+    """An environment that cannot import AppTheory from anywhere the command does not name.
+
+    The launch commands the example documents are written for an operator's own interpreter, so the
+    only things this removes are what a developer's shell might carry: an inherited `PYTHONPATH`
+    (which would make the example importable from a directory the command never names) and the
+    `AWS_*` surface the rows never use. `PATH` is pinned to the interpreter running these tests
+    first, so `python3` in a documented command is the interpreter the harness dependency set
+    belongs to.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "PYTHONPATH" and not key.startswith("AWS_")
+    }
+    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+    env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env.update(overrides)
+    return env
+
+
+def apptheory_is_importable(env: dict[str, str], cwd: Path) -> bool:
+    """Whether a bare ``import apptheory`` works in this environment."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import apptheory"],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def ephemeral_port() -> int:
+    """A port nothing is listening on right now, for a server about to bind it."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+class StartedServer:
+    """A server process started for one test, with the port waited for and its output captured."""
+
+    def __init__(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        port: int,
+        label: str,
+        seconds: int = 120,
+    ) -> None:
+        self.command = command
+        self.cwd = cwd
+        self.env = env
+        self.port = port
+        self.label = label
+        self.seconds = seconds
+        self.process: subprocess.Popen | None = None
+        self._log = tempfile.NamedTemporaryFile(prefix="apptheory-self-test-", suffix=".log", delete=False)
+
+    def __enter__(self) -> "StartedServer":
+        self.process = subprocess.Popen(
+            self.command,
+            cwd=str(self.cwd),
+            env=self.env,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            harness._wait_for_tcp(self.process, self.port, seconds=self.seconds, label=self.label)
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def output(self) -> str:
+        self._log.flush()
+        return Path(self._log.name).read_text(encoding="utf-8", errors="replace")
+
+    def __exit__(self, *_exc: object) -> None:
+        if self.process is not None:
+            harness._stop_process(self.process)
+        self._log.close()
+        try:
+            os.unlink(self._log.name)
+        except FileNotFoundError:
+            pass
+
+
+def documented_cd(cwd: Path, command: str) -> Path:
+    """Apply the `cd` steps of a documented shell command and return where it ends up."""
+    target = cwd
+    for directory in re.findall(r"(?:^|&&\s*)cd\s+(\S+)", command):
+        target = (target / directory).resolve()
+    return target
+
+
+ASGI_DISCONNECT_PROBE = '''
+"""A streaming AppTheory application that records how far its producer got."""
+from __future__ import annotations
+
+import os
+
+import time
+
+from apptheory import Response, SSEEvent, SecureApp, public, sse_event_stream
+
+TICKS = 200
+TICK_SECONDS = 0.05
+STATE = os.environ["PROBE_STATE"]
+
+
+def record(line: str) -> None:
+    with open(STATE, "a", encoding="utf-8") as handle:
+        handle.write(line + "\\n")
+
+
+def events():
+    try:
+        for tick in range(1, TICKS + 1):
+            record(f"tick {tick}")
+            yield SSEEvent(event="tick", data={"tick": tick})
+            time.sleep(TICK_SECONDS)
+        record("done")
+    finally:
+        record("closed")
+
+
+def build_app() -> SecureApp:
+    app = SecureApp()
+
+    def stream(_ctx) -> Response:
+        return Response(
+            status=200,
+            headers={"content-type": ["text/event-stream"], "cache-control": ["no-store"]},
+            cookies=[],
+            body=b"",
+            is_base64=False,
+            body_stream=sse_event_stream(events()),
+        )
+
+    app.get("/stream", stream, public())
+    return app
+'''
+
+ASGI_PROBE_MAIN = '''
+from __future__ import annotations
+
+from apptheory import ASGIApp
+
+from probe_stream import build_app
+
+app = ASGIApp(build_app())
+'''
+
+WSGI_PROBE_MAIN = '''
+from __future__ import annotations
+
+from apptheory import WSGIApp
+
+from probe_stream import build_app
+
+application = WSGIApp(build_app())
+'''
+
+# How many of the probe's 200 ticks may be produced after the client goes away. The full stream
+# takes ten seconds; a wrapper that keeps producing after the disconnect reaches 200, and one that
+# stops at the first chunk boundary stays in single digits.
+DISCONNECT_TICK_CEILING = 100
+DISCONNECT_CLOSE_SECONDS = 8.0
+
+
+def producer_state(state: Path) -> list[str]:
+    """The lines the probe's producer has written so far."""
+    if not state.exists():
+        return []
+    return state.read_text(encoding="utf-8").splitlines()
+
+
+def wait_for_producer_close(state: Path, *, seconds: float = DISCONNECT_CLOSE_SECONDS) -> float:
+    """Wait for the producer to report its close, and return how long that took."""
+    started = time.monotonic()
+    deadline = started + seconds
+    while time.monotonic() < deadline:
+        if "closed" in producer_state(state):
+            return time.monotonic() - started
+        time.sleep(0.02)
+    raise harness.HarnessFailure(
+        f"the producer had not closed {seconds:.0f}s after the client went away "
+        f"(it had produced {len(producer_ticks(state))} chunks)"
+    )
+
+
+def producer_ticks(state: Path) -> list[int]:
+    """The ticks the producer emitted, in order."""
+    ticks = []
+    for line in producer_state(state):
+        if line.startswith("tick "):
+            ticks.append(int(line.split()[1]))
+    return ticks
+
+
+class WebFunctionPythonLaunchTests(unittest.TestCase):
+    """The example's launch commands work as written, and the rows reach AppTheory the same way.
+
+    SAN-AT-W1B-01: both documented commands were one directory short of `py/src`, and no row could
+    see it because the harness injected `<repo>/py/src` itself as an absolute path. The README's
+    fenced block is now the single source of truth: these tests read the commands out of the
+    README, hold the row constants to the same relative expression, and run the commands as written
+    in an environment with no ambient AppTheory install.
+    """
+
+    def setUp(self) -> None:
+        self.commands = harness.web_function_python_launch_commands()
+        self.example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+
+    def test_the_rows_reach_apptheory_by_the_documented_path(self) -> None:
+        """Both sides must land on this checkout's `py/src`, spelled the way their directory needs.
+
+        The rows and the README run from different directories, so comparing the two relative
+        expressions would be comparing the wrong thing. What has to match is where they arrive: a
+        row that injects a path the README never names is exactly the masking this finding was.
+        """
+        expected = (harness.ROOT / "py" / "src").resolve()
+        row_paths = {
+            "asgi": (harness.WEB_FUNCTION_PYTHON_ASGI_APP / harness.WEB_FUNCTION_PYTHON_PYTHONPATH["asgi"]).resolve(),
+            "wsgi": (harness.WEB_FUNCTION_PYTHON_EXAMPLE / harness.WEB_FUNCTION_PYTHON_PYTHONPATH["wsgi"]).resolve(),
+        }
+        for label, command in zip(("asgi", "wsgi"), self.commands, strict=True):
+            documented = documented_cd(self.example, command)
+            resolved = (documented / harness.web_function_python_launch_pythonpath(command)).resolve()
+            self.assertEqual(
+                expected,
+                resolved,
+                f"the documented {label} command puts {resolved} on PYTHONPATH instead of {expected}",
+            )
+            self.assertTrue(
+                (resolved / "apptheory" / "__init__.py").is_file(),
+                f"{command} puts {resolved} on PYTHONPATH, which holds no apptheory package",
+            )
+            self.assertEqual(
+                expected,
+                row_paths[label],
+                f"the {label} row reaches AppTheory by a path the README does not document",
+            )
+
+    def test_the_documented_asgi_command_serves_without_an_apptheory_install(self) -> None:
+        self._run_documented_launch(0, label="asgi")
+
+    def test_the_documented_wsgi_command_serves_without_an_apptheory_install(self) -> None:
+        self._run_documented_launch(1, label="wsgi")
+
+    def _run_documented_launch(self, index: int, *, label: str) -> None:
+        command = self.commands[index]
+        port = 3000  # the port both documented commands name
+        self.assertFalse(
+            harness.port_open("127.0.0.1", port, timeout=0.25),
+            f"something is already listening on 127.0.0.1:{port}, so the documented launch command "
+            f"cannot be run as written: {command}",
+        )
+        env = clean_python_env()
+        self.assertFalse(
+            apptheory_is_importable(env, self.example),
+            "this test needs an environment with no ambient AppTheory install",
+        )
+
+        marker = (
+            f"Uvicorn running on http://127.0.0.1:{port}"
+            if label == "asgi"
+            else f"web-function wsgi listening on 127.0.0.1:{port}"
+        )
+        with StartedServer(
+            ["bash", "-c", command],
+            cwd=self.example,
+            env=env,
+            port=port,
+            label=f"documented {label} launch command",
+        ) as server:
+            page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", label)
+            stream = harness._assert_web_function_python_stream(f"http://127.0.0.1:{port}", label)
+            output = server.output()
+        self.assertIn(marker, output, f"the documented {label} command did not report its startup")
+        print(f"\ndocumented {label} command, run as written: {command}\n  {page}; {stream}")
+
+
+class WebFunctionPythonPackageTests(unittest.TestCase):
+    """The package the stack stages is the package that would run.
+
+    SAN-AT-W1B-02: the stack staged `app/` alone, so neither entry point could import `apptheory`
+    from the staged asset, and the README described a build directory nothing staged. The stack now
+    stages what `scripts/stage-asset.mjs` builds; these tests build that directory and prove both
+    entry points import and serve from it with no other AppTheory on the path.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.stage = cls._stage()
+
+    @classmethod
+    def _stage(cls) -> Path:
+        script = harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"
+        self_check = shutil.which("node")
+        if self_check is None:
+            raise harness.HarnessFailure("staging the Python package needs node on PATH")
+        result = subprocess.run(
+            [self_check, str(script)],
+            cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise harness.HarnessFailure(f"staging the Python package failed: {result.stderr.strip()}")
+        return Path(result.stdout.strip())
+
+    def test_the_staged_package_holds_the_application_and_the_runtime(self) -> None:
+        for name in ("main.py", "main_wsgi.py", "lib/application.py"):
+            self.assertTrue((self.stage / name).is_file(), f"the staged package is missing {name}")
+        self.assertTrue(
+            (self.stage / "apptheory" / "__init__.py").is_file(),
+            "the staged package does not carry the AppTheory runtime",
+        )
+        caches = [path for path in self.stage.rglob("__pycache__")] + list(self.stage.rglob("*.pyc"))
+        self.assertEqual([], [str(path) for path in caches], "a byte-code cache reached the staged package")
+
+    def test_both_entry_points_import_from_the_staged_package_alone(self) -> None:
+        env = clean_python_env(PYTHONPATH=str(self.stage))
+        self.assertFalse(
+            apptheory_is_importable(clean_python_env(), Path(tempfile.gettempdir())),
+            "this test needs an environment with no ambient AppTheory install",
+        )
+        for module in ("main", "main_wsgi"):
+            result = subprocess.run(
+                [sys.executable, "-c", f"import {module}"],
+                cwd=str(self.stage),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, f"import {module} from the staged package: {result.stderr}")
+        print(f"\nthe staged package imported both entry points from {self.stage}")
+
+    def test_the_staged_package_serves_the_asgi_entry_point(self) -> None:
+        port = ephemeral_port()
+        # No PYTHONPATH at all: the package root is the import root, which is what Lambda gives it.
+        env = clean_python_env()
+        env.pop("PYTHONPATH", None)
+        with StartedServer(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--log-level",
+                "warning",
+            ],
+            cwd=self.stage,
+            env=env,
+            port=port,
+            label="staged package ASGI entry point",
+        ):
+            page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", "staged asgi")
+            stream = harness._assert_web_function_python_stream(f"http://127.0.0.1:{port}", "staged asgi")
+        print(f"\nstaged package, ASGI: {page}; {stream}")
+
+    def test_the_staged_package_serves_the_wsgi_entry_point(self) -> None:
+        port = ephemeral_port()
+        # No PYTHONPATH either: `serve-wsgi.py` puts the package it is given on the path and the
+        # entry module imports the runtime from beside itself, which is the deployed layout.
+        env = clean_python_env(PORT=str(port))
+        env.pop("PYTHONPATH", None)
+        with StartedServer(
+            [sys.executable, str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "serve-wsgi.py"), str(self.stage)],
+            cwd=self.stage,
+            env=env,
+            port=port,
+            label="staged package WSGI entry point",
+        ):
+            page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", "staged wsgi")
+        print(f"\nstaged package, WSGI: {page}")
+
+
+class WebFunctionPythonDisconnectTests(unittest.TestCase):
+    """A client that leaves mid-response releases the producer, under real servers.
+
+    SAN-AT-W1B-03 / ADV-W1B-01: uvicorn does not fail a send on a dead transport, so the ASGI wrapper
+    has to watch `receive()` for `http.disconnect`; the WSGI direction already released because the
+    server's write fails and the iterable is closed. Both directions are driven here through the
+    real servers the rows use, against a probe application that records how far its producer got.
+    """
+
+    def test_an_asgi_client_that_goes_away_stops_the_producer(self) -> None:
+        port = ephemeral_port()
+        with self._probe() as (directory, state):
+            env = clean_python_env(
+                PYTHONPATH=str(harness.ROOT / "py" / "src"),
+                PROBE_STATE=str(state),
+            )
+            with StartedServer(
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "main:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--log-level",
+                    "warning",
+                ],
+                cwd=directory,
+                env=env,
+                port=port,
+                label="ASGI disconnect probe server",
+            ):
+                self._read_one_chunk_and_leave(port, "asgi")
+                elapsed = wait_for_producer_close(state)
+        ticks = producer_ticks(state)
+        self.assertLess(
+            len(ticks),
+            DISCONNECT_TICK_CEILING,
+            f"the ASGI producer ran on after the client went away: {len(ticks)} of 200 chunks, "
+            f"released after {elapsed:.2f}s",
+        )
+        self.assertNotIn("done", producer_state(state), "the ASGI producer ran to the end of a response nobody read")
+        print(f"\nasgi disconnect: producer released {elapsed:.2f}s after the client left, at chunk {len(ticks)} of 200")
+
+    def test_a_wsgi_client_that_goes_away_stops_the_producer(self) -> None:
+        port = ephemeral_port()
+        with self._probe() as (directory, state):
+            env = clean_python_env(
+                PYTHONPATH=str(harness.ROOT / "py" / "src"),
+                PROBE_STATE=str(state),
+                PORT=str(port),
+            )
+            with StartedServer(
+                [
+                    sys.executable,
+                    str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "serve-wsgi.py"),
+                    str(directory),
+                ],
+                cwd=directory,
+                env=env,
+                port=port,
+                label="WSGI disconnect probe server",
+            ):
+                self._read_one_chunk_and_leave(port, "wsgi")
+                elapsed = wait_for_producer_close(state)
+        ticks = producer_ticks(state)
+        self.assertLess(
+            len(ticks),
+            DISCONNECT_TICK_CEILING,
+            f"the WSGI producer ran on after the client went away: {len(ticks)} of 200 chunks, "
+            f"released after {elapsed:.2f}s",
+        )
+        self.assertNotIn("done", producer_state(state), "the WSGI producer ran to the end of a response nobody read")
+        print(f"\nwsgi disconnect: producer released {elapsed:.2f}s after the client left, at chunk {len(ticks)} of 200")
+
+    @contextlib.contextmanager
+    def _probe(self) -> object:
+        """A temporary probe application, with the file its producer records into."""
+        directory = Path(tempfile.mkdtemp(prefix="apptheory-web-function-probe-"))
+        try:
+            write(directory, "probe_stream.py", ASGI_DISCONNECT_PROBE)
+            write(directory, "main.py", ASGI_PROBE_MAIN)
+            write(directory, "main_wsgi.py", WSGI_PROBE_MAIN)
+            yield directory, directory / "producer-state.txt"
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def _read_one_chunk_and_leave(self, port: int, label: str) -> None:
+        """Open the stream, read one chunk, and close the connection: the client is gone."""
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
+            client.sendall(b"GET /stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            first = client.recv(4096)
+        if not first:
+            raise harness.HarnessFailure(f"the {label} probe stream sent nothing before the client left")
 
 
 class AwsCLIRequirementTests(unittest.TestCase):

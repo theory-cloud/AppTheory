@@ -943,6 +943,11 @@
    "class": "L2",
    "description": "Local stand-in for the server Lambda manages for a WSGI Web Function: the standard library's WSGI server with a threading mixin binds the lane's port and calls the example's wsgi:main_wsgi:application callable, which is the entry point the web-function-python-wsgi row drives."
   },
+  "examples/cdk/web-function-python/scripts/stage-asset.mjs": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Builds the deployment package the stack stages: app/ at the archive root with the AppTheory runtime copied in beside it, byte-code caches skipped, rebuilt from scratch on every synthesis. The synth row hash-checks the template that stages it, and the harness self-tests build it and run both entry points out of it with no AppTheory on the path."
+  },
   "examples/mcp/resumable-sse/main.go": {
    "run": "mcp-go-resumable-sse",
    "class": "L2",

@@ -9,7 +9,11 @@ with each request running in its own thread".
 It is a convenience for running the example on a laptop. The deployment package does not use it,
 and no revision reads it: Lambda loads ``main_wsgi:application`` itself.
 
-Usage: PORT=8000 python scripts/serve-wsgi.py
+Usage: PORT=8000 python scripts/serve-wsgi.py [APP_DIR]
+
+``APP_DIR`` defaults to the example's ``app/`` directory and exists so the package the stack stages
+— which carries the same entry module beside the vendored runtime — can be served exactly as it
+would be after deployment.
 """
 
 from __future__ import annotations
@@ -20,7 +24,8 @@ import sys
 from pathlib import Path
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
-APP_DIR = Path(__file__).resolve().parents[1] / "app"
+DEFAULT_APP_DIR = Path(__file__).resolve().parents[1] / "app"
+APP_DIR = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_APP_DIR
 sys.path.insert(0, str(APP_DIR))
 
 from main_wsgi import application  # noqa: E402

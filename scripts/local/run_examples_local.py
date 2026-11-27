@@ -1619,11 +1619,51 @@ def _assert_web_function_overlap(base: str) -> str:
 # point, and the standard library's WSGI server with a threading mixin (one worker thread per
 # request) for the WSGI one. Nothing is simulated: no AWS call, no container, no adapter.
 
-WEB_FUNCTION_PYTHON_ASGI_APP = ROOT / "examples" / "cdk" / "web-function-python" / "app"
-WEB_FUNCTION_PYTHON_WSGI_SERVER = "examples/cdk/web-function-python/scripts/serve-wsgi.py"
+WEB_FUNCTION_PYTHON_EXAMPLE = ROOT / "examples" / "cdk" / "web-function-python"
+WEB_FUNCTION_PYTHON_ASGI_APP = WEB_FUNCTION_PYTHON_EXAMPLE / "app"
+WEB_FUNCTION_PYTHON_WSGI_SERVER = "scripts/serve-wsgi.py"
+# How each row reaches AppTheory, exactly as the example's README documents it: the same `cd`, the
+# same relative PYTHONPATH, resolved from that directory. The rows used to inject
+# `<repo>/py/src` as an absolute path, which meant a documented command could be one directory
+# short and every row would still pass; `WebFunctionPythonLaunchTests` now holds the README and
+# these constants together.
+WEB_FUNCTION_PYTHON_PYTHONPATH = {"asgi": "../../../../py/src", "wsgi": "../../../py/src"}
+WEB_FUNCTION_PYTHON_README = WEB_FUNCTION_PYTHON_EXAMPLE / "README.md"
+WEB_FUNCTION_PYTHON_LAUNCH_SECTION = "## Run the application on its own"
 WEB_FUNCTION_PYTHON_TICKS = 4
 WEB_FUNCTION_PYTHON_TICK_SECONDS = 0.12
 WEB_FUNCTION_PYTHON_MARKER = "AppTheory Python Web Function"
+
+
+def web_function_python_launch_commands() -> list[str]:
+    """Return the launch commands the example's README documents, in order.
+
+    The section is a single bash fence whose lines are the commands an author copy-pastes: one for
+    the ASGI entry point, one for the WSGI one. Reading them out of the README is what lets a
+    self-test run the documented command rather than a paraphrase of it.
+    """
+    text = WEB_FUNCTION_PYTHON_README.read_text(encoding="utf-8")
+    section = text.split(WEB_FUNCTION_PYTHON_LAUNCH_SECTION, 1)
+    if len(section) != 2:
+        raise HarnessFailure(f"the example README has no {WEB_FUNCTION_PYTHON_LAUNCH_SECTION!r} section")
+    body = section[1].split("```", 2)
+    if len(body) < 3:
+        raise HarnessFailure("the launch section of the example README has no fenced command block")
+    fence = body[1].splitlines()
+    if fence and fence[0].strip() in {"bash", "sh", "console", "shell"}:
+        fence = fence[1:]
+    commands = [line.strip() for line in fence if line.strip() and not line.strip().startswith("#")]
+    if len(commands) != 2:
+        raise HarnessFailure(f"the launch section documents {len(commands)} commands, expected 2")
+    return commands
+
+
+def web_function_python_launch_pythonpath(command: str) -> str:
+    """Return the PYTHONPATH a documented launch command sets."""
+    match = re.search(r"\bPYTHONPATH=(\S+)", command)
+    if not match:
+        raise HarnessFailure(f"the documented launch command sets no PYTHONPATH: {command}")
+    return match.group(1)
 
 
 def run_web_function_python(harness: Harness) -> str:
@@ -1646,6 +1686,7 @@ def run_web_function_python(harness: Harness) -> str:
         ],
         cwd=WEB_FUNCTION_PYTHON_ASGI_APP,
         startup_marker=f"Uvicorn running on http://127.0.0.1:{harness.port_base}",
+        pythonpath=WEB_FUNCTION_PYTHON_PYTHONPATH["asgi"],
     )
 
 
@@ -1657,8 +1698,9 @@ def run_web_function_python_wsgi(harness: Harness) -> str:
         label="wsgi",
         port=port,
         command=[sys.executable, WEB_FUNCTION_PYTHON_WSGI_SERVER],
-        cwd=ROOT,
+        cwd=WEB_FUNCTION_PYTHON_EXAMPLE,
         startup_marker=f"web-function wsgi listening on 127.0.0.1:{port}",
+        pythonpath=WEB_FUNCTION_PYTHON_PYTHONPATH["wsgi"],
     )
 
 
@@ -1670,14 +1712,15 @@ def _run_web_function_python(
     command: list[str],
     cwd: Path,
     startup_marker: str,
+    pythonpath: str,
 ) -> str:
     base = f"http://127.0.0.1:{port}"
     env = dict(harness.env)
-    # The application imports AppTheory from the source tree it lives beside; a deployment packages
-    # the wheel at the archive root instead.
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "py" / "src")] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
-    )
+    # The application imports AppTheory the way the README's own command does — the relative path in
+    # `WEB_FUNCTION_PYTHON_PYTHONPATH`, resolved from this row's working directory. Nothing here
+    # adds an absolute path of the harness's own, because that would hide a documented command that
+    # does not reach AppTheory. A deployment packages the runtime into the archive root instead.
+    env["PYTHONPATH"] = pythonpath
     env["PORT"] = str(port)
     # Both servers import the application from the tree the synth gate fingerprints, so a byte-code
     # cache would write into the asset between two synth runs and move its pinned hash. Keep the
