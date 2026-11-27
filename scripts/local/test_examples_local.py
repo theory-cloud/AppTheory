@@ -1412,6 +1412,11 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
                 {"oauth/nesteddir/helper.py": "VALUE = 2\n"},
                 ("oauth/nesteddir/", "a namespace package the allow-list does not walk"),
             ),
+            "a module in a walked directory that the allow-list does not name": (
+                runtime,
+                {"oauth/extra.py": "VALUE = 2\n"},
+                ("oauth/extra.py", "a module the allow-list does not name"),
+            ),
             "a namespace package at the runtime root": (
                 runtime,
                 {"nsx/mod.py": "VALUE = 3\n"},
