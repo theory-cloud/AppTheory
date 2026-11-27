@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-builds.sh"
       ],
-      "durationSeconds": 63.158,
+      "durationSeconds": 65.656,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-27T09:17:47Z",
+      "finishedAt": "2026-11-27T10:04:25Z",
       "id": "deterministic-builds",
-      "inputsDigest": "sha256:7bc0ec8c5f08cd3b02939398271a41b3d41364d884ab91cc2515074cc2b7d61a",
-      "logDigest": "sha256:0953d949c6f6ae80891a757c899620494b5748e891ec51001893151b6fbfbe63",
-      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261127T091643Z-82095.log",
+      "inputsDigest": "sha256:743b381c369ebd74e3043bae471bbe145046ec1f921a533943094f9816f2ee37",
+      "logDigest": "sha256:8fb22d386c72b932eb1f0d03f4ee25c57af4e30a478845e5f11719d42b087691",
+      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261127T100320Z-57686.log",
       "reused": false,
-      "startedAt": "2026-11-27T09:16:43Z"
+      "startedAt": "2026-11-27T10:03:20Z"
     }
   ],
   "consumed": [],
@@ -36,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-27T09:17:47Z",
+  "recordedAt": "2026-11-27T10:04:25Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -46,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:62eb7747f33496d460cdbb1fa0fb3798950d22c610a27614bc7cd47b4c7b5412",
+    "digest": "sha256:fe0f4a1636cada7a36c45076d72693127d2eed62c18e15b9080dbc2efeb302b6",
     "fileCount": 960,
     "paths": [
       "VERSION",
@@ -69,7 +69,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:a1e198b5976c7d8d6e815f10865a1f4b50d37ef43de5d863dd75724db3cb1442",
+    "digest": "sha256:21ecdd0b6fa165d85a77ea6455470b3849779c67b18d21173504126d10515289",
     "fileCount": 2852
   },
   "verdict": "PASS"
