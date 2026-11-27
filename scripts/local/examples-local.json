@@ -921,6 +921,28 @@
    "class": "I",
    "description": "Web Function CDK app, synthesized and hash-checked with focused assertions: two compositions over one application, an IamAuth endpoint and an ApplicationManaged opt-in, each with its own revision and a single-revision weight of 100."
   },
+  "examples/cdk/web-function-python/app/main.py": {
+   "run": "web-function-python",
+   "class": "L2",
+   "gap": "The application runs under uvicorn, a host ASGI server, not under the Lambda Web Function service: endpoint TLS termination on 443, the service's lambda-web-request-id correlation header, the 10-second startup bound, the 2 GB environment memory and the service's enforcement of maxConcurrencyPerEnvironment are not reproduced; the request id on each response is therefore the runtime's own rather than the service's. Isolation is exercised by two overlapping streams inside one process on one event loop, which is the unit the runtime contract is written against, not the service's full fan-out.",
+   "description": "AppTheory Python Web Function ASGI entry point: the example's apptheory.ASGIApp is served by the real uvicorn ASGI server (one event loop, concurrent requests) through the deployment package's own main:app entry point, and the page arrives as text/html with health 200 and an unknown route 404; a server-sent event response is delivered chunk by chunk with no content-length (the row observes the first event 0.24s before the last), and two overlapping streams in one environment each carry only their own tag and their own 1..4 tick sequence."
+  },
+  "examples/cdk/web-function-python/app/main_wsgi.py": {
+   "run": "web-function-python-wsgi",
+   "class": "L2",
+   "gap": "The application runs under the Python standard library's WSGI server with a threading mixin, not under the Lambda Web Function service: the service's own HTTP server, TLS termination on 443, the lambda-web-request-id header, the 10-second startup bound and the 2 GB environment memory are not reproduced, and connection handling differs from the service's server. Requests are answered one worker thread each, which is upstream's WSGI model, not the service's full fan-out.",
+   "description": "AppTheory Python Web Function WSGI entry point: the example's apptheory.WSGIApp is called by the standard library's threaded WSGI server (one worker thread per request) through the deployment package's own wsgi:main_wsgi:application callable, and the page arrives as text/html with health 200 and an unknown route 404; a server-sent event response is delivered chunk by chunk with no content-length, and two overlapping requests each carry only their own tag and their own 1..4 tick sequence."
+  },
+  "examples/cdk/web-function-python/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Python Web Function CDK app, synthesized and hash-checked with focused assertions: one application served twice, an ASGI composition and a WSGI composition, each with its own python3.15 revision carrying asgi:main:app or wsgi:main_wsgi:application, and an IamAuth endpoint pinned to a single revision of weight 100."
+  },
+  "examples/cdk/web-function-python/scripts/serve-wsgi.py": {
+   "coveredBy": "examples/cdk/web-function-python/app/main_wsgi.py",
+   "class": "L2",
+   "description": "Local stand-in for the server Lambda manages for a WSGI Web Function: the standard library's WSGI server with a threading mixin binds the lane's port and calls the example's wsgi:main_wsgi:application callable, which is the entry point the web-function-python-wsgi row drives."
+  },
   "examples/mcp/resumable-sse/main.go": {
    "run": "mcp-go-resumable-sse",
    "class": "L2",

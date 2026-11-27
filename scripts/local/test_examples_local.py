@@ -192,9 +192,10 @@ class RealTreeTests(unittest.TestCase):
         # LOCAL-W3-M1 resource-type rows, the fourteen narrow-IAM rows, the
         # five co-residence/declared-port rows, the two mail-surface rows and
         # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
-        # executing), and the two LOCAL-W3-X6 rows with the versioning handler
-        # they cover.
-        self.assertEqual(148, len(classified))
+        # executing), the two LOCAL-W3-X6 rows with the versioning handler
+        # they cover, and the three Python Web Function rows: the ASGI entry
+        # point, the WSGI entry point and the local WSGI server that serves it.
+        self.assertEqual(152, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -237,6 +238,8 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/local-tls/scripts/cloudfront-origin.sh": "local-tls-cloudfront-origin",
             "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": "local-tls-cloudfront-redirect",
             "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": "local-tls-cloudfront-http-only-error",
+            "examples/cdk/web-function-python/app/main.py": "web-function-python",
+            "examples/cdk/web-function-python/app/main_wsgi.py": "web-function-python-wsgi",
         }
         for key, runner in expected.items():
             self.assertEqual(runner, by_key[key].runner, key)
@@ -644,6 +647,38 @@ class WebFunctionDeliveryControlTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("so one request read another's state", message)
         print(f"\nmodule-level-tag control output: {message}")
+
+
+class WebFunctionPythonDeliveryControlTests(unittest.TestCase):
+    """The same three controls, against the Python row's overlap assertion.
+
+    The Python rows assert the same thing the Node.js row does — concurrent delivery, request-scoped
+    state — through the same primitives, so the same servers must produce the same verdicts. Running
+    both directions here is what keeps the Python assertion from degrading into one that simply
+    fails everything (or passes everything).
+    """
+
+    def test_an_interleaved_delivery_passes_the_assertion(self) -> None:
+        with ControlServer() as server:
+            summary = harness._assert_web_function_python_overlap(server.base, "asgi")
+        self.assertIn("chunks interleaved before either finished", summary)
+        self.assertIn("each saw only its own tag", summary)
+
+    def test_a_serial_delivery_fails_the_assertion(self) -> None:
+        with ControlServer(serial=True) as server:
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness._assert_web_function_python_overlap(server.base, "asgi")
+        message = str(raised.exception)
+        self.assertIn("so the two responses were not delivered concurrently", message)
+        print(f"\npython serial-delivery control output: {message}")
+
+    def test_a_module_level_request_tag_still_fails_the_assertion(self) -> None:
+        with ControlServer(shared_tag=True) as server:
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness._assert_web_function_python_overlap(server.base, "wsgi")
+        message = str(raised.exception)
+        self.assertIn("so one request read another's state", message)
+        print(f"\npython module-level-tag control output: {message}")
 
 
 class AwsCLIRequirementTests(unittest.TestCase):
