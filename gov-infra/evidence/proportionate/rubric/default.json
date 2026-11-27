@@ -5,40 +5,19 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 569.932,
+      "durationSeconds": 1.471,
       "executed": true,
-      "exitCode": 0,
-      "finishedAt": "2026-11-27T08:23:56Z",
+      "exitCode": 2,
+      "finishedAt": "2026-11-27T09:55:11Z",
       "id": "rubric",
-      "inputsDigest": "sha256:0d2590f1eff0f887048b6feab832aa5868e185e7c8ecb65820eff9a505d71646",
-      "logDigest": "sha256:c34fbd7a3e910cd454a37f9f5064c45101a07d75d238584738ec7bfd9f31b8b8",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261127T081426Z-18314.log",
+      "inputsDigest": "sha256:63213b6c8a5938cb739b984fec11aae601d4ede69c112bf31c6f1c1de877d061",
+      "logDigest": "sha256:d554a445bd7e24fd3cc6c1b6c269245d1a6f9b1f9626c6e5d27928b18ce160c9",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261127T095509Z-50617.log",
       "reused": false,
-      "startedAt": "2026-11-27T08:14:26Z"
+      "startedAt": "2026-11-27T09:55:09Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:be49e43d4e5d8daa72f887faacf5f8f3a4f54bc9c82fc8d5ee5e549b0748b3bb",
-      "gate": "cdk-go-drift",
-      "recordedAt": "2026-11-27T04:36:41Z"
-    },
-    {
-      "digest": "sha256:c51063e12094d5aacb5651db629a84306ee7b5101db22d1f3c8b51f0040a7398",
-      "gate": "contract-tests",
-      "recordedAt": "2026-11-27T07:28:21Z"
-    },
-    {
-      "digest": "sha256:4df30208da889126ae1f9595010bf407f029dc6d8aee540ef5186f312528eca4",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-27T07:26:21Z"
-    },
-    {
-      "digest": "sha256:431d08b69d5f16688dba2614e7ca476443c23c656066a435528f2741b2f0bbb6",
-      "gate": "go",
-      "recordedAt": "2026-11-27T08:02:53Z"
-    }
-  ],
+  "consumed": [],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
   "environment": {
     "go": "go1.27.4",
@@ -56,8 +35,8 @@
     "tool": "scripts/evidence/validation_evidence.py"
   },
   "profile": "default",
-  "reason": "",
-  "recordedAt": "2026-11-27T08:23:56Z",
+  "reason": "command failed: rubric exit=2",
+  "recordedAt": "2026-11-27T09:55:11Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -67,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:78c6813534f449c0f24bb721d38ad4db76055d588077285323b15cc07c4563fe",
+    "digest": "sha256:c82c907ccf147d283d4e244db67066d38e0c9b08cd0d012bd380b0e62eb368df",
     "fileCount": 3401,
     "paths": [
       "**"
@@ -75,8 +54,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:afc06d7dae455b1e3df0340a118df3bd199d17e5ed6ce8ec7d5ad5fe34155c47",
+    "digest": "sha256:a1e198b5976c7d8d6e815f10865a1f4b50d37ef43de5d863dd75724db3cb1442",
     "fileCount": 2852
   },
-  "verdict": "PASS"
+  "verdict": "FAIL"
 }
