@@ -5,16 +5,16 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 545.574,
+      "durationSeconds": 511.661,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-27T19:16:31Z",
+      "finishedAt": "2026-11-27T19:48:14Z",
       "id": "rubric",
-      "inputsDigest": "sha256:9883ece8a338dbfd1eb1ae94fe1d98d125bb878e2b3cec50a38f07de204f4bbc",
-      "logDigest": "sha256:e10df62b52e2d42357ff0bc6ac96f2eac5819bc1872b978d4afb34ab37f600f0",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261127T190725Z-57511.log",
+      "inputsDigest": "sha256:c70373deec3d2fede727a97c45996e1e53b077431f56ccfc80904d4c37470c82",
+      "logDigest": "sha256:8c83e663046638fd635447333892d13e6afc0fee4e80591470279a70a703a6b2",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261127T193943Z-22967.log",
       "reused": false,
-      "startedAt": "2026-11-27T19:07:25Z"
+      "startedAt": "2026-11-27T19:39:43Z"
     }
   ],
   "consumed": [
@@ -34,9 +34,9 @@
       "recordedAt": "2026-11-27T14:48:48Z"
     },
     {
-      "digest": "sha256:e4509121bad3dab9a2d9a231bb08b02f6a9652f34d4ad96779325bbc82e1b1a9",
+      "digest": "sha256:47ccb1246d6ccce13aaddaee4fb7985d77764b8db75b395d2590e741f7c5e3d6",
       "gate": "go",
-      "recordedAt": "2026-11-27T18:50:02Z"
+      "recordedAt": "2026-11-27T19:24:38Z"
     },
     {
       "digest": "sha256:1a354570cdec9be99e27c2207a35e2ed49869a39a699c5f3aee01889aa2d8cad",
@@ -62,7 +62,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-27T19:16:31Z",
+  "recordedAt": "2026-11-27T19:48:14Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -72,7 +72,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:5f7cb23818ac6d6d9ca4b3f0356dbc0af2e6f80fb06da1d351df01bc04f25e1c",
+    "digest": "sha256:1aef4625270008dd88da3cebf6de785559efd57e6920fa6a3b4f10780ec686e6",
     "fileCount": 3401,
     "paths": [
       "**"
@@ -80,7 +80,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:e9ea38e8bb612eced47d3d26007b0392fccfad5a8561c3a371fa2b8adfb7fe72",
+    "digest": "sha256:e790b76fba8a61c487c45dcee93c51ad5df6bda7f0eb0f4ee764583f3e25a98c",
     "fileCount": 2852
   },
   "verdict": "PASS"
