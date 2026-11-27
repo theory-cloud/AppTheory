@@ -121,9 +121,10 @@ been shown to be private; read `authType` in the synthesized template instead.
 
 ## Runtime support
 
-Node.js 24 (`nodejs24.x`) and Node.js 26 (`nodejs26.x`) are the runtimes AppTheory composes, and this example is a
+Node.js 24 (`nodejs24.x`) and Node.js 26 (`nodejs26.x`) are the supported Web Function runtimes, and this example is a
 Node.js Web Function: the application starts its own HTTP server and reads `AWS_LAMBDA_HTTP_ENDPOINT`. Upstream
 `python3.15` is in public preview and follows a different model — Lambda manages the HTTP server and passes each
-request to an ASGI or WSGI application — which AppTheory's Python runtime is not, so a Python Web Function is refused
-at synthesis rather than deployed. Go has no Web Function runtime upstream. See
+request to an ASGI or WSGI application — and AppTheory composes that too:
+[`examples/cdk/web-function-python`](../web-function-python/README.md) serves one application as both an ASGI app
+(`apptheory.ASGIApp`) and a WSGI app (`apptheory.WSGIApp`). Go has no Web Function runtime upstream. See
 [Runtime support](../../../docs/features/web-functions.md#runtime-support).

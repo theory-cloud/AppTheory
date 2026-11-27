@@ -379,6 +379,7 @@ const AWS_CDK_LOCKFILES = [
   "examples/cdk/ssr-only-provided-assets-site/package-lock.json",
   "examples/cdk/ssr-site/package-lock.json",
   "examples/cdk/web-function/package-lock.json",
+  "examples/cdk/web-function-python/package-lock.json",
 ];
 
 const E2 = {

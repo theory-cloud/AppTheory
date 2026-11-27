@@ -875,6 +875,7 @@ from apptheory.secure_types import (
     optional,
     public,
 )
+from apptheory.serving import ASGIApp, WSGIApp
 from apptheory.source_provenance import SourceProvenance
 from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
@@ -1233,6 +1234,7 @@ __all__ = [
     "VECTORSTORE_ERROR_INVALID_VECTOR",
     "VECTORSTORE_ERROR_NOT_FOUND",
     "VECTORSTORE_ERROR_UNSUPPORTED_OPERATION",
+    "ASGIApp",
     "AWSLambdaMicroVMClient",
     "AWSLambdaMicroVMProvider",
     "App",
@@ -1559,6 +1561,7 @@ __all__ = [
     "VectorStore",
     "VectorStoreCall",
     "VectorStoreError",
+    "WSGIApp",
     "WebSocketCall",
     "WebSocketContext",
     "assert_bearer_token_reaches_transport_handler",

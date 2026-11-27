@@ -1206,6 +1206,18 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryPhysicalName",
 		reflect.TypeOf((*AppTheoryPhysicalName)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryPythonAppProps",
+		reflect.TypeOf((*AppTheoryPythonAppProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryPythonInterface",
+		reflect.TypeOf((*AppTheoryPythonInterface)(nil)).Elem(),
+		map[string]interface{}{
+			"ASGI": AppTheoryPythonInterface_ASGI,
+			"WSGI": AppTheoryPythonInterface_WSGI,
+		},
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryQueue",
 		reflect.TypeOf((*AppTheoryQueue)(nil)).Elem(),

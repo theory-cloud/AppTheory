@@ -5,6 +5,16 @@ land with the `feat/runtime-multiconcurrency` branch. Scope: the TypeScript and 
 **N/A for the overlap dimension only** (AWS offers no multi-concurrency runtime for Go, and the Go runtime is unchanged);
 §9 states the upstream fact, what Go shares and what closing it there would cost.
 
+> **Superseding note (AT-W1b, 2026-11-26).** The 2026-11-26 operator ruling this audit was written against — that
+> Python's serving model is one invocation per process with no thread-per-request serving — is **withdrawn for Lambda
+> Web Functions**, and this audit's Python statements are the record of what was analysed at the time, not a live rule.
+> A Python Web Function serves an ASGI application (one event loop, concurrent requests) or a WSGI application (a
+> worker-thread pool), with Lambda managing the HTTP server; `apptheory.ASGIApp` and `apptheory.WSGIApp` are those
+> applications. The audit's conclusions are unchanged and still hold — every Python store it defends is lock-guarded,
+> and the "analysis model: threads" column below is now also the shape two Web Function requests genuinely have. The
+> live statement of the model is [Concurrency and request isolation](../../../features/concurrency.md#python-specifics)
+> and [Lambda Web Functions](../../../features/web-functions.md#the-python-model-lambdas-server-your-asgi-or-wsgi-application).
+
 This is the evidence behind [Concurrency and request isolation](../../../features/concurrency.md). Line numbers below
 are the audited (pre-fix) tree, so every citation resolves against `397ebd59`, except the round-1 additions, whose
 citations resolve against the round-0 head `710c1b62` and are marked **(r1)**, the round-2 additions, whose citations

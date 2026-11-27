@@ -66,6 +66,16 @@ type AppTheoryWebFunctionProps struct {
 	// Default: undefined - the service default of 64.
 	//
 	MaxConcurrencyPerEnvironment *float64 `field:"optional" json:"maxConcurrencyPerEnvironment" yaml:"maxConcurrencyPerEnvironment"`
+	// The Python application a `python3.15` Web Function serves.
+	//
+	// Required with a Python runtime, and refused with a Node.js runtime: a Node.js Web Function
+	// starts its own HTTP server and names its entry file through `entryPoint` instead.
+	//
+	// `python3.15` is an upstream public preview: not covered by the Lambda SLA or Technical
+	// Support, and not for production.
+	// Default: undefined - the runtime is not Python.
+	//
+	PythonApp *AppTheoryPythonAppProps `field:"optional" json:"pythonApp" yaml:"pythonApp"`
 	// The execution role.
 	// Default: undefined - a new role with `AWSLambdaBasicExecutionRole` is created.
 	//

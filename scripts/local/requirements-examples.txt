@@ -16,3 +16,8 @@ playwright==1.64.1
 # SigV4Auth, so the verification is proved against the AWS SDK's signer rather
 # than a harness re-implementation.
 botocore==1.43.124
+# The Python Web Function row drives the example's ASGI application with a real ASGI server.
+# Lambda manages that server for a deployed Web Function and nothing provides one locally, so the
+# row runs uvicorn — the reference ASGI implementation — exactly as a server would. The WSGI
+# direction needs nothing extra: the row uses the standard library's own WSGI server.
+uvicorn==0.38.0

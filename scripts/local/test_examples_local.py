@@ -17,11 +17,13 @@ claim is only worth what its negative control proves.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -192,9 +194,11 @@ class RealTreeTests(unittest.TestCase):
         # LOCAL-W3-M1 resource-type rows, the fourteen narrow-IAM rows, the
         # five co-residence/declared-port rows, the two mail-surface rows and
         # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
-        # executing), and the two LOCAL-W3-X6 rows with the versioning handler
-        # they cover.
-        self.assertEqual(148, len(classified))
+        # executing), the two LOCAL-W3-X6 rows with the versioning handler
+        # they cover, the three Python Web Function rows: the ASGI entry
+        # point, the WSGI entry point and the local WSGI server that serves it,
+        # and the staging script that builds the package the stack ships.
+        self.assertEqual(153, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -237,6 +241,8 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/local-tls/scripts/cloudfront-origin.sh": "local-tls-cloudfront-origin",
             "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": "local-tls-cloudfront-redirect",
             "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": "local-tls-cloudfront-http-only-error",
+            "examples/cdk/web-function-python/app/main.py": "web-function-python",
+            "examples/cdk/web-function-python/app/main_wsgi.py": "web-function-python-wsgi",
         }
         for key, runner in expected.items():
             self.assertEqual(runner, by_key[key].runner, key)
@@ -644,6 +650,1100 @@ class WebFunctionDeliveryControlTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("so one request read another's state", message)
         print(f"\nmodule-level-tag control output: {message}")
+
+
+class WebFunctionPythonDeliveryControlTests(unittest.TestCase):
+    """The same three controls, against the Python row's overlap assertion.
+
+    The Python rows assert the same thing the Node.js row does — concurrent delivery, request-scoped
+    state — through the same primitives, so the same servers must produce the same verdicts. Running
+    both directions here is what keeps the Python assertion from degrading into one that simply
+    fails everything (or passes everything).
+    """
+
+    def test_an_interleaved_delivery_passes_the_assertion(self) -> None:
+        with ControlServer() as server:
+            summary = harness._assert_web_function_python_overlap(server.base, "asgi")
+        self.assertIn("chunks interleaved before either finished", summary)
+        self.assertIn("each saw only its own tag", summary)
+
+    def test_a_serial_delivery_fails_the_assertion(self) -> None:
+        with ControlServer(serial=True) as server:
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness._assert_web_function_python_overlap(server.base, "asgi")
+        message = str(raised.exception)
+        self.assertIn("so the two responses were not delivered concurrently", message)
+        print(f"\npython serial-delivery control output: {message}")
+
+    def test_a_module_level_request_tag_still_fails_the_assertion(self) -> None:
+        with ControlServer(shared_tag=True) as server:
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness._assert_web_function_python_overlap(server.base, "wsgi")
+        message = str(raised.exception)
+        self.assertIn("so one request read another's state", message)
+        print(f"\npython module-level-tag control output: {message}")
+
+
+def clean_python_env(**overrides: str) -> dict[str, str]:
+    """An environment that cannot import AppTheory from anywhere the command does not name.
+
+    The launch commands the example documents are written for an operator's own interpreter, so the
+    only things this removes are what a developer's shell might carry: an inherited `PYTHONPATH`
+    (which would make the example importable from a directory the command never names) and the
+    `AWS_*` surface the rows never use. `PATH` is pinned to the interpreter running these tests
+    first, so `python3` in a documented command is the interpreter the harness dependency set
+    belongs to.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "PYTHONPATH" and not key.startswith("AWS_")
+    }
+    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+    env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env.update(overrides)
+    return env
+
+
+def apptheory_is_importable(env: dict[str, str], cwd: Path) -> bool:
+    """Whether a bare ``import apptheory`` works in this environment."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import apptheory"],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def ephemeral_port() -> int:
+    """A port nothing is listening on right now, for a server about to bind it."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+class StartedServer:
+    """A server process started for one test, with the port waited for and its output captured."""
+
+    def __init__(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        port: int,
+        label: str,
+        seconds: int = 120,
+    ) -> None:
+        self.command = command
+        self.cwd = cwd
+        self.env = env
+        self.port = port
+        self.label = label
+        self.seconds = seconds
+        self.process: subprocess.Popen | None = None
+        self._log = tempfile.NamedTemporaryFile(prefix="apptheory-self-test-", suffix=".log", delete=False)
+
+    def __enter__(self) -> "StartedServer":
+        self.process = subprocess.Popen(
+            self.command,
+            cwd=str(self.cwd),
+            env=self.env,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            harness._wait_for_tcp(self.process, self.port, seconds=self.seconds, label=self.label)
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def output(self) -> str:
+        self._log.flush()
+        return Path(self._log.name).read_text(encoding="utf-8", errors="replace")
+
+    def __exit__(self, *_exc: object) -> None:
+        if self.process is not None:
+            harness._stop_process(self.process)
+        self._log.close()
+        try:
+            os.unlink(self._log.name)
+        except FileNotFoundError:
+            pass
+
+
+def documented_cd(cwd: Path, command: str) -> Path:
+    """Apply the `cd` steps of a documented shell command and return where it ends up."""
+    target = cwd
+    for directory in re.findall(r"(?:^|&&\s*)cd\s+(\S+)", command):
+        target = (target / directory).resolve()
+    return target
+
+
+ASGI_DISCONNECT_PROBE = '''
+"""A streaming AppTheory application that records how far its producer got."""
+from __future__ import annotations
+
+import os
+
+import time
+
+from apptheory import Response, SSEEvent, SecureApp, public, sse_event_stream
+
+TICKS = 200
+TICK_SECONDS = 0.05
+STATE = os.environ["PROBE_STATE"]
+
+
+def record(line: str) -> None:
+    with open(STATE, "a", encoding="utf-8") as handle:
+        handle.write(line + "\\n")
+
+
+def events():
+    try:
+        for tick in range(1, TICKS + 1):
+            record(f"tick {tick}")
+            yield SSEEvent(event="tick", data={"tick": tick})
+            time.sleep(TICK_SECONDS)
+        record("done")
+    finally:
+        record("closed")
+
+
+def build_app() -> SecureApp:
+    app = SecureApp()
+
+    def stream(_ctx) -> Response:
+        return Response(
+            status=200,
+            headers={"content-type": ["text/event-stream"], "cache-control": ["no-store"]},
+            cookies=[],
+            body=b"",
+            is_base64=False,
+            body_stream=sse_event_stream(events()),
+        )
+
+    app.get("/stream", stream, public())
+    return app
+'''
+
+ASGI_PROBE_MAIN = '''
+from __future__ import annotations
+
+from apptheory import ASGIApp
+
+from probe_stream import build_app
+
+app = ASGIApp(build_app())
+'''
+
+WSGI_PROBE_MAIN = '''
+from __future__ import annotations
+
+from apptheory import WSGIApp
+
+from probe_stream import build_app
+
+application = WSGIApp(build_app())
+'''
+
+# How many of the probe's 200 ticks may be produced after the client goes away. The full stream
+# takes ten seconds; a wrapper that keeps producing after the disconnect reaches 200, and one that
+# stops at the first chunk boundary stays in single digits.
+DISCONNECT_TICK_CEILING = 100
+DISCONNECT_CLOSE_SECONDS = 8.0
+
+
+def producer_state(state: Path) -> list[str]:
+    """The lines the probe's producer has written so far."""
+    if not state.exists():
+        return []
+    return state.read_text(encoding="utf-8").splitlines()
+
+
+def wait_for_producer_close(state: Path, *, seconds: float = DISCONNECT_CLOSE_SECONDS) -> float:
+    """Wait for the producer to report its close, and return how long that took."""
+    started = time.monotonic()
+    deadline = started + seconds
+    while time.monotonic() < deadline:
+        if "closed" in producer_state(state):
+            return time.monotonic() - started
+        time.sleep(0.02)
+    raise harness.HarnessFailure(
+        f"the producer had not closed {seconds:.0f}s after the client went away "
+        f"(it had produced {len(producer_ticks(state))} chunks)"
+    )
+
+
+def producer_ticks(state: Path) -> list[int]:
+    """The ticks the producer emitted, in order."""
+    ticks = []
+    for line in producer_state(state):
+        if line.startswith("tick "):
+            ticks.append(int(line.split()[1]))
+    return ticks
+
+
+class WebFunctionPythonLaunchTests(unittest.TestCase):
+    """The example's launch commands work as written, and the rows reach AppTheory the same way.
+
+    SAN-AT-W1B-01: both documented commands were one directory short of `py/src`, and no row could
+    see it because the harness injected `<repo>/py/src` itself as an absolute path. The README's
+    fenced block is now the single source of truth: these tests read the commands out of the
+    README, hold the row constants to the same relative expression, and run the commands as written
+    in an environment with no ambient AppTheory install.
+    """
+
+    def setUp(self) -> None:
+        self.commands = harness.web_function_python_launch_commands()
+        self.example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+
+    def test_the_rows_reach_apptheory_by_the_documented_path(self) -> None:
+        """Both sides must land on this checkout's `py/src`, spelled the way their directory needs.
+
+        The rows and the README run from different directories, so comparing the two relative
+        expressions would be comparing the wrong thing. What has to match is where they arrive: a
+        row that injects a path the README never names is exactly the masking this finding was.
+        """
+        expected = (harness.ROOT / "py" / "src").resolve()
+        row_paths = {
+            "asgi": (harness.WEB_FUNCTION_PYTHON_ASGI_APP / harness.WEB_FUNCTION_PYTHON_PYTHONPATH["asgi"]).resolve(),
+            "wsgi": (harness.WEB_FUNCTION_PYTHON_EXAMPLE / harness.WEB_FUNCTION_PYTHON_PYTHONPATH["wsgi"]).resolve(),
+        }
+        for label, command in zip(("asgi", "wsgi"), self.commands, strict=True):
+            documented = documented_cd(self.example, command)
+            resolved = (documented / harness.web_function_python_launch_pythonpath(command)).resolve()
+            self.assertEqual(
+                expected,
+                resolved,
+                f"the documented {label} command puts {resolved} on PYTHONPATH instead of {expected}",
+            )
+            self.assertTrue(
+                (resolved / "apptheory" / "__init__.py").is_file(),
+                f"{command} puts {resolved} on PYTHONPATH, which holds no apptheory package",
+            )
+            self.assertEqual(
+                expected,
+                row_paths[label],
+                f"the {label} row reaches AppTheory by a path the README does not document",
+            )
+
+    def test_the_documented_asgi_command_serves_without_an_apptheory_install(self) -> None:
+        self._run_documented_launch(0, label="asgi")
+
+    def test_the_documented_wsgi_command_serves_without_an_apptheory_install(self) -> None:
+        self._run_documented_launch(1, label="wsgi")
+
+    def _run_documented_launch(self, index: int, *, label: str) -> None:
+        command = self.commands[index]
+        port = 3000  # the port both documented commands name
+        self.assertFalse(
+            harness.port_open("127.0.0.1", port, timeout=0.25),
+            f"something is already listening on 127.0.0.1:{port}, so the documented launch command "
+            f"cannot be run as written: {command}",
+        )
+        env = clean_python_env()
+        self.assertFalse(
+            apptheory_is_importable(env, self.example),
+            "this test needs an environment with no ambient AppTheory install",
+        )
+
+        marker = (
+            f"Uvicorn running on http://127.0.0.1:{port}"
+            if label == "asgi"
+            else f"web-function wsgi listening on 127.0.0.1:{port}"
+        )
+        with StartedServer(
+            ["bash", "-c", command],
+            cwd=self.example,
+            env=env,
+            port=port,
+            label=f"documented {label} launch command",
+        ) as server:
+            page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", label)
+            stream = harness._assert_web_function_python_stream(f"http://127.0.0.1:{port}", label)
+            output = server.output()
+        self.assertIn(marker, output, f"the documented {label} command did not report its startup")
+        print(f"\ndocumented {label} command, run as written: {command}\n  {page}; {stream}")
+
+
+class WebFunctionPythonPackageTests(unittest.TestCase):
+    """The package the stack stages is the package that would run.
+
+    SAN-AT-W1B-02: the stack staged `app/` alone, so neither entry point could import `apptheory`
+    from the staged asset, and the README described a build directory nothing staged. The stack now
+    stages what `scripts/stage-asset.mjs` builds; these tests build that directory and prove both
+    entry points import and serve from it with no other AppTheory on the path.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.stage = cls._stage()
+
+    @classmethod
+    def _stage(cls) -> Path:
+        script = harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"
+        self_check = shutil.which("node")
+        if self_check is None:
+            raise harness.HarnessFailure("staging the Python package needs node on PATH")
+        result = subprocess.run(
+            [self_check, str(script)],
+            cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise harness.HarnessFailure(f"staging the Python package failed: {result.stderr.strip()}")
+        return Path(result.stdout.strip())
+
+    def test_the_staged_package_holds_the_application_and_the_runtime(self) -> None:
+        for name in ("main.py", "main_wsgi.py", "lib/application.py"):
+            self.assertTrue((self.stage / name).is_file(), f"the staged package is missing {name}")
+        self.assertTrue(
+            (self.stage / "apptheory" / "__init__.py").is_file(),
+            "the staged package does not carry the AppTheory runtime",
+        )
+        caches = [path for path in self.stage.rglob("__pycache__")] + list(self.stage.rglob("*.pyc"))
+        self.assertEqual([], [str(path) for path in caches], "a byte-code cache reached the staged package")
+
+    def test_both_entry_points_import_from_the_staged_package_alone(self) -> None:
+        env = clean_python_env(PYTHONPATH=str(self.stage))
+        self.assertFalse(
+            apptheory_is_importable(clean_python_env(), Path(tempfile.gettempdir())),
+            "this test needs an environment with no ambient AppTheory install",
+        )
+        for module in ("main", "main_wsgi"):
+            result = subprocess.run(
+                [sys.executable, "-c", f"import {module}"],
+                cwd=str(self.stage),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, f"import {module} from the staged package: {result.stderr}")
+        print(f"\nthe staged package imported both entry points from {self.stage}")
+
+    def test_the_staged_package_serves_the_asgi_entry_point(self) -> None:
+        port = ephemeral_port()
+        # No PYTHONPATH at all: the package root is the import root, which is what Lambda gives it.
+        env = clean_python_env()
+        env.pop("PYTHONPATH", None)
+        with StartedServer(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--log-level",
+                "warning",
+            ],
+            cwd=self.stage,
+            env=env,
+            port=port,
+            label="staged package ASGI entry point",
+        ):
+            page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", "staged asgi")
+            stream = harness._assert_web_function_python_stream(f"http://127.0.0.1:{port}", "staged asgi")
+        print(f"\nstaged package, ASGI: {page}; {stream}")
+
+    def test_the_staged_package_serves_the_wsgi_entry_point(self) -> None:
+        port = ephemeral_port()
+        # No PYTHONPATH either: `serve-wsgi.py` puts the package it is given on the path and the
+        # entry module imports the runtime from beside itself, which is the deployed layout.
+        env = clean_python_env(PORT=str(port))
+        env.pop("PYTHONPATH", None)
+        with StartedServer(
+            [sys.executable, str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "serve-wsgi.py"), str(self.stage)],
+            cwd=self.stage,
+            env=env,
+            port=port,
+            label="staged package WSGI entry point",
+        ):
+            page = harness._assert_web_function_python_page(f"http://127.0.0.1:{port}", "staged wsgi")
+        print(f"\nstaged package, WSGI: {page}")
+
+
+WEB_FUNCTION_PYTHON_STACK = "AppTheoryWebFunctionPythonExample"
+
+# Synthetic local-only files, planted in both package trees to prove they stay out of the deployment
+# package. None of them is or contains a credential: the values are this test's own strings, and what
+# the plant is about is the file's *presence*, never its contents. They are the shapes a developer
+# leaves behind that Python cannot import — a dotenv, a pytest cache, a dot-file, a note, an editor
+# swap file — which is exactly the residue the allow-list drops in silence. A local *test tree* is
+# not in this set, because a directory of test modules is importable from the archive root and
+# staging refuses it by name (SAN-AT-W1B-05); that case lives in
+# WebFunctionPythonPackageInputTests.test_growth_anywhere_in_either_tree_fails_staging.
+WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS: dict[str, str] = {
+    ".env": "APPTHEORY_LOCAL_ONLY_PLANT=this-is-not-a-credential\n",
+    ".pytest_cache/v/cache/lastfailed": "{}\n",
+    ".dotfile-local-only": "a dot-file nobody declared\n",
+    ".main.py.swp": "an editor swap file nobody declared\n",
+    "local-notes.txt": "a note nobody declared\n",
+}
+
+
+def web_function_python_package_trees() -> list[Path]:
+    """The two trees the deployment package is built from: the application and the runtime."""
+    return [
+        harness.WEB_FUNCTION_PYTHON_ASGI_APP,
+        harness.ROOT / "py" / "src" / "apptheory",
+    ]
+
+
+@contextlib.contextmanager
+def planted_local_only_files(trees: list[Path], plants: dict[str, str]):
+    """Place synthetic local-only files in the package trees, and take them back out again.
+
+    They go into the real trees, because the real trees are what synthesis reads: planting in a copy
+    would prove nothing about the asset. Every file this adds is recorded and removed in `finally`,
+    and so is every directory it had to create, so a failed assertion cannot leave residue behind
+    for the next test or the next gate.
+    """
+    planted: list[Path] = []
+    created: list[Path] = []
+    try:
+        for tree in trees:
+            for relative, content in plants.items():
+                staged = tree / relative
+                if staged.exists():
+                    raise harness.HarnessFailure(f"{staged} already exists; refusing to overwrite it")
+                missing: list[Path] = []
+                parent = staged.parent
+                while parent != tree and not parent.exists():
+                    missing.append(parent)
+                    parent = parent.parent
+                for directory in reversed(missing):
+                    directory.mkdir()
+                    created.append(directory)
+                staged.write_text(content, encoding="utf-8")
+                # Narrow mode on purpose: a plant is nobody's input, and the harness keeps its own
+                # scratch files owner-only (os.chmod(..., 0o600) there too). The plant's *presence* is
+                # what the tests are about, never its mode, so nothing here needs a wider bit.
+                os.chmod(staged, 0o600)
+                planted.append(staged)
+        yield planted
+    finally:
+        for staged in planted:
+            with contextlib.suppress(FileNotFoundError):
+                staged.unlink()
+        for directory in reversed(created):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+
+
+@contextlib.contextmanager
+def planted_links(entries: list[tuple[Path, str, Path]]):
+    """Point an entry of a package tree at another path, and take the link back out again.
+
+    A symbolic link is the entry shape the staging walk cannot classify: `Dirent.isFile()` and
+    `Dirent.isDirectory()` are both false for it, so an entry that trusts them sees nothing at all.
+    Python sees the opposite — a linked `.py` module and a linked package directory import from the
+    archive root exactly like the file or the directory they stand for — which is why the link has to
+    be planted in the real tree and refused by name (SAN-AT-W1B-05). Every link this adds is recorded
+    and removed in `finally`, so a failed assertion cannot leave one behind for the next test.
+    """
+    planted: list[Path] = []
+    try:
+        for tree, name, target in entries:
+            link = tree / name
+            if link.exists() or link.is_symlink():
+                raise harness.HarnessFailure(f"{link} already exists; refusing to overwrite it")
+            os.symlink(target, link)
+            planted.append(link)
+        yield planted
+    finally:
+        for link in planted:
+            with contextlib.suppress(FileNotFoundError):
+                link.unlink()
+
+
+def run_web_function_python_staging() -> subprocess.CompletedProcess[str]:
+    """Run the example's own staging step — the one `cdk synth` runs — and report what it said."""
+    return subprocess.run(
+        [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
+        cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def ensure_web_function_python_cdk_dependencies() -> None:
+    """Install the example's CDK dependency tree the way the synth gate does.
+
+    The finding was observed through a real synthesis, so the test runs the real thing rather than
+    a stand-in. `npm ci` is the same prerequisite `scripts/verify-cdk-synth.sh` provisions for every
+    example, and it is skipped when the tree is already installed.
+    """
+    example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+    if (example / "node_modules" / "aws-cdk-lib" / "package.json").is_file():
+        return
+    result = subprocess.run(
+        ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        cwd=str(example),
+        env=clean_python_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=900,
+    )
+    if result.returncode != 0:
+        raise harness.HarnessFailure(
+            f"installing the example's CDK dependencies failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def synthesize_web_function_python(output: Path) -> str:
+    """Synthesize the example exactly as the synth gate does, and return the template's sha256.
+
+    The epoch and the environment are the gate's: `SOURCE_DATE_EPOCH` from HEAD, and no
+    `CDK_DEFAULT_*` folded into an environment-agnostic template. That is what makes the committed
+    pin the oracle for the asset hash this test is about.
+    """
+    example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+    ensure_web_function_python_cdk_dependencies()
+    epoch = subprocess.run(
+        ["git", "show", "-s", "--format=%ct", "HEAD"],
+        cwd=str(harness.ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if epoch.returncode != 0 or not epoch.stdout.strip():
+        raise harness.HarnessFailure(f"reading HEAD's commit time for SOURCE_DATE_EPOCH failed: {epoch.stderr.strip()}")
+    env = clean_python_env(SOURCE_DATE_EPOCH=epoch.stdout.strip())
+    for key in ("CDK_DEFAULT_ACCOUNT", "CDK_DEFAULT_REGION", "CDK_CONTEXT_JSON"):
+        env.pop(key, None)
+    result = subprocess.run(
+        [
+            str(example / "node_modules" / ".bin" / "cdk"),
+            "synth",
+            "--quiet",
+            "--no-notices",
+            "--no-version-reporting",
+            "-o",
+            str(output),
+        ],
+        cwd=str(example),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=900,
+    )
+    if result.returncode != 0:
+        raise harness.HarnessFailure(
+            f"synthesizing the example failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+    template = output / f"{WEB_FUNCTION_PYTHON_STACK}.template.json"
+    if not template.is_file():
+        raise harness.HarnessFailure(f"the synthesis produced no {template.name}")
+    return hashlib.sha256(template.read_bytes()).hexdigest()
+
+
+def web_function_python_package_asset(output: Path) -> Path:
+    """The asset directory CDK staged for the function's code: the package, as it would deploy.
+
+    Synthesis also emits asset directories for the construct's supporting code, so the package is
+    identified by what only it carries: the application's two entry modules at the archive root.
+    """
+    for candidate in sorted(output.glob("asset.*")):
+        if candidate.is_dir() and (candidate / "main.py").is_file() and (candidate / "main_wsgi.py").is_file():
+            return candidate
+    raise harness.HarnessFailure(f"no asset directory under {output} carries the staged package")
+
+
+class WebFunctionPythonPackageInputTests(unittest.TestCase):
+    """The deployed package is its allow-list, and local-only files cannot join it. (SAN-AT-W1B-04)
+
+    The package used to be every file under `app/` and every file under `py/src/apptheory` minus a
+    list of names to skip. A deny-list cannot promise a stable package: a `.env`, a local test tree
+    or a `.pytest_cache` nobody predicted lands in the CDK asset and moves its hash, so what an
+    operator deploys depends on what the author happened to leave in the tree. Both trees are now
+    bounded by an explicit allow-list of the importable modules and the declared package data, and
+    these tests plant the shapes that used to leak.
+
+    The allow-list is held to the trees recursively (SAN-AT-W1B-05). Every importable unit in either
+    tree has to be named — a `.py` module, a package directory with `__init__.py`, or a namespace
+    package directory that Python imports because it holds modules — at any depth, because staging
+    refuses rather than deploying an archive that is missing code the source tree has. The rule is
+    total, and it decides what happens to local residue: what Python cannot import (a `.env`, a
+    `.pytest_cache`, a swap file, a note) stays out in silence, while a local *Python* test tree is
+    importable from the archive root, so it is refused by name instead of being dropped or shipped.
+
+    The walk reads entry types, so the trees may hold only the two types it reads (ADV-W1B-R3-01): a
+    `.py` module, a package directory and a namespace directory are importable through a symbolic link
+    just as they are directly, but `isFile()`/`isDirectory()` are false for the link, so a linked entry
+    used to pass unchecked and unshipped. Every entry that is not a regular file or a regular directory
+    is now refused by name and not followed, and that is asserted per tree and per shape in
+    test_a_linked_entry_in_either_tree_fails_staging.
+    """
+
+    def test_local_only_files_stay_out_of_the_synthesized_cdk_asset(self) -> None:
+        """Plant residue in both trees, synthesize, and hold the actual asset to the allow-list.
+
+        The plants are the residue Python cannot import, which is the residue staging drops without
+        saying anything: a dotenv, a pytest cache, a dot-file, a swap file, a note. Adding any of
+        them changes neither the asset nor the template hash. Residue that *is* importable — a local
+        test tree — is refused by name instead, and that is asserted in
+        test_growth_anywhere_in_either_tree_fails_staging.
+        """
+        example = harness.WEB_FUNCTION_PYTHON_EXAMPLE
+        trees = web_function_python_package_trees()
+        pinned = (example / "snapshots" / f"{WEB_FUNCTION_PYTHON_STACK}.template.sha256").read_text(encoding="utf-8")
+        pinned = pinned.strip()
+        self.assertEqual(64, len(pinned), f"the committed template pin is not a sha256: {pinned!r}")
+        with tempfile.TemporaryDirectory(prefix="apptheory-web-function-clean-") as clean_dir:
+            clean = synthesize_web_function_python(Path(clean_dir))
+            asset = web_function_python_package_asset(Path(clean_dir))
+            self.assertEqual(pinned, clean, "the synthesis of the clean tree does not reproduce the committed pin")
+            print(f"\nclean tree: template {clean[:12]}, package asset {asset.name} with {len(list(asset.rglob('*')))} entries")
+
+            with planted_local_only_files(trees, WEB_FUNCTION_PYTHON_LOCAL_ONLY_PLANTS) as planted:
+                with tempfile.TemporaryDirectory(prefix="apptheory-web-function-planted-") as planted_dir:
+                    observed = synthesize_web_function_python(Path(planted_dir))
+                    package = web_function_python_package_asset(Path(planted_dir))
+                    self.assertEqual(
+                        pinned,
+                        observed,
+                        "local-only files in the package trees changed the synthesized template (and its "
+                        f"asset hash): planted {[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                    )
+                    self.assertEqual(
+                        clean,
+                        observed,
+                        "the synthesized template differs between a clean tree and one carrying local-only files",
+                    )
+                    self.assertEqual(
+                        [],
+                        self._undeclared_package_files(package),
+                        "the synthesized asset carries files the package does not declare",
+                    )
+                    self._assert_both_entry_points_import_and_serve(package)
+                    print(
+                        f"planted {len(planted)} local-only files in both trees: template still {observed[:12]}, "
+                        f"package asset {package.name} and both entry points still serve from it alone"
+                    )
+
+    def _undeclared_package_files(self, package: Path) -> list[str]:
+        """Every file in the asset that the package does not declare.
+
+        The declared package is small enough to state as a shape: the application's entry modules,
+        the application module they import, the runtime's importable modules, and the runtime's one
+        package-data file. Anything else is local residue that reached the deployment package.
+        """
+        declared = {"main.py", "main_wsgi.py", "lib/application.py", "apptheory/py.typed"}
+        undeclared: list[str] = []
+        for path in sorted(package.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(package).as_posix()
+            if relative in declared:
+                continue
+            if relative.startswith("apptheory/") and relative.endswith(".py"):
+                continue
+            undeclared.append(relative)
+        return undeclared
+
+    def _assert_both_entry_points_import_and_serve(self, package: Path) -> None:
+        """The allow-listed package is complete: both entry points import and serve from it alone."""
+        env = clean_python_env()
+        self.assertFalse(
+            apptheory_is_importable(env, Path(tempfile.gettempdir())),
+            "this test needs an environment with no ambient AppTheory install",
+        )
+        for module in ("main", "main_wsgi"):
+            result = subprocess.run(
+                [sys.executable, "-c", f"import {module}"],
+                cwd=str(package),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                0, result.returncode, f"import {module} from the synthesized asset failed: {result.stderr}"
+            )
+
+        asgi_port = ephemeral_port()
+        with StartedServer(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(asgi_port),
+                "--log-level",
+                "warning",
+            ],
+            cwd=package,
+            env=env,
+            port=asgi_port,
+            label="synthesized asset ASGI entry point",
+        ):
+            asgi = harness._assert_web_function_python_page(f"http://127.0.0.1:{asgi_port}", "synthesized asgi")
+
+        wsgi_port = ephemeral_port()
+        with StartedServer(
+            [
+                sys.executable,
+                str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "serve-wsgi.py"),
+                str(package),
+            ],
+            cwd=package,
+            env=clean_python_env(PORT=str(wsgi_port)),
+            port=wsgi_port,
+            label="synthesized asset WSGI entry point",
+        ):
+            wsgi = harness._assert_web_function_python_page(f"http://127.0.0.1:{wsgi_port}", "synthesized wsgi")
+        print(f"\n  {asgi}; {wsgi}")
+
+    def test_a_module_the_allow_list_does_not_name_fails_staging(self) -> None:
+        """Growth is a decision, not a silent omission: an undeclared module must stop the build.
+
+        The allow-list is only safe if it cannot quietly fall behind the runtime. A new module at the
+        runtime's root is importable as `apptheory.<name>`, so it belongs in the package; staging
+        refuses instead of deploying a package that is missing what the source tree has.
+        """
+        tree = harness.ROOT / "py" / "src" / "apptheory"
+        undeclared = tree / "undeclared_growth.py"
+        if undeclared.exists():
+            raise harness.HarnessFailure(f"{undeclared} already exists; refusing to overwrite it")
+        try:
+            undeclared.write_text("VALUE = 1\n", encoding="utf-8")
+            # Owner-only, like the other scratch files this harness writes: the module's presence is
+            # the subject, and a world-readable mode is a finding the scanner reports, not a need.
+            os.chmod(undeclared, 0o600)
+            result = subprocess.run(
+                [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
+                cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                undeclared.unlink()
+        self.assertNotEqual(0, result.returncode, "staging accepted a runtime module the allow-list does not name")
+        self.assertIn(
+            "undeclared_growth.py",
+            result.stderr,
+            "the staging failure does not name the module that made the allow-list incomplete",
+        )
+        refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+        self.assertTrue(refused, f"the staging failure does not report an error: {result.stderr.strip()}")
+        print(f"\nundeclared runtime module: staging refused with {refused[0]}")
+
+    def test_growth_anywhere_in_either_tree_fails_staging(self) -> None:
+        """Depth and shape do not make a unit unimportable. (SAN-AT-W1B-05 / ADV-W1B-R2-01)
+
+        The growth guard used to look only at the directories its allow-list walked: a top-level
+        module was refused, but a subpackage under an existing package, a module two directories
+        down, and a namespace package at the runtime root were all accepted and silently left out of
+        the asset — the build said nothing, the pin did not move, and the deployed function failed at
+        import. Python imports all three shapes, so the walk covers both trees at every depth.
+        """
+        runtime = harness.ROOT / "py" / "src" / "apptheory"
+        application = harness.WEB_FUNCTION_PYTHON_ASGI_APP
+        cases: dict[str, tuple[Path, dict[str, str], tuple[str, str]]] = {
+            "a subpackage under an existing runtime package": (
+                runtime,
+                {
+                    "oauth/newsub/__init__.py": '"""A subpackage the allow-list does not walk."""\n',
+                    "oauth/newsub/client.py": "VALUE = 1\n",
+                },
+                ("oauth/newsub/", "a package the allow-list does not walk"),
+            ),
+            "a module nested two directories down": (
+                runtime,
+                {"oauth/nesteddir/helper.py": "VALUE = 2\n"},
+                ("oauth/nesteddir/", "a namespace package the allow-list does not walk"),
+            ),
+            "a module in a walked directory that the allow-list does not name": (
+                runtime,
+                {"oauth/extra.py": "VALUE = 2\n"},
+                ("oauth/extra.py", "a module the allow-list does not name"),
+            ),
+            "a namespace package at the runtime root": (
+                runtime,
+                {"nsx/mod.py": "VALUE = 3\n"},
+                ("nsx/", "a namespace package the allow-list does not walk"),
+            ),
+            "a namespace directory deep in the application tree": (
+                application,
+                {"lib/deeper/mod.py": "VALUE = 4\n"},
+                ("lib/deeper/", "a namespace package the allow-list does not walk"),
+            ),
+            "a local test tree inside the application tree": (
+                application,
+                {"tests/test_local_only.py": "def test_local_only():\n    assert True\n"},
+                ("tests/", "a namespace package the allow-list does not walk"),
+            ),
+        }
+        for label, (tree, plants, expected) in cases.items():
+            with self.subTest(label):
+                with planted_local_only_files([tree], plants) as planted:
+                    result = subprocess.run(
+                        [
+                            shutil.which("node") or "node",
+                            str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"),
+                        ],
+                        cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                self.assertNotEqual(
+                    0,
+                    result.returncode,
+                    f"staging accepted {label}, planted as {[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                )
+                refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+                self.assertTrue(refused, f"the staging failure for {label} does not report an error: {result.stderr.strip()}")
+                for fragment in expected:
+                    self.assertIn(
+                        fragment,
+                        refused[0],
+                        f"the staging refusal for {label} does not name it: {refused[0]}",
+                    )
+                print(f"\n{label}: staging refused with {refused[0]}")
+
+    def test_a_linked_entry_in_either_tree_fails_staging(self) -> None:
+        """A link is a shape the walk cannot classify, so staging refuses it by name. (SAN-AT-W1B-05 / ADV-W1B-R3-01)
+
+        The walk classifies each entry with `Dirent.isFile()` / `isDirectory()`, and both are false
+        for a symbolic link, so a linked `.py` module or a linked package directory was neither
+        checked nor shipped: staging exited 0, the staged package stayed byte-identical, and the
+        entry point imported from the source tree but not from the asset — the same silent omission
+        the recursive walk refuses, arriving through a linked entry. Python imports through a link,
+        so the guard cannot classify it as nothing; the rule is the shape of the whole tree: every
+        entry in `app/` or `py/src/apptheory` is a regular file or a regular directory, and any other
+        entry stops the build by name.
+
+        Both shapes are planted in both trees, because the runtime tree is the one that ships under
+        `apptheory/` and the application tree is the archive root. The committed trees still stage
+        without complaint afterwards, which is the other half of the rule: it refuses links, not the
+        package.
+        """
+        runtime = harness.ROOT / "py" / "src" / "apptheory"
+        application = harness.WEB_FUNCTION_PYTHON_ASGI_APP
+        cases: dict[str, tuple[Path, str, Path, str]] = {
+            "a linked module in the application tree": (
+                application,
+                "aliased_module.py",
+                application / "lib" / "application.py",
+                "aliased_module.py (a symbolic link)",
+            ),
+            "a linked package directory in the application tree": (
+                application,
+                "aliased_pkg",
+                application / "lib",
+                "aliased_pkg (a symbolic link)",
+            ),
+            "a linked module in the runtime tree": (
+                runtime,
+                "aliased_module.py",
+                runtime / "router.py",
+                "aliased_module.py (a symbolic link)",
+            ),
+            "a linked package directory in the runtime tree": (
+                runtime,
+                "aliased_pkg",
+                runtime / "limited",
+                "aliased_pkg (a symbolic link)",
+            ),
+        }
+
+        clean = run_web_function_python_staging()
+        self.assertEqual(0, clean.returncode, f"staging refused the trees as committed: {clean.stderr.strip()}")
+        committed = self._staged_files(clean)
+
+        for label, (tree, name, target, expected) in cases.items():
+            with self.subTest(label):
+                with planted_links([(tree, name, target)]) as planted:
+                    result = run_web_function_python_staging()
+                self.assertNotEqual(
+                    0,
+                    result.returncode,
+                    f"staging accepted {label}, planted as {[str(path.relative_to(harness.ROOT)) for path in planted]}",
+                )
+                refused = [line for line in result.stderr.splitlines() if line.startswith("Error: ")]
+                self.assertTrue(
+                    refused,
+                    f"the staging failure for {label} does not report an error: {result.stderr.strip()}",
+                )
+                self.assertIn(
+                    expected,
+                    refused[0],
+                    f"the staging refusal for {label} does not name the linked entry: {refused[0]}",
+                )
+                self.assertIn(
+                    "not a regular file or a regular directory",
+                    refused[0],
+                    f"the staging refusal for {label} does not state the rule: {refused[0]}",
+                )
+                print(f"\n{label}: staging refused with {refused[0]}")
+
+        after = run_web_function_python_staging()
+        self.assertEqual(
+            0,
+            after.returncode,
+            f"the trees as committed stopped staging after the links were removed: {after.stderr.strip()}",
+        )
+        self.assertEqual(
+            committed,
+            self._staged_files(after),
+            "the trees as committed no longer stage the package they staged before the linked entries were planted",
+        )
+        print(f"\nthe trees as committed still stage {len(committed)} files")
+
+    @staticmethod
+    def _staged_files(result: subprocess.CompletedProcess[str]) -> list[str]:
+        """The files one staging run produced, relative to the staged directory."""
+        staged = Path(result.stdout.strip())
+        return sorted(path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file())
+
+    def test_the_allow_list_walk_matches_the_tree_it_guards(self) -> None:
+        """The trees as they ship pass the guard: the walk names nothing it should not. (SAN-AT-W1B-05)
+
+        A walk that is too shallow is a silent omission; a walk that is too eager refuses the tree
+        that exists. This runs staging on the real trees as committed, so a recursive walk that
+        caught a byte-code cache, a local test tree, or a directory the package legitimately holds
+        as a namespace would fail here rather than at the next author's synth.
+        """
+        result = subprocess.run(
+            [
+                shutil.which("node") or "node",
+                str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs"),
+            ],
+            cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, f"staging refused the trees as committed: {result.stderr.strip()}")
+        staged = Path(result.stdout.strip())
+        files = sorted(path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file())
+        self.assertEqual(
+            [],
+            [name for name in files if "__pycache__" in name or name.endswith(".pyc")],
+            "a byte-code cache reached the deployment package",
+        )
+        print(f"\nthe trees as committed stage {len(files)} files and the recursive walk refuses nothing in them")
+
+
+class WebFunctionPythonDisconnectTests(unittest.TestCase):
+    """A client that leaves mid-response releases the producer, under real servers.
+
+    SAN-AT-W1B-03 / ADV-W1B-01: uvicorn does not fail a send on a dead transport, so the ASGI wrapper
+    has to watch `receive()` for `http.disconnect`; the WSGI direction already released because the
+    server's write fails and the iterable is closed. Both directions are driven here through the
+    real servers the rows use, against a probe application that records how far its producer got.
+    """
+
+    def test_an_asgi_client_that_goes_away_stops_the_producer(self) -> None:
+        port = ephemeral_port()
+        with self._probe() as (directory, state):
+            env = clean_python_env(
+                PYTHONPATH=str(harness.ROOT / "py" / "src"),
+                PROBE_STATE=str(state),
+            )
+            with StartedServer(
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "main:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--log-level",
+                    "warning",
+                ],
+                cwd=directory,
+                env=env,
+                port=port,
+                label="ASGI disconnect probe server",
+            ):
+                self._read_one_chunk_and_leave(port, "asgi")
+                elapsed = wait_for_producer_close(state)
+        ticks = producer_ticks(state)
+        self.assertLess(
+            len(ticks),
+            DISCONNECT_TICK_CEILING,
+            f"the ASGI producer ran on after the client went away: {len(ticks)} of 200 chunks, "
+            f"released after {elapsed:.2f}s",
+        )
+        self.assertNotIn("done", producer_state(state), "the ASGI producer ran to the end of a response nobody read")
+        print(f"\nasgi disconnect: producer released {elapsed:.2f}s after the client left, at chunk {len(ticks)} of 200")
+
+    def test_a_wsgi_client_that_goes_away_stops_the_producer(self) -> None:
+        port = ephemeral_port()
+        with self._probe() as (directory, state):
+            env = clean_python_env(
+                PYTHONPATH=str(harness.ROOT / "py" / "src"),
+                PROBE_STATE=str(state),
+                PORT=str(port),
+            )
+            with StartedServer(
+                [
+                    sys.executable,
+                    str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "serve-wsgi.py"),
+                    str(directory),
+                ],
+                cwd=directory,
+                env=env,
+                port=port,
+                label="WSGI disconnect probe server",
+            ):
+                self._read_one_chunk_and_leave(port, "wsgi")
+                elapsed = wait_for_producer_close(state)
+        ticks = producer_ticks(state)
+        self.assertLess(
+            len(ticks),
+            DISCONNECT_TICK_CEILING,
+            f"the WSGI producer ran on after the client went away: {len(ticks)} of 200 chunks, "
+            f"released after {elapsed:.2f}s",
+        )
+        self.assertNotIn("done", producer_state(state), "the WSGI producer ran to the end of a response nobody read")
+        print(f"\nwsgi disconnect: producer released {elapsed:.2f}s after the client left, at chunk {len(ticks)} of 200")
+
+    @contextlib.contextmanager
+    def _probe(self) -> object:
+        """A temporary probe application, with the file its producer records into."""
+        directory = Path(tempfile.mkdtemp(prefix="apptheory-web-function-probe-"))
+        try:
+            write(directory, "probe_stream.py", ASGI_DISCONNECT_PROBE)
+            write(directory, "main.py", ASGI_PROBE_MAIN)
+            write(directory, "main_wsgi.py", WSGI_PROBE_MAIN)
+            yield directory, directory / "producer-state.txt"
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def _read_one_chunk_and_leave(self, port: int, label: str) -> None:
+        """Open the stream, read one chunk, and close the connection: the client is gone."""
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
+            client.sendall(b"GET /stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            first = client.recv(4096)
+        if not first:
+            raise harness.HarnessFailure(f"the {label} probe stream sent nothing before the client left")
 
 
 class AwsCLIRequirementTests(unittest.TestCase):

@@ -8742,7 +8742,72 @@ test("AppTheoryWebFunction accepts nodejs26.x through the runtime escape", () =>
   assert.equal(webFunctionResources(template, "AWS::Lambda::WebFunction").length, 1);
 });
 
-test("AppTheoryWebFunction refuses the Python Web Function runtime", () => {
+test("AppTheoryWebFunction composes a Python ASGI Web Function and writes its entry point", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.of("python3.15"),
+    pythonApp: { module: "main", interface: apptheory.AppTheoryPythonInterface.ASGI },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("web-function-python", template);
+  } else {
+    expectSnapshot("web-function-python", template);
+  }
+
+  const revisions = webFunctionResources(template, "AWS::Lambda::WebFunctionRevision");
+  assert.equal(revisions.length, 1, "Should synthesize exactly one revision");
+  assert.equal(revisions[0].Properties.BuildConfig.RuntimeConfig.Runtime, "python3.15");
+  assert.deepEqual(
+    revisions[0].Properties.ServiceConfig.EnvironmentVariables,
+    { AWS_LAMBDA_PYTHON_ENTRYPOINT: "asgi:main:app" },
+    "the interface is part of the entry point, so the runtime never detects one",
+  );
+  const endpoints = webFunctionResources(template, "AWS::Lambda::WebFunctionEndpoint");
+  assert.equal(endpoints[0].Properties.AuthType, "IamAuth");
+});
+
+test("AppTheoryWebFunction composes a Python WSGI Web Function", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.of("python3.15"),
+    pythonApp: { module: "api", callable: "application", interface: apptheory.AppTheoryPythonInterface.WSGI },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const revisions = webFunctionResources(template, "AWS::Lambda::WebFunctionRevision");
+  assert.deepEqual(revisions[0].Properties.ServiceConfig.EnvironmentVariables, {
+    AWS_LAMBDA_PYTHON_ENTRYPOINT: "wsgi:api:application",
+  });
+});
+
+test("AppTheoryWebFunction keeps author environment variables beside the composed entry point", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryWebFunction(stack, "Web", {
+    code: webFunctionCode(stack),
+    runtime: lambda.WebFunctionRuntime.of("python3.15"),
+    environment: { APP_THEORY_TENANT: "example" },
+    pythonApp: { module: "main", interface: apptheory.AppTheoryPythonInterface.ASGI },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const revisions = webFunctionResources(template, "AWS::Lambda::WebFunctionRevision");
+  assert.deepEqual(revisions[0].Properties.ServiceConfig.EnvironmentVariables, {
+    APP_THEORY_TENANT: "example",
+    AWS_LAMBDA_PYTHON_ENTRYPOINT: "asgi:main:app",
+  });
+});
+
+test("AppTheoryWebFunction requires pythonApp with a Python runtime", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -8752,7 +8817,77 @@ test("AppTheoryWebFunction refuses the Python Web Function runtime", () => {
         code: webFunctionCode(stack),
         runtime: lambda.WebFunctionRuntime.of("python3.15"),
       }),
-    /does not compose the "python3\.15" Web Function runtime: a Python Web Function serves an ASGI or WSGI application/,
+    /requires pythonApp with "python3\.15": a Python Web Function serves an ASGI or WSGI application/,
+  );
+});
+
+test("AppTheoryWebFunction refuses pythonApp with a Node.js runtime", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryWebFunction(stack, "Web", {
+        code: webFunctionCode(stack),
+        runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+        pythonApp: { module: "main", interface: apptheory.AppTheoryPythonInterface.ASGI },
+      }),
+    /does not accept pythonApp with "nodejs24\.x": only a Python Web Function serves an ASGI or WSGI application/,
+  );
+});
+
+test("AppTheoryWebFunction refuses a Node.js entry file with a Python runtime", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryWebFunction(stack, "Web", {
+        code: webFunctionCode(stack),
+        runtime: lambda.WebFunctionRuntime.of("python3.15"),
+        entryPoint: "server.mjs",
+        pythonApp: { module: "main", interface: apptheory.AppTheoryPythonInterface.ASGI },
+      }),
+    /does not accept entryPoint with "python3\.15": a Python Web Function serves an ASGI or WSGI application named by pythonApp/,
+  );
+});
+
+test("AppTheoryWebFunction refuses an entry point smuggled through pythonApp", () => {
+  const attempt = (pythonApp) => () => {
+    const stack = new cdk.Stack(new cdk.App(), "TestStack");
+    new apptheory.AppTheoryWebFunction(stack, "Web", {
+      code: webFunctionCode(stack),
+      runtime: lambda.WebFunctionRuntime.of("python3.15"),
+      pythonApp,
+    });
+  };
+
+  assert.throws(
+    attempt({ module: "asgi:main", interface: apptheory.AppTheoryPythonInterface.ASGI }),
+    /does not accept "asgi:main" as pythonApp\.module; give the module name only/,
+  );
+  assert.throws(
+    attempt({ module: "main", callable: "app:extra", interface: apptheory.AppTheoryPythonInterface.ASGI }),
+    /does not accept "app:extra" as pythonApp\.callable; give the callable name only/,
+  );
+  assert.throws(
+    attempt({ module: "  ", interface: apptheory.AppTheoryPythonInterface.ASGI }),
+    /requires pythonApp\.module/,
+  );
+});
+
+test("AppTheoryWebFunction refuses a Python interface it cannot write", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryWebFunction(stack, "Web", {
+        code: webFunctionCode(stack),
+        runtime: lambda.WebFunctionRuntime.of("python3.15"),
+        pythonApp: { module: "main", interface: "auto" },
+      }),
+    /does not accept "auto" as pythonApp\.interface; use asgi or wsgi/,
   );
 });
 
@@ -8766,21 +8901,36 @@ test("AppTheoryWebFunction refuses a runtime it cannot compose", () => {
         code: webFunctionCode(stack),
         runtime: lambda.WebFunctionRuntime.of("nodejs18.x"),
       }),
-    /does not support runtime "nodejs18\.x"; supported runtimes are nodejs24\.x, nodejs26\.x/,
+    /does not support runtime "nodejs18\.x"; supported runtimes are nodejs24\.x, nodejs26\.x, python3\.15/,
   );
 });
 
-test("AppTheoryWebFunction refuses to set AWS_LAMBDA_HTTP_ENDPOINT", () => {
-  const app = new cdk.App();
-  const stack = new cdk.Stack(app, "TestStack");
+test("AppTheoryWebFunction refuses every reserved environment variable", () => {
+  const attempt = (props) => () => {
+    const stack = new cdk.Stack(new cdk.App(), "TestStack");
+    new apptheory.AppTheoryWebFunction(stack, "Web", { code: webFunctionCode(stack), ...props });
+  };
 
   assert.throws(
-    () =>
-      new apptheory.AppTheoryWebFunction(stack, "Web", {
-        code: webFunctionCode(stack),
-        runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
-        environment: { AWS_LAMBDA_HTTP_ENDPOINT: "127.0.0.1:3000" },
-      }),
-    /does not accept AWS_LAMBDA_HTTP_ENDPOINT in props\.environment/,
+    attempt({
+      runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+      environment: { AWS_LAMBDA_HTTP_ENDPOINT: "127.0.0.1:3000" },
+    }),
+    /does not accept AWS_LAMBDA_HTTP_ENDPOINT in props\.environment; the Lambda service sets it and the application reads it/,
+  );
+  assert.throws(
+    attempt({
+      runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
+      environment: { AWS_LAMBDA_NODEJS_ENTRYPOINT: "server.mjs" },
+    }),
+    /does not accept AWS_LAMBDA_NODEJS_ENTRYPOINT in props\.environment; set entryPoint instead/,
+  );
+  assert.throws(
+    attempt({
+      runtime: lambda.WebFunctionRuntime.of("python3.15"),
+      environment: { AWS_LAMBDA_PYTHON_ENTRYPOINT: "asgi:main:app" },
+      pythonApp: { module: "main", interface: apptheory.AppTheoryPythonInterface.ASGI },
+    }),
+    /does not accept AWS_LAMBDA_PYTHON_ENTRYPOINT in props\.environment; set pythonApp instead/,
   );
 });

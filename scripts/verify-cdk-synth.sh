@@ -49,6 +49,7 @@ examples=(
   "examples/cdk/local-iam-peer|local-iam-peer|"
   "examples/cdk/local-mcp-auth-facade|AppTheoryLocalMcpAuthFacade|"
   "examples/cdk/web-function|AppTheoryWebFunctionExample|"
+  "examples/cdk/web-function-python|AppTheoryWebFunctionPythonExample|"
 )
 
 # Stacks whose template is also checked for the resources the example exists to
@@ -64,6 +65,7 @@ asserted_stacks=(
   "LambdaPackagingExample"
   "SqsQueueExample"
   "AppTheoryWebFunctionExample"
+  "AppTheoryWebFunctionPythonExample"
 )
 
 if ! command -v node >/dev/null 2>&1; then

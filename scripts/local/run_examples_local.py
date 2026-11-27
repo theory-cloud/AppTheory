@@ -1610,6 +1610,287 @@ def _assert_web_function_overlap(base: str) -> str:
     )
 
 
+# --- web function (python) --------------------------------------------------
+#
+# A Python Web Function never starts an HTTP server: Lambda manages one and passes each request to
+# the application through ASGI or WSGI. Nothing on a laptop provides that server, so each row
+# supplies the local equivalent for its interface and drives the example's real application through
+# it — uvicorn (the reference ASGI server: one event loop, concurrent requests) for the ASGI entry
+# point, and the standard library's WSGI server with a threading mixin (one worker thread per
+# request) for the WSGI one. Nothing is simulated: no AWS call, no container, no adapter.
+
+WEB_FUNCTION_PYTHON_EXAMPLE = ROOT / "examples" / "cdk" / "web-function-python"
+WEB_FUNCTION_PYTHON_ASGI_APP = WEB_FUNCTION_PYTHON_EXAMPLE / "app"
+WEB_FUNCTION_PYTHON_WSGI_SERVER = "scripts/serve-wsgi.py"
+# How each row reaches AppTheory, exactly as the example's README documents it: the same `cd`, the
+# same relative PYTHONPATH, resolved from that directory. The rows used to inject
+# `<repo>/py/src` as an absolute path, which meant a documented command could be one directory
+# short and every row would still pass; `WebFunctionPythonLaunchTests` now holds the README and
+# these constants together.
+WEB_FUNCTION_PYTHON_PYTHONPATH = {"asgi": "../../../../py/src", "wsgi": "../../../py/src"}
+WEB_FUNCTION_PYTHON_README = WEB_FUNCTION_PYTHON_EXAMPLE / "README.md"
+WEB_FUNCTION_PYTHON_LAUNCH_SECTION = "## Run the application on its own"
+WEB_FUNCTION_PYTHON_TICKS = 4
+WEB_FUNCTION_PYTHON_TICK_SECONDS = 0.12
+WEB_FUNCTION_PYTHON_MARKER = "AppTheory Python Web Function"
+
+
+def web_function_python_launch_commands() -> list[str]:
+    """Return the launch commands the example's README documents, in order.
+
+    The section is a single bash fence whose lines are the commands an author copy-pastes: one for
+    the ASGI entry point, one for the WSGI one. Reading them out of the README is what lets a
+    self-test run the documented command rather than a paraphrase of it.
+    """
+    text = WEB_FUNCTION_PYTHON_README.read_text(encoding="utf-8")
+    section = text.split(WEB_FUNCTION_PYTHON_LAUNCH_SECTION, 1)
+    if len(section) != 2:
+        raise HarnessFailure(f"the example README has no {WEB_FUNCTION_PYTHON_LAUNCH_SECTION!r} section")
+    body = section[1].split("```", 2)
+    if len(body) < 3:
+        raise HarnessFailure("the launch section of the example README has no fenced command block")
+    fence = body[1].splitlines()
+    if fence and fence[0].strip() in {"bash", "sh", "console", "shell"}:
+        fence = fence[1:]
+    commands = [line.strip() for line in fence if line.strip() and not line.strip().startswith("#")]
+    if len(commands) != 2:
+        raise HarnessFailure(f"the launch section documents {len(commands)} commands, expected 2")
+    return commands
+
+
+def web_function_python_launch_pythonpath(command: str) -> str:
+    """Return the PYTHONPATH a documented launch command sets."""
+    match = re.search(r"\bPYTHONPATH=(\S+)", command)
+    if not match:
+        raise HarnessFailure(f"the documented launch command sets no PYTHONPATH: {command}")
+    return match.group(1)
+
+
+def run_web_function_python(harness: Harness) -> str:
+    """Serve the example's ASGI entry point the way a Web Function's server does."""
+    return _run_web_function_python(
+        harness,
+        label="asgi",
+        port=harness.port_base,
+        command=[
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(harness.port_base),
+            "--log-level",
+            "info",
+        ],
+        cwd=WEB_FUNCTION_PYTHON_ASGI_APP,
+        startup_marker=f"Uvicorn running on http://127.0.0.1:{harness.port_base}",
+        pythonpath=WEB_FUNCTION_PYTHON_PYTHONPATH["asgi"],
+    )
+
+
+def run_web_function_python_wsgi(harness: Harness) -> str:
+    """Serve the example's WSGI entry point on the standard library's threaded WSGI server."""
+    port = harness.port_base
+    return _run_web_function_python(
+        harness,
+        label="wsgi",
+        port=port,
+        command=[sys.executable, WEB_FUNCTION_PYTHON_WSGI_SERVER],
+        cwd=WEB_FUNCTION_PYTHON_EXAMPLE,
+        startup_marker=f"web-function wsgi listening on 127.0.0.1:{port}",
+        pythonpath=WEB_FUNCTION_PYTHON_PYTHONPATH["wsgi"],
+    )
+
+
+def _run_web_function_python(
+    harness: Harness,
+    *,
+    label: str,
+    port: int,
+    command: list[str],
+    cwd: Path,
+    startup_marker: str,
+    pythonpath: str,
+) -> str:
+    base = f"http://127.0.0.1:{port}"
+    env = dict(harness.env)
+    # The application imports AppTheory the way the README's own command does — the relative path in
+    # `WEB_FUNCTION_PYTHON_PYTHONPATH`, resolved from this row's working directory. Nothing here
+    # adds an absolute path of the harness's own, because that would hide a documented command that
+    # does not reach AppTheory. A deployment packages the runtime into the archive root instead.
+    env["PYTHONPATH"] = pythonpath
+    env["PORT"] = str(port)
+    # Both servers import the application from the tree the synth gate fingerprints, so a byte-code
+    # cache would write into the asset between two synth runs and move its pinned hash. Keep the
+    # deployment package to what is in git.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    log = tempfile.NamedTemporaryFile(prefix=f"apptheory-web-function-python-{label}-", suffix=".log", delete=False)
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            _wait_for_tcp(process, port, label=f"web-function python {label} server")
+            page = _assert_web_function_python_page(base, label)
+            stream = _assert_web_function_python_stream(base, label)
+            overlap = _assert_web_function_python_overlap(base, label)
+        finally:
+            _stop_process(process)
+            log.close()
+        with open(log.name, encoding="utf-8", errors="replace") as handle:
+            server_log = handle.read()
+        expect_output(
+            server_log,
+            [startup_marker],
+            f"web-function python {label} server startup",
+        )
+        return f"{page}; {stream}; {overlap}"
+    finally:
+        try:
+            os.unlink(log.name)
+        except FileNotFoundError:
+            pass
+
+
+def _assert_web_function_python_page(base: str, label: str) -> str:
+    """A page, a readiness route, and a real 404 from the application's own router."""
+    status, body, headers = http_request("GET", f"{base}/")
+    if status != 200:
+        raise HarnessFailure(f"the {label} page answered {status}, not 200")
+    if headers.get("content-type") != "text/html; charset=utf-8":
+        raise HarnessFailure(f"the {label} page content type is {headers.get('content-type')!r}")
+    if WEB_FUNCTION_PYTHON_MARKER not in body:
+        raise HarnessFailure(f"the {label} page body does not carry the example's marker")
+
+    status, body, _ = http_request("GET", f"{base}/health")
+    if status != 200 or body != "ok":
+        raise HarnessFailure(f"the {label} health route answered {status} {body!r}")
+
+    status, _, _ = http_request("GET", f"{base}/missing")
+    if status != 404:
+        raise HarnessFailure(f"the {label} unknown route answered {status}, not 404")
+
+    return "page 200 text/html, health 200, unknown route 404"
+
+
+def _assert_web_function_python_stream(base: str, label: str) -> str:
+    """The response is delivered incrementally, with no content-length to buffer it."""
+    status, _, headers, chunks = http_stream_request(
+        "GET", f"{base}/stream?tag=solo&ticks=3", timeout=60
+    )
+    if status != 200:
+        raise HarnessFailure(f"the {label} stream answered {status}, not 200")
+    if headers.get("content-type") != "text/event-stream":
+        raise HarnessFailure(f"the {label} stream content type is {headers.get('content-type')!r}")
+    if "content-length" in headers:
+        raise HarnessFailure(f"the {label} stream declared content-length, so it was buffered")
+
+    events = _sse_events(chunks)
+    ticks = [data for _, name, data in events if name == "tick"]
+    if [data["tick"] for data in ticks] != [1, 2, 3]:
+        raise HarnessFailure(f"the {label} stream delivered ticks {[data['tick'] for data in ticks]}")
+    if len(set(data["tag"] for data in ticks)) != 1 or ticks[0]["tag"] != "solo":
+        raise HarnessFailure(f"the {label} stream mixed tags in a single request")
+    if [name for _, name, _ in events][-1:] != ["done"]:
+        raise HarnessFailure(f"the {label} stream did not close with its done event")
+
+    first = first_chunk_seconds(chunks)
+    last = chunks[-1][0]
+    if first > 3 * WEB_FUNCTION_PYTHON_TICK_SECONDS:
+        raise HarnessFailure(f"the {label} first chunk arrived at {first:.3f}s, so nothing streamed early")
+    if last - first < 2 * WEB_FUNCTION_PYTHON_TICK_SECONDS:
+        raise HarnessFailure(
+            f"the {label} whole stream arrived within {last - first:.3f}s, so it was not delivered incrementally"
+        )
+    return f"3 events over {last - first:.2f}s, first at {first:.2f}s, chunked"
+
+
+def _assert_web_function_python_overlap(base: str, label: str) -> str:
+    """Two streams delivered concurrently, each seeing only its own request state.
+
+    Overlap is measured on delivery, not on the calls: every chunk carries the instant it arrived,
+    on one clock shared by both streams, so a server that answered the second request only after the
+    first stream finished cannot pass by holding the second call open. Each stream must have
+    delivered chunks while the other one was still open, and each must carry only its own tag — one
+    execution environment answers both, so a tag or a tick counter kept in module state would show
+    up here as one request reading another's values.
+    """
+    tags = ("first", "second")
+    origin = time.monotonic()
+    results: dict[str, tuple[int, dict, list[tuple[float, bytes]]]] = {}
+
+    def drive(tag: str) -> None:
+        status, _, headers, chunks = http_stream_request(
+            "GET",
+            f"{base}/stream?tag={tag}&ticks={WEB_FUNCTION_PYTHON_TICKS}",
+            timeout=60,
+            origin=origin,
+        )
+        results[tag] = (status, headers, chunks)
+
+    threads = [threading.Thread(target=drive, args=(tag,), daemon=True) for tag in tags]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    for thread in threads:
+        if thread.is_alive():
+            raise HarnessFailure(f"an overlapping {label} stream never finished")
+
+    if set(results) != set(tags):
+        raise HarnessFailure(f"both overlapping {label} streams did not answer")
+
+    for tag in tags:
+        status, headers, chunks = results[tag]
+        if status != 200:
+            raise HarnessFailure(f"the {label} {tag} stream answered {status}, not 200")
+        if headers.get("content-type") != "text/event-stream":
+            raise HarnessFailure(f"the {label} {tag} stream content type is {headers.get('content-type')!r}")
+        ticks = [data for _, name, data in _sse_events(chunks) if name == "tick"]
+        if [data["tick"] for data in ticks] != list(range(1, WEB_FUNCTION_PYTHON_TICKS + 1)):
+            raise HarnessFailure(
+                f"the {label} {tag} stream delivered ticks {[data['tick'] for data in ticks]}, "
+                "so its counter was not request-scoped"
+            )
+        foreign = [data["tag"] for data in ticks if data["tag"] != tag]
+        if foreign:
+            raise HarnessFailure(
+                f"the {label} {tag} stream carried {foreign}, so one request read another's state"
+            )
+
+    first = {tag: first_chunk_seconds(results[tag][2]) for tag in tags}
+    last = {tag: results[tag][2][-1][0] for tag in tags}
+
+    delivered: dict[str, int] = {}
+    for tag, other in (tags, tags[::-1]):
+        delivered[tag] = sum(1 for at, _ in results[tag][2] if at < last[other])
+        if delivered[tag] < WEB_FUNCTION_INTERLEAVED_CHUNKS:
+            raise HarnessFailure(
+                f"the {label} {tag} stream delivered {delivered[tag]} chunk(s) before the {other} "
+                f"stream finished at {last[other]:.3f}s (its own first chunk arrived at "
+                f"{first[tag]:.3f}s), so the two responses were not delivered concurrently"
+            )
+
+    overlap_seconds = min(last.values()) - max(first.values())
+    if overlap_seconds < (WEB_FUNCTION_PYTHON_TICKS - 1) * WEB_FUNCTION_PYTHON_TICK_SECONDS:
+        raise HarnessFailure(
+            f"the {label} streams were delivered concurrently for only {overlap_seconds:.3f}s, "
+            "so they were mostly serial"
+        )
+    return (
+        f"2 streams overlapped {overlap_seconds:.2f}s of delivery, "
+        f"{delivered['first']} + {delivered['second']} chunks interleaved before either finished, "
+        "each saw only its own tag"
+    )
+
+
 # --- local runner -----------------------------------------------------------
 #
 # The three hello-world rows run the app's real CDK definition through
@@ -9118,6 +9399,8 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "cdk-synth-all": run_cdk_synth_all,
     "rate-limited-http": run_rate_limited_http,
     "web-function": run_web_function,
+    "web-function-python": run_web_function_python,
+    "web-function-python-wsgi": run_web_function_python_wsgi,
     "local-runner-go": run_local_runner_go,
     "local-runner-ts": run_local_runner_ts,
     "local-runner-py": run_local_runner_py,
@@ -9331,6 +9614,8 @@ STANDALONE_ROWS: dict[str, tuple[str, ...]] = {
     "testkit:py": ("testkit-py",),
     "table:rate-limits": ("rate-limited-http",),
     "web-function:local": ("web-function",),
+    "web-function:python": ("web-function-python",),
+    "web-function:python-wsgi": ("web-function-python-wsgi",),
     "runtime:conformance": ("runtime-api-conformance",),
 }
 

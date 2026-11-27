@@ -7,14 +7,81 @@ import { Construct } from "constructs";
 /**
  * Runtimes an AppTheory Web Function deploys on.
  *
- * These are the Lambda Web Function managed runtimes that can start an HTTP server
- * (`nodejs24.x` and `nodejs26.x`). The set is closed on purpose: a runtime outside it is
- * refused at synthesis rather than deployed into a function that cannot start.
+ * These are the Lambda Web Function managed runtimes: `nodejs24.x` and `nodejs26.x`, where the
+ * application starts an HTTP server and reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen
+ * on, and `python3.15`, where Lambda manages the HTTP server and passes each request to an ASGI or
+ * WSGI application (see {@link AppTheoryPythonAppProps}). `python3.15` is an upstream public
+ * preview: it carries no SLA, no Technical Support, and is not for production.
+ *
+ * The set is closed on purpose: a runtime outside it is refused at synthesis rather than deployed
+ * into a function that cannot start.
  */
 const SUPPORTED_RUNTIMES: { [name: string]: string } = {
   "nodejs24.x": "Node.js 24",
   "nodejs26.x": "Node.js 26",
+  "python3.15": "Python 3.15 (upstream public preview)",
 };
+
+/**
+ * The reserved environment variables the Lambda service or this construct owns.
+ *
+ * The service publishes the listen address, and the entry point is deployment configuration this
+ * construct writes. Accepting either through `environment` would let a second, silent source of
+ * truth decide how the function starts, so both are refused with the alternative to use instead.
+ */
+const RESERVED_ENVIRONMENT: { [name: string]: string } = {
+  AWS_LAMBDA_HTTP_ENDPOINT:
+    "the Lambda service sets it and the application reads it",
+  AWS_LAMBDA_NODEJS_ENTRYPOINT: "set entryPoint instead",
+  AWS_LAMBDA_PYTHON_ENTRYPOINT: "set pythonApp instead",
+};
+
+/**
+ * The Python application a Python Web Function serves.
+ *
+ * A Python Web Function is not a request/response handler: Lambda manages the HTTP server and
+ * passes each request to this application through the interface named here. The interface is part
+ * of the stack, so it is deployment configuration rather than a runtime knob.
+ */
+export enum AppTheoryPythonInterface {
+  /**
+   * An ASGI 3.0 application. Concurrent requests run on the application's single event loop.
+   */
+  ASGI = "asgi",
+
+  /**
+   * A WSGI application. Concurrent requests run in the server's pool of worker threads.
+   */
+  WSGI = "wsgi",
+}
+
+/**
+ * The Python application a Python Web Function serves, as the runtime loads it.
+ */
+export interface AppTheoryPythonAppProps {
+  /**
+   * The module that holds the callable, relative to the root of the deployment package and without
+   * the `.py` extension, for example `main`.
+   *
+   * Must not contain a colon: the runtime's entry-point syntax is `module:callable`.
+   */
+  readonly module: string;
+
+  /**
+   * The name of the callable the module exposes.
+   *
+   * @default "app"
+   */
+  readonly callable?: string;
+
+  /**
+   * The interface the callable implements.
+   *
+   * `ASGI` declares an async callable; `WSGI` declares a synchronous one. The interface is written
+   * with the entry point (as `asgi:module:callable`), so the runtime never has to guess.
+   */
+  readonly interface: AppTheoryPythonInterface;
+}
 
 /**
  * The endpoint a Web Function serves requests on.
@@ -172,24 +239,88 @@ export interface AppTheoryWebFunctionProps {
    * @default undefined - no system log level filtering
    */
   readonly systemLogLevel?: lambda.SystemLogLevel;
+
+  /**
+   * The Python application a `python3.15` Web Function serves.
+   *
+   * Required with a Python runtime, and refused with a Node.js runtime: a Node.js Web Function
+   * starts its own HTTP server and names its entry file through `entryPoint` instead.
+   *
+   * `python3.15` is an upstream public preview: not covered by the Lambda SLA or Technical
+   * Support, and not for production.
+   *
+   * @default undefined - the runtime is not Python
+   */
+  readonly pythonApp?: AppTheoryPythonAppProps;
+}
+
+/**
+ * The value a Python Web Function's entry point takes: `interface:module:callable`.
+ *
+ * The interface prefix is always written, so the runtime serves the declared interface instead of
+ * detecting one. Every field is checked here because the runtime only reports a bad entry point
+ * when the function starts, which is after the deployment.
+ */
+function pythonEntryPoint(app: AppTheoryPythonAppProps): string {
+  const module = String(app.module ?? "").trim();
+  const callable = String(app.callable ?? "app").trim();
+  if (!module) {
+    throw new Error("AppTheoryWebFunction requires pythonApp.module; it is the module that holds the callable");
+  }
+  if (module.includes(":")) {
+    throw new Error(
+      `AppTheoryWebFunction does not accept "${app.module}" as pythonApp.module; give the module name only, ` +
+        "without the callable or an interface prefix",
+    );
+  }
+  if (!callable || callable.includes(":")) {
+    throw new Error(
+      `AppTheoryWebFunction does not accept "${app.callable}" as pythonApp.callable; ` +
+        "give the callable name only, without the module or an interface prefix",
+    );
+  }
+  const iface = app.interface;
+  if (iface !== AppTheoryPythonInterface.ASGI && iface !== AppTheoryPythonInterface.WSGI) {
+    throw new Error(
+      `AppTheoryWebFunction does not accept "${String(iface)}" as pythonApp.interface; ` +
+        `use ${AppTheoryPythonInterface.ASGI} or ${AppTheoryPythonInterface.WSGI}`,
+    );
+  }
+  return `${iface}:${module}:${callable}`;
 }
 
 /**
  * A Lambda Web Function: a function that serves HTTP through its own endpoint.
  *
  * One composition creates the function, its first revision, and the endpoint it answers on, with
- * an endpoint that defaults to `IamAuth` so a function is never public by accident. The
- * application starts its own HTTP server and reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to
- * listen on; there is no adapter and no second entry point.
+ * an endpoint that defaults to `IamAuth` so a function is never public by accident. How the
+ * application serves HTTP is decided by its runtime:
+ *
+ * - **Node.js** (`nodejs24.x`, `nodejs26.x`) — the application starts its own HTTP server and reads
+ *   `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on. `entryPoint` names the entry file.
+ * - **Python** (`python3.15`, upstream public preview) — Lambda manages the HTTP server and passes
+ *   each request to an ASGI or WSGI application. `pythonApp` names the module, the callable and the
+ *   interface; the construct writes the entry point, and no environment variable decides it.
+ *
+ * There is no adapter and no second entry point either way: `runtime/` serves request/response
+ * Lambda events, and this construct composes the function that serves HTTP directly.
  *
  * @example
- * // A page and a streamed response, on an endpoint that requires IAM authorization
+ * // A Node.js application: a page and a streamed response, on an IAM-authorized endpoint
  * const app = new AppTheoryWebFunction(stack, 'Web', {
  *   code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),
  *   runtime: lambda.WebFunctionRuntime.NODEJS_24_X,
  *   entryPoint: 'server.mjs',
  * });
  * // app.domainName is the endpoint to request, and app.endpoint.grants authorizes callers.
+ *
+ * @example
+ * // A Python ASGI application (`apptheory.ASGIApp` in main.py), on an IAM-authorized endpoint
+ * const pythonApp = new AppTheoryWebFunction(stack, 'PythonWeb', {
+ *   code: lambda.WebFunctionCode.fromAssetToManagedBucket('app'),
+ *   runtime: lambda.WebFunctionRuntime.of('python3.15'),
+ *   pythonApp: { module: 'main', interface: AppTheoryPythonInterface.ASGI },
+ * });
  */
 export class AppTheoryWebFunction extends Construct {
   /**
@@ -226,36 +357,53 @@ export class AppTheoryWebFunction extends Construct {
     super(scope, id);
 
     const runtimeName = props.runtime.name;
-    if (runtimeName.startsWith("python")) {
-      throw new Error(
-        `AppTheoryWebFunction does not compose the "${runtimeName}" Web Function runtime: a ` +
-          "Python Web Function serves an ASGI or WSGI application, and AppTheory's Python " +
-          "runtime is a request/response runtime with no such entry point. " +
-          `Supported runtimes are ${Object.keys(SUPPORTED_RUNTIMES).join(", ")}`,
-      );
-    }
     if (!Object.hasOwn(SUPPORTED_RUNTIMES, runtimeName)) {
       throw new Error(
         `AppTheoryWebFunction does not support runtime "${runtimeName}"; ` +
           `supported runtimes are ${Object.keys(SUPPORTED_RUNTIMES).join(", ")}`,
       );
     }
-
-    const environment = props.environment ?? {};
-    if (Object.hasOwn(environment, "AWS_LAMBDA_HTTP_ENDPOINT")) {
+    if (runtimeName.startsWith("python") && props.entryPoint !== undefined) {
       throw new Error(
-        "AppTheoryWebFunction does not accept AWS_LAMBDA_HTTP_ENDPOINT in props.environment; " +
-          "the Lambda service sets it and the application reads it",
+        `AppTheoryWebFunction does not accept entryPoint with "${runtimeName}": a Python Web Function ` +
+          "serves an ASGI or WSGI application named by pythonApp, not an entry file",
+      );
+    }
+    if (runtimeName.startsWith("python") && props.pythonApp === undefined) {
+      throw new Error(
+        `AppTheoryWebFunction requires pythonApp with "${runtimeName}": a Python Web Function serves an ` +
+          "ASGI or WSGI application, and pythonApp names its module, callable and interface",
+      );
+    }
+    if (!runtimeName.startsWith("python") && props.pythonApp !== undefined) {
+      throw new Error(
+        `AppTheoryWebFunction does not accept pythonApp with "${runtimeName}": only a Python Web ` +
+          "Function serves an ASGI or WSGI application; a Node.js one starts its own HTTP server and " +
+          "names it with entryPoint",
       );
     }
 
+    const environment = props.environment ?? {};
+    for (const [name, reason] of Object.entries(RESERVED_ENVIRONMENT)) {
+      if (Object.hasOwn(environment, name)) {
+        throw new Error(
+          `AppTheoryWebFunction does not accept ${name} in props.environment; ${reason}`,
+        );
+      }
+    }
+
     const endpointProps = props.endpoint ?? {};
+
+    const composedEnvironment = { ...environment };
+    if (props.pythonApp !== undefined) {
+      composedEnvironment.AWS_LAMBDA_PYTHON_ENTRYPOINT = pythonEntryPoint(props.pythonApp);
+    }
 
     this.webFunction = new lambda.WebFunction(this, "Function", {
       code: props.code,
       runtime: props.runtime,
       entryPoint: props.entryPoint,
-      environment: Object.keys(environment).length === 0 ? undefined : environment,
+      environment: Object.keys(composedEnvironment).length === 0 ? undefined : composedEnvironment,
       timeout: props.timeout,
       maxConcurrencyPerEnvironment: props.maxConcurrencyPerEnvironment,
       revisionDescription: props.description,

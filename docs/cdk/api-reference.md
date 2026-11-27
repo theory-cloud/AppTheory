@@ -71,7 +71,10 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryMediaCdn`
 - `AppTheoryWebSocketApi`
 - `AppTheoryWebFunction`: Lambda Web Function — one composition creates the function, its revision, and
-  the endpoint it serves on, `IamAuth` by default
+  the endpoint it serves on, `IamAuth` by default. Node.js runtimes start their own server and name an
+  `entryPoint`; `python3.15` (upstream public preview) serves an ASGI or WSGI application named by
+  `pythonApp`, with `AppTheoryPythonInterface` choosing `ASGI` or `WSGI`; `AppTheoryPythonAppProps`
+  carries the module and callable
 
 ## Governed namespace install parameters
 
