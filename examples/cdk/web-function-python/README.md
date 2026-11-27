@@ -160,9 +160,12 @@ sourceless `<module>.pyc` kept beside its siblings, an extension module (`.so` o
 `__init__.py`, or a namespace package directory (a directory with no `__init__.py` that Python imports because it holds
 modules) — at any depth, in `app/` or in `py/src/apptheory`. An unnamed one stops the build, naming the directory or
 module and the files it would have brought in, instead of deploying an archive that is missing code the tree has. The
-one shape that stays out in silence is a byte-code cache: `<module>.<tag>.pyc` inside a `__pycache__` is what the
-interpreter wrote, and the import system never loads a file from there. A `.py` or a `.so` that happens to sit in a
-`__pycache__` is not something the interpreter writes, so it is refused by name like any other unit.
+one shape that stays out in silence is a byte-code cache, and only in the name the interpreter gives it:
+`<module>.<implementation>-<version>[.opt-N].pyc` inside a `__pycache__` is what an interpreter wrote, and the import
+system never loads that name from a directory. Anything else inside a `__pycache__` is refused by name like any other
+unit — a `.py`, a `.so`, and equally a `<module>.pyc` with no tag, because `__pycache__` is a legal directory name and
+that file is a sourceless module of the namespace package `__pycache__`, importable exactly like a sourceless module
+beside its siblings. A handler that imported one from its own tree would deploy an archive that could not.
 
 That rule is total, and it settles what happens to a local *test* tree: a directory of test modules under `app/` is
 importable from the archive root, so it is code as far as the guard can tell, and staging refuses it by name rather
