@@ -6,24 +6,18 @@
         "scripts/verify-unit.sh"
       ],
       "durationSeconds": 53.73,
-      "executed": true,
+      "executed": false,
       "exitCode": 0,
       "finishedAt": "2026-11-27T07:27:44Z",
       "id": "unit",
       "inputsDigest": "sha256:2e60ce7f99037e27858bdd9a6b8c3d996f2795f6471fd0ecce1b6f4360d8b584",
       "logDigest": "sha256:71e91caab156bf4b954ccc70b3735e856366b2a9aee25e741be1816eb30ac331",
       "logRef": "gov-infra/evidence/proportionate/local/unit-unit-20261127T072651Z-5041.log",
-      "reused": false,
+      "reused": true,
       "startedAt": "2026-11-27T07:26:51Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:de86fd9f1c97711b221cef610fa901dc8fbd5e6668d877021e135c47cec7ac24",
-      "gate": "go",
-      "recordedAt": "2026-11-27T07:26:50Z"
-    }
-  ],
+  "consumed": [],
   "description": "Cross-language unit tests (Go unit selection, TypeScript tests, Python tests) composed with the Go gate",
   "environment": {
     "go": "go1.27.4",
@@ -42,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-27T07:27:44Z",
+  "recordedAt": "2026-11-27T08:24:41Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -75,7 +69,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:d2184d20ad1c180f0232dcc741178a9c1cb0eda79c6f31d5213b3631835d35d8",
+    "digest": "sha256:afc06d7dae455b1e3df0340a118df3bd199d17e5ed6ce8ec7d5ad5fe34155c47",
     "fileCount": 2852
   },
   "verdict": "PASS"
