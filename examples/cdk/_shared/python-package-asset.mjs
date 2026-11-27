@@ -37,15 +37,19 @@
 // files, so a `helper.pyc` was not declared, not refused, and not copied — staging exited 0 and the
 // deployed function could not import a module its own source tree could.
 //
-// Byte-code *caches* are the one thing inside a `__pycache__` that is residue, and only there. The
-// interpreter writes them beside the source it compiles — never as something a later import of that
-// directory can load, because a cache is named `<module>.<tag>.pyc` and the import system only looks
-// for `<module>.pyc` — so a `<module>.pyc` inside a `__pycache__` is dropped in silence, at any
-// depth, and a `__pycache__` holding nothing else is not an importable directory at all. A source
-// file or an extension module *inside* a `__pycache__` is not something the interpreter writes
-// there, and a directory named `__pycache__` is importable exactly like any other, so those stay
-// importable units: named or refused, never dropped on the assumption that a cache directory is
-// harmless.
+// A byte-code *cache* is the one thing inside a `__pycache__` that is residue, and only in the one
+// form the interpreter writes: `<module>.<implementation>-<version>[.opt-N].pyc`. That name carries
+// the tag of the interpreter that compiled it, and the import system loads only `<module>.py`,
+// `<module>.pyc` and `<module>.so` from a directory, so a tagged cache inside a `__pycache__` is
+// dropped in silence, at any depth, and a `__pycache__` holding nothing else is not an importable
+// directory at all. *Untagged* byte-code in a `__pycache__` is a different thing, and the difference
+// is the whole finding: `__pycache__` is a legal directory name, so `<module>.pyc` sitting in one is
+// a sourceless module of the namespace package `__pycache__` — `import __pycache__.review_sourceless`
+// reads it exactly like any other sourceless module, and it was neither declared, refused nor copied
+// (SAN-AT-W1C-01). The interpreter never writes that name, so nothing here may assume it is
+// harmless: byte-code inside a `__pycache__` that is not a tagged cache is refused by name, like any
+// other undeclared unit, together with a source file, an extension module or an optimised `.pyo` that
+// happens to sit in one.
 //
 // That rule is deliberately total, and it is why a local *Python* test tree cannot live inside these
 // trees while a `.env` can: a directory of test modules is importable from the archive root, so it is
@@ -88,12 +92,49 @@ const STAGE_PARENT = ".cdk-asset-stage";
 /**
  * The directory the interpreter writes byte-code caches into, at any depth.
  *
- * Its contents are the one shape that is residue where it stands: the import system never loads
- * `<dir>/__pycache__/<module>.<tag>.pyc`, it loads `<dir>/<module>.py`, `<dir>/<module>.pyc` and
- * `<dir>/<module>.so`. A cache is therefore dropped in silence; a source file or an extension module
- * that happens to sit inside a `__pycache__` is a unit like any other (see `importableUnit`).
+ * A tagged cache in it is the one shape that is residue where it stands: the import system never
+ * loads `<dir>/__pycache__/<module>.<tag>.pyc`, it loads `<dir>/<module>.py`, `<dir>/<module>.pyc`
+ * and `<dir>/<module>.so`. A cache is therefore dropped in silence. Everything else inside a
+ * `__pycache__` is a unit like any other (see `importableUnit`): the directory is a legal name, and
+ * `<module>.pyc` in it is a sourceless module of the namespace package `__pycache__`.
  */
 const CACHE_DIRECTORY = "__pycache__";
+
+/**
+ * The implementations whose byte-code caches exist in the wild, as the leading part of a cache tag.
+ *
+ * A cache tag is an implementation and a version: `cpython-314`, `graalpy-38-native-x86_64-darwin`,
+ * `pypy310`. The list is closed on purpose, because the test it feeds is "did an interpreter write
+ * this name" — and the answer for anything unrecognised has to be no, or the rule is back to
+ * dropping files it never checked. Teaching it a new interpreter is one line here, which is the
+ * growth path a fail-closed rule owes its callers.
+ */
+const CACHE_TAG_IMPLEMENTATIONS = [
+  "cpython",
+  "graalpy",
+  "graalpython",
+  "ironpython",
+  "jython",
+  "micropython",
+  "pypy",
+  "pyston",
+  "rustpython",
+];
+
+/**
+ * The name the interpreter gives a byte-code cache: `<module>.<implementation>-<version>[.opt-N].pyc`.
+ *
+ * The `[a-z]*` after the version carries the free-threaded and debug suffixes (`cpython-313t`,
+ * `cpython-311d`); the repeated `[.-][a-z0-9_]+` carries the platform tail a tag like
+ * `graalpy-38-native-x86_64-darwin` ends in, and `.opt-N` is what `PYTHONOPTIMIZE` adds. The pattern
+ * is anchored at the end and says nothing about what precedes the tag, because the module part is
+ * whatever the author called the module — no cache name is importable from a directory, since a
+ * module lookup wants `<module>.py`, `<module>.pyc` or `<module>.so`. Anything that does not match
+ * is not a name the interpreter wrote, so it is a unit and staging refuses it by name.
+ */
+const TAGGED_CACHE_NAME = new RegExp(
+  `\\.(?:${CACHE_TAG_IMPLEMENTATIONS.join("|")})-?[0-9]+[a-z]*(?:[.-][a-z0-9_]+)*\\.pyc$`,
+);
 
 /**
  * The file shapes the import system loads whatever the directory is.
@@ -312,16 +353,23 @@ const EXAMPLE_PACKAGES = {
 /**
  * Whether a file name is a unit the import system loads, standing in the directory it sits in.
  *
- * `cached` is true only for the entries directly inside a `__pycache__`: there, byte-code is what
- * the interpreter put there and is residue, while a source file or an extension module is not
- * something the interpreter writes and stays a unit. Everywhere else byte-code is importable.
+ * `cached` is true only for the entries directly inside a `__pycache__`, where exactly one shape is
+ * residue: the tagged cache the interpreter writes (`TAGGED_CACHE_NAME`). Byte-code in any other
+ * shape there — `<module>.pyc`, `.pyo`, a name no interpreter produces — is a unit, because
+ * `__pycache__` is a legal namespace package and the import system loads `<module>.pyc` from it; a
+ * source file or an extension module inside a `__pycache__` is not something the interpreter writes
+ * either and stays a unit too. Everywhere else byte-code is importable, so it is a unit whatever its
+ * name.
  */
 function importableUnit(name, cached) {
   const lower = name.toLowerCase();
   if (IMPORTABLE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
     return true;
   }
-  return !cached && BYTE_CODE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+  if (!BYTE_CODE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
+    return false;
+  }
+  return !cached || !TAGGED_CACHE_NAME.test(name);
 }
 
 /** Whether a directory is a package: it holds `__init__` as source or as byte-code. */
@@ -402,12 +450,17 @@ function unitsBelow(directory, cached, prefix = "") {
  * modules. Depth is irrelevant to importability: `apptheory.oauth.newsub` imports from
  * `apptheory/oauth/newsub/` just as `apptheory.router` imports from `apptheory/router.py`, so a walk
  * that stops at the directories somebody thought to list is a walk that misses growth. (A directory
- * with no importable file beneath it is not importable, which is what keeps `__pycache__` and a
- * local `.pytest_cache` out of the findings.)
+ * with no importable file beneath it is not importable, which is what keeps a local `.pytest_cache`
+ * out of the findings.)
+ *
+ * A `__pycache__` is always descended into, because it is a namespace package like any other
+ * directory and only the tagged caches inside it are residue: a `__pycache__` holding nothing but
+ * caches reports nothing, and a `__pycache__/helper.pyc` is reported as the module it is rather than
+ * as a directory to skip. That is the shape that used to be dropped in silence (SAN-AT-W1C-01).
  *
  * A directory the allow-list names nothing inside is reported once, together with the files it would
- * have brought in; a directory it partly names is descended into, so its own undeclared units are
- * reported by name.
+ * have brought in; a directory it partly names, and a `__pycache__`, is descended into, so its own
+ * undeclared units are reported by name.
  */
 function undeclaredUnits(tree, declared) {
   const named = new Set(declared);
@@ -431,7 +484,7 @@ function undeclaredUnits(tree, declared) {
       }
       const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
       const childCached = entry.name === CACHE_DIRECTORY;
-      if (namesInside(childRelative)) {
+      if (namesInside(childRelative) || childCached) {
         walk(childRelative, childCached);
         continue;
       }
@@ -491,8 +544,10 @@ function verifyTree(tree) {
         "they ship with the package — a module, a sourceless module kept beside its siblings, an extension " +
         "module, a package or a namespace package directory all import from the archive root. A module, test " +
         "tree or scratch package that is local-only does not ship, so keep it outside the packaged trees (a " +
-        "handler's local test lives in examples/cdk/<example>/tests/); byte-code caches belong in a " +
-        "__pycache__, which is dropped in silence.",
+        "handler's local test lives in examples/cdk/<example>/tests/); a byte-code cache belongs in a " +
+        "__pycache__ under the name the interpreter gives it, <module>.<implementation>-<version>[.opt-N].pyc, " +
+        "which is dropped in silence. Byte-code in a __pycache__ under any other name is a module of the " +
+        "namespace package __pycache__ and is refused here, not dropped.",
     );
   }
 }

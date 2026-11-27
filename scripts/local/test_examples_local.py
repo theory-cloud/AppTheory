@@ -1784,7 +1784,10 @@ class PythonPackageAllowListTests(unittest.TestCase):
     extension module (`.so`, `.pyd`), a package directory and a namespace directory. A sourceless
     module is the one that used to fall through: the walk listed `.py` files, so a `helper.pyc` was
     neither declared, refused nor copied, staging exited 0, and the asset could not import a module
-    its own source tree could.
+    its own source tree could. The same omission had a second door, which round 1 left open: a
+    `<module>.pyc` inside a `__pycache__` is a module of the namespace package `__pycache__`, so
+    residue is now exactly the tagged cache the interpreter writes and every other byte-code file in
+    a `__pycache__` is refused by name like any other unit.
     """
 
     @staticmethod
@@ -1822,7 +1825,17 @@ class PythonPackageAllowListTests(unittest.TestCase):
         clean synthesis must reproduce the committed pin — that is what makes the pin the oracle —
         and the planted one must reproduce it byte for byte, with no planted name anywhere in the
         asset and no file in the asset that the staged package does not hold.
+
+        A tagged byte-code cache is among the plants, at the root of every tree and under a nested
+        `__pycache__`, because it is the one shape inside a `__pycache__` the rule drops in silence
+        and the asset is only byte-identical if dropping it changes nothing (SAN-AT-W1C-01).
         """
+        cache_name = Path(importlib.util.cache_from_source("helper.py")).name
+        cache_plants: dict[str, str | bytes] = {
+            f"__pycache__/{cache_name}": byte_code_module(),
+            f"nested/__pycache__/{cache_name}": byte_code_module(),
+        }
+        plants: dict[str, str | bytes] = {**PYTHON_LOCAL_ONLY_PLANTS, **cache_plants}
         for example_spec in PYTHON_PACKAGE_EXAMPLES:
             name, stack = example_spec.name, example_spec.stack
             with self.subTest(name):
@@ -1845,7 +1858,7 @@ class PythonPackageAllowListTests(unittest.TestCase):
                             f"{name}: the synthesis of the clean tree does not reproduce the committed pin",
                         )
 
-                        with planted_local_only_files(trees, PYTHON_LOCAL_ONLY_PLANTS) as planted:
+                        with planted_local_only_files(trees, plants) as planted:
                             with tempfile.TemporaryDirectory(prefix=f"apptheory-{name}-planted-") as planted_dir:
                                 observed = synthesize_example(example, stack, Path(planted_dir), *example_spec.args)
                                 self.assertEqual(
@@ -1860,6 +1873,16 @@ class PythonPackageAllowListTests(unittest.TestCase):
                                     [],
                                     self._residue_in(planted_package),
                                     f"{name}: the synthesized asset carries residue the package does not declare",
+                                )
+                                self.assertEqual(
+                                    [],
+                                    [
+                                        relative
+                                        for relative in python_package_files(planted_package)
+                                        if "__pycache__" in relative or relative.endswith((".pyc", ".pyo"))
+                                    ],
+                                    f"{name}: the synthesized asset carries a byte-code cache, planted as "
+                                    f"{[str(path.relative_to(harness.ROOT)) for path in planted]}",
                                 )
                                 self.assertEqual(
                                     staged_files,
@@ -2067,14 +2090,18 @@ class PythonPackageAllowListTests(unittest.TestCase):
                             )
 
     def test_a_byte_code_cache_in_every_tree_stays_out_of_the_package(self) -> None:
-        """A `__pycache__` is residue: the interpreter writes it, and nothing imports from it.
+        """A tagged `__pycache__` entry is residue: the interpreter wrote it, and nothing imports it.
 
         The interpreter writes `<module>.<tag>.pyc` beside the source it compiled, and the import
-        system never loads a file from inside a `__pycache__` — it looks for `<module>.py`,
-        `<module>.pyc` and `<module>.so` in the directory it is importing from. So a cache is
+        system never loads that name from inside a `__pycache__` — it looks for `<module>.py`,
+        `<module>.pyc` and `<module>.so` in the directory it is importing from. So a tagged cache is
         dropped in silence, at any depth, in every declared tree of every example, and the package
         it stages is the one it staged without a cache. The shape is planted as real byte-code:
         the files are what `py_compile` writes, under the name the running interpreter uses.
+
+        The tag is the whole reason this is residue, so the same directory is not a blanket skip: an
+        untagged `<module>.pyc` there is a namespace-package module and is refused by name, which
+        `test_an_untagged_byte_code_file_in_a_cache_directory_is_refused_by_name` holds.
         """
         byte_code = byte_code_module()
         cache_name = importlib.util.cache_from_source("helper.py")
@@ -2133,6 +2160,44 @@ class PythonPackageAllowListTests(unittest.TestCase):
                         self._refusal(result),
                         f"{label}: the refusal does not name the source file inside the cache directory",
                     )
+
+    def test_an_untagged_byte_code_file_in_a_cache_directory_is_refused_by_name(self) -> None:
+        """Only the name the interpreter writes is residue; anything else in a `__pycache__` is a unit.
+
+        `__pycache__` is a legal directory name, so `<module>.pyc` inside one is a sourceless module
+        of the namespace package `__pycache__`: Python imports `__pycache__.helper` from it exactly
+        like any other sourceless module. The rule used to drop *every* `.pyc` under a `__pycache__`,
+        so that module was neither declared, refused nor copied — staging exited 0, the synthesized
+        asset omitted it, and the deployed function could not import a module its own tree could
+        (SAN-AT-W1C-01, the half the standalone sourceless case left open). Residue is now exactly
+        the tagged cache form the interpreter writes, `<module>.<implementation>-<version>[.opt-N].pyc`,
+        so an untagged byte-code module is refused by name — at the root of a tree and at depth, in
+        every declared tree of every example — while a tagged cache in the same directory is still
+        dropped in silence.
+        """
+        byte_code = byte_code_module()
+        for example_spec in PYTHON_PACKAGE_EXAMPLES:
+            name = example_spec.name
+            example = self._example(name)
+            for asset, trees in python_asset_trees(example):
+                for tree in trees:
+                    for relative in ("__pycache__/helper.pyc", "nested/__pycache__/helper.pyc"):
+                        label = (
+                            f"{name}: an untagged byte-code module {relative} in "
+                            f"{tree.relative_to(harness.ROOT).as_posix()}"
+                        )
+                        with self.subTest(label):
+                            with planted_local_only_files([tree], {relative: byte_code}) as planted:
+                                result = run_python_package_staging(example, asset)
+                            self._assert_refused(
+                                result, label, [str(path.relative_to(harness.ROOT)) for path in planted]
+                            )
+                            self.assertIn(
+                                "__pycache__/helper.pyc",
+                                self._refusal(result),
+                                f"{label}: the refusal does not name the byte-code module it would have dropped: "
+                                f"{self._refusal(result)}",
+                            )
 
     def _assert_refused(self, result: subprocess.CompletedProcess[str], label: str, planted: list[str]) -> None:
         self.assertNotEqual(0, result.returncode, f"staging accepted {label}, planted as {planted}")
