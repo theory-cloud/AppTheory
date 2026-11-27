@@ -40,6 +40,12 @@ Portable behavior is defined by the fixture-backed contract:
 
 ## Python semantic API map
 
+`ASGIApp` and `WSGIApp` are the two applications a Python Lambda Web Function loads: each turns an ASGI or WSGI
+request into an AppTheory `Request`, calls `serve`, and writes the `Response` back chunk by chunk — so a streamed body
+reaches the client as it is produced, and a per-request `Context` keeps overlapping requests apart. See
+[Lambda Web Functions](../../docs/features/web-functions.md#the-python-model-lambdas-server-your-asgi-or-wsgi-application).
+
+
 The generated snapshot coverage index below proves export-name coverage only; it is not a substitute for
 operator-facing API guidance. Keep these human-authored groups current when the Python surface grows:
 
@@ -82,10 +88,10 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>874 exported top-level symbols</summary>
+<summary>876 exported top-level symbols</summary>
 
 ```text
-AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
+AGENT_MCP_PATTERN, ASGIApp, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
 assert_bearer_token_reaches_transport_handler, assert_bearer_token_reaches_transport_handler_secure_app, assert_credential_free_transport_denied,
 assert_credential_free_transport_denied_secure_app, assert_insufficient_scope_transport_denied, assert_insufficient_scope_transport_denied_secure_app,
 AtomicRateLimiter, authenticated, authenticated_any_of, AutheoryProvider, AutheoryProviderOptions, authorization_authorize_path_for_resource_path,
@@ -225,7 +231,7 @@ validate_microvm_session_token_metadata, validate_object_ref, validate_or_raise,
 validate_required_metadata, validate_value, validate_vector, validation_error, VALIDATION_RULE_ENUM, VALIDATION_RULE_MAX, VALIDATION_RULE_MAX_LENGTH,
 VALIDATION_RULE_MIN, VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, ValidationFieldError, ValidationRule, vary, VectorRecord,
 VectorStore, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG, VECTORSTORE_ERROR_INVALID_INPUT,
-VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WebSocketCall,
+VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WSGIApp, WebSocketCall,
 WebSocketContext, well_formed_client_request_id, WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error,
 compile_visibility_policy,
 dash_stem,
