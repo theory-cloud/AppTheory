@@ -1129,7 +1129,10 @@ def planted_local_only_files(trees: list[Path], plants: dict[str, str]):
                     directory.mkdir()
                     created.append(directory)
                 staged.write_text(content, encoding="utf-8")
-                os.chmod(staged, 0o644)
+                # Narrow mode on purpose: a plant is nobody's input, and the harness keeps its own
+                # scratch files owner-only (os.chmod(..., 0o600) there too). The plant's *presence* is
+                # what the tests are about, never its mode, so nothing here needs a wider bit.
+                os.chmod(staged, 0o600)
                 planted.append(staged)
         yield planted
     finally:
@@ -1380,7 +1383,9 @@ class WebFunctionPythonPackageInputTests(unittest.TestCase):
             raise harness.HarnessFailure(f"{undeclared} already exists; refusing to overwrite it")
         try:
             undeclared.write_text("VALUE = 1\n", encoding="utf-8")
-            os.chmod(undeclared, 0o644)
+            # Owner-only, like the other scratch files this harness writes: the module's presence is
+            # the subject, and a world-readable mode is a finding the scanner reports, not a need.
+            os.chmod(undeclared, 0o600)
             result = subprocess.run(
                 [shutil.which("node") or "node", str(harness.WEB_FUNCTION_PYTHON_EXAMPLE / "scripts" / "stage-asset.mjs")],
                 cwd=str(harness.WEB_FUNCTION_PYTHON_EXAMPLE),
