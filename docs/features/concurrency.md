@@ -30,7 +30,8 @@ means here.
 |---|---|---|
 | Go | None upstream: one invocation at a time per execution environment | Two Go invocations never overlap in one environment, because AWS offers no multi-concurrency runtime for Go. The runtime is written to the single-invocation model and its request state is per call; see [the Go section](#multi-concurrency-is-not-available-to-go-upstream). |
 | TypeScript | One event loop, N suspended `async` handler bodies | Two requests are "concurrent" when both handler bodies are suspended at an `await`. A synchronous stretch is never pre-empted. |
-| Python | **Lambda Managed Instances**: separate processes, one invocation each. This is the Managed Instances model, not the Web Function one — see [Python specifics](#python-specifics). | Two Python requests are concurrent when they run in different processes, which share no interpreter memory. One process serves one invocation at a time, so a Python handler is never re-entered: the entry point stays a synchronous `def handler(event, context)`, async work runs only behind it through one `asyncio.run` loop created and closed inside that invocation, and no loop-bound state outlives it. See [Python specifics](#python-specifics). |
+| Python (Lambda Managed Instances) | **Separate processes**, one invocation each. | Two Python requests are concurrent when they run in different processes, which share no interpreter memory. One process serves one invocation at a time, so a Python handler is never re-entered: the entry point stays a synchronous `def handler(event, context)`, async work runs only behind it through one `asyncio.run` loop created and closed inside that invocation, and no loop-bound state outlives it. See [Python specifics](#python-specifics). |
+| Python (Web Function) | **One ASGI event loop**, or a **WSGI worker-thread pool**, per execution environment; Lambda manages the HTTP server. `python3.15` is an upstream public preview. | Two ASGI requests are concurrent when they are in flight on the same loop, and a synchronous handler runs on the loop's worker thread so the loop keeps serving. Two WSGI requests are concurrent when they run in different worker threads, sharing one interpreter. Per-request state belongs to the request in both cases. See [Python specifics](#python-specifics). |
 
 The two models differ in a way a reader of the runtime's own code must know: in TypeScript a shared mutable is safe
 exactly when no `await` sits inside its read-modify-write window, whereas a Python process's shared mutable is safe
@@ -118,15 +119,24 @@ entry point. Async runs only **behind** it: when a handler returns an awaitable,
 `asyncio.run` raises if an event loop is already running on the calling thread — a named, fail-closed error rather than
 a shared loop across invocations.
 
-That model is **Lambda Managed Instances**, and it is the one this section — and AppTheory's Python runtime — is
-written against. It is not the model upstream uses for a Python [Web Function](web-functions.md): there, `python3.15`
-(public preview) keeps one ASGI event loop, or a WSGI worker-thread pool, per execution environment and Lambda manages
-the HTTP server itself. AppTheory refuses a Python Web Function at synthesis, so that model is upstream's, not this
-runtime's, and nothing on this page should be read as support for it.
+That is the **Lambda Managed Instances** model, and it is the one the paragraph above is written against.
 
-**AppTheory does not serve Python thread-per-request.** No thread pool serves your handler, no thread is created per
-request, and `serve()` is never driven from inside a live event loop. The guarantees on this page are stated for the
-real serving model — one synchronous invocation per process — and the runtime adds nothing to it.
+It is not the only Python model upstream, and it is not the only one AppTheory serves. A Python
+[Web Function](web-functions.md) is the other: `python3.15` (upstream public preview) keeps **one ASGI event loop**, or
+a **WSGI worker-thread pool**, per execution environment, and **Lambda manages the HTTP server** rather than calling a
+handler. AppTheory composes it: `apptheory.ASGIApp` and `apptheory.WSGIApp` are the ASGI and WSGI applications, and the
+runtime's `serve()` runs underneath them unchanged. On that path:
+
+- a synchronous handler runs on the event loop's worker thread (ASGI) or on the server's worker thread (WSGI), so two
+  requests in one environment really can be executing at the same time, and their handler bodies share the interpreter;
+- an `async def` handler still resolves through one `asyncio.run` loop, created and closed inside that request, because
+  no entry point calls `serve()` while a loop is running on the calling thread;
+- the per-request state rule does not weaken. Request state lives in the request, not in a module-level variable, which
+  is exactly what the Web Function example's local row asserts by failing when it is moved.
+
+Neither model makes "one process, one invocation at a time" a safe assumption for Python, and neither of them lets a
+module-level mutable be read-modify-written without a lock. What differs is only *what* can run in the middle of that
+window: another process (Managed Instances) or another thread on the same interpreter (a Web Function).
 
 The process-wide members listed above that fill lazily on the request path (the JWKS validator's key cache, resolution
 windows and fetch budget; the Autheory discovery document and validator cache; the front-door SSM client; the MCP

@@ -5,12 +5,16 @@ description: One composition for a function that serves HTTP through its own end
 
 # Lambda Web Functions
 
-A Lambda **Web Function** serves HTTP directly. On the Node.js runtimes this page is about, the application
-starts its own HTTP server, Lambda forwards each request to it, and one execution environment answers many
-concurrent requests — 64 by default, up to 128. That is the **Node.js** Web Function model, and it is the one
-AppTheory composes. Upstream, the Python model is a different one: Lambda manages the HTTP server and passes each
-request to an ASGI or WSGI application. AppTheory does not compose it, and [Runtime support](#runtime-support) says
-why. Either way, a Web Function is a different execution model from the request/response runtime described in
+A Lambda **Web Function** serves HTTP directly, and one execution environment answers many concurrent requests — 64
+by default, up to 128. How the application serves those requests depends on the runtime, and both upstream models are
+composed here:
+
+- **Node.js** (`nodejs24.x`, `nodejs26.x`): the application starts its own HTTP server, Lambda forwards each request
+  to it, and the application reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on.
+- **Python** (`python3.15`, upstream public preview): Lambda manages the HTTP server and passes each request to an
+  **ASGI** or **WSGI** application. The composition names the application; the entry point is written for you.
+
+Either way, a Web Function is a different execution model from the request/response runtime described in
 [HTTP Runtime (P0–P2)](http-runtime.md), and this page covers the deployment surface for it,
 [`AppTheoryWebFunction`](../cdk/api-reference.md).
 
@@ -36,9 +40,28 @@ const web = new AppTheoryWebFunction(stack, "Web", {
 Nothing here reads an environment variable to decide how it deploys. The endpoint's shape, the runtime, the entry
 file and the authorization mode are all encoded configuration, fixed at synthesis.
 
-The application does not need an adapter and does not get a second entry point: it starts an HTTP server and reads
-`AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on. `AWS_LAMBDA_HTTP_ENDPOINT` is set by the Lambda service, so
-`props.environment` refuses it — the framework will not let you shadow a variable the service owns.
+The application does not need an adapter and does not get a second entry point. On Node.js it starts an HTTP server
+and reads `AWS_LAMBDA_HTTP_ENDPOINT` for the address to listen on; on Python it is an ASGI or WSGI application, and
+Lambda supplies the server. Those two variables the service and this construct own — `AWS_LAMBDA_HTTP_ENDPOINT` and
+the runtime's entry point — are refused in `props.environment`: the framework will not let you shadow one.
+
+A Python Web Function composes the same way, and the entry point is not yours to spell:
+
+```ts
+import { AppTheoryPythonInterface, AppTheoryWebFunction } from "@theory-cloud/apptheory-cdk";
+
+const pythonWeb = new AppTheoryWebFunction(stack, "PythonWeb", {
+  code: lambda.WebFunctionCode.fromAssetToManagedBucket("app"),
+  runtime: lambda.WebFunctionRuntime.of("python3.15"),
+  // Served as `asgi:main:app`: the module, the callable and the interface, decided at synthesis.
+  pythonApp: { module: "main", interface: AppTheoryPythonInterface.ASGI },
+});
+```
+
+`pythonApp` names the module (without `.py`), the callable (default `app`) and the interface. The construct writes
+`AWS_LAMBDA_PYTHON_ENTRYPOINT` as `interface:module:callable`, so the runtime serves the interface you declared
+instead of detecting one. `entryPoint` stays Node-only: it names an entry *file*, and a Python Web Function names an
+application.
 
 ## Endpoint authorization defaults to IamAuth
 
@@ -91,25 +114,55 @@ composes what AWS supports and refuses the rest at synthesis rather than deployi
 | --- | --- | --- |
 | Node.js 24 (`nodejs24.x`) | Supported | Supported — `WebFunctionRuntime.NODEJS_24_X` |
 | Node.js 26 (`nodejs26.x`) | Supported | Supported — `WebFunctionRuntime.of("nodejs26.x")` |
-| Python 3.15 (`python3.15`) | **Public preview**: not covered by the Lambda SLA or Technical Support, and not for production | **Not composed.** Refused at synthesis. |
+| Python 3.15 (`python3.15`) | **Public preview**: not covered by the Lambda SLA or Technical Support, and not for production | Supported as **preview**, with `pythonApp` naming the ASGI or WSGI application — `WebFunctionRuntime.of("python3.15")` |
 | Go | **No Web Function runtime exists upstream** | N/A — no workaround, and no custom runtime |
 
-**Why Python is refused rather than marked preview.** A Python Web Function is not a `def handler(event, context)`
-function. It serves an **ASGI or WSGI application** — `main:app` by default — and Lambda manages the HTTP server,
-passing each request through the interface. Concurrency is one event loop for ASGI, or a **pool of worker threads**
-for WSGI, where an ASGI framework can also run a synchronous endpoint in a thread pool. AppTheory's Python runtime is
-a request/response runtime with no ASGI or WSGI entry point, so it cannot stand in for the application a Python Web
-Function requires. Composing one would produce a revision that fails to start, far from the cause. The refusal names
-the reason instead:
+**Python Web Functions are preview, and the label is upstream's.** `python3.15` carries no SLA and no Technical
+Support, and AWS says it is not for production. AppTheory composes it because composing a supported execution model is
+how the framework stays the single path for it — not because the preview status has changed. Nothing on this page
+claims production support for Python Web Functions.
 
-```text
-AppTheoryWebFunction does not compose the "python3.15" Web Function runtime: a Python Web Function
-serves an ASGI or WSGI application, and AppTheory's Python runtime is a request/response runtime with
-no such entry point. Supported runtimes are nodejs24.x, nodejs26.x
-```
+## The Python model: Lambda's server, your ASGI or WSGI application
 
-Python is therefore labelled preview upstream and unsupported here. Nothing in this page claims production support
-for it.
+A Python Web Function is not a `def handler(event, context)` function and is not served by AppTheory's
+request/response Lambda entry point. Lambda **manages the HTTP server** and passes each request to an application
+through a declared interface:
+
+| Interface | Concurrency in one environment | AppTheory entry point |
+| --- | --- | --- |
+| ASGI 3.0 | **One event loop.** Requests are concurrent: while one awaits I/O, the loop serves another, and delivers another response's chunks. | `apptheory.ASGIApp(runtime)` |
+| WSGI | **A pool of worker threads**, one request per thread. | `apptheory.WSGIApp(runtime)` |
+
+Both entry points are the same idea in two shapes: they turn a request into an AppTheory
+[`Request`](../api-reference.md), call the runtime's `serve`, and write the [`Response`](../api-reference.md) back —
+streaming a `Response.body_stream` chunk by chunk as it is produced, and releasing the producer when the client
+disconnects. `Response.html_stream` and `apptheory.sse_event_stream` therefore keep streaming over a Web Function
+instead of being buffered into one write.
+
+Where your handler runs, and why it is safe there:
+
+- **ASGI** — the entry point is one async callable on the server's single event loop. Each request's synchronous
+  `serve` call, and every blocking `next()` on a streamed body, runs on the loop's default worker thread, which is
+  the shape an ASGI framework gives a `def` endpoint and what upstream describes ("when you create a synchronous
+  endpoint using `def` instead of `async def`, ASGI frameworks such as FastAPI and Starlette can run the endpoint in a
+  thread pool"). The loop stays free to accept requests and deliver other responses while one handler works.
+- **WSGI** — the server calls the entry point on one of its worker threads, which is upstream's WSGI model, and the
+  handler runs there.
+
+**The runtime's loop-bound state is the reason the ASGI entry point dispatches, not a workaround.** `serve()` resolves
+an `async def` handler with `asyncio.run`, which raises when the calling thread already has a running loop. Every
+entry into `serve` from these two wrappers therefore happens off the loop, and an `async def` AppTheory handler keeps
+working unchanged. Per-request state itself is not loop-bound: it lives in the request's `Request`, its `Context`, its
+handler's return value and its body stream, and nothing in the wrappers is stored on a module, on the runtime or in a
+thread-local — so two overlapping requests cannot observe each other. `py/tests/test_serving.py` pins
+that (including an assertion that the handler never runs on the event-loop thread), and the example's local row fails
+when a request reads another request's state.
+
+**This is not the Managed Instances model.** Lambda Managed Instances runs each concurrent Python invocation in a
+**separate process**; that is a different upstream feature, and
+[Concurrency and Request Isolation](concurrency.md#python-specifics) states it as such. A Python Web Function keeps one
+event loop, or one worker-thread pool, inside one environment. The two models are not interchangeable, and neither of
+them serves Python with a thread per request in the sense of a thread-per-connection server you write yourself.
 
 **Why Go is N/A.** Go is absent from the Web Function runtime list, exactly as it is absent from the Lambda Managed
 Instances runtime list. An AppTheory Go runtime is built for one invocation per environment because that is what AWS
@@ -119,27 +172,40 @@ images. The gap is upstream, it is stated plainly, and it is not worked around:
 
 Refusals, all of them at synthesis:
 
-- a runtime outside `nodejs24.x` and `nodejs26.x`;
-- `AWS_LAMBDA_HTTP_ENDPOINT` in `props.environment`;
+- a runtime outside `nodejs24.x`, `nodejs26.x` and `python3.15`;
+- a Python runtime without `pythonApp`, or `pythonApp` with a Node.js runtime;
+- `entryPoint` with a Python runtime (a Python Web Function names an application, not a file);
+- a `pythonApp.module` or `pythonApp.callable` that carries a colon, which would smuggle in an interface prefix or a
+  second entry point, and a `pythonApp.interface` outside `asgi` and `wsgi`;
+- `AWS_LAMBDA_HTTP_ENDPOINT`, `AWS_LAMBDA_NODEJS_ENTRYPOINT` or `AWS_LAMBDA_PYTHON_ENTRYPOINT` in `props.environment`;
 - a code bucket that is not versioned (from `aws-cdk-lib`).
 
 ## What one environment must not do
 
-One execution environment answers many requests on one event loop, so every request shares the process. Request state
-belongs to the request — in its own closure or its own framework context — and never to a module-level variable. The
-guarantee and its per-language shape are stated in
-[Concurrency and Request Isolation](concurrency.md); the example below is the Web Function instance of it, and its
-local row fails when a request reads another request's state.
+One execution environment answers many requests — on one event loop for Node.js and ASGI Python, in a worker-thread
+pool for WSGI — so every request shares the process (and, on Python, the interpreter). Request state belongs to the
+request: its own closure, its own framework context, or its own request-scoped arguments, and never a module-level
+variable. AWS states the same rule for Python Web Functions ("avoid storing request-specific data in global
+variables"), and it is the rule AppTheory's `Context` exists to make easy to follow. The guarantee and its
+per-language shape are stated in [Concurrency and Request Isolation](concurrency.md); the examples below are the Web
+Function instance of it, and each local row fails when a request reads another request's state.
 
 ## Prove it locally
 
-The example serves a page and streams a response, and runs with no AWS credentials. It is a row in the local
-harness, so it runs the way every other row does — see
-[Local examples harness](../examples/local-harness.md) for prerequisites (Docker or Colima for DynamoDB Local, Node
-24, and no AWS credentials). To run only this row:
+Two examples serve a page and stream a response, and both run with no AWS credentials:
+[`examples/cdk/web-function`](../../examples/cdk/web-function/README.md) for the Node.js model and
+[`examples/cdk/web-function-python`](../../examples/cdk/web-function-python/README.md) for the Python one, which is
+one AppTheory application served once as an ASGI app and once as a WSGI app. Each is a row in the local harness, so it
+runs the way every other row does — see [Local examples harness](../examples/local-harness.md) for prerequisites
+(Docker or Colima for DynamoDB Local, Node 24, Python 3.12+ with `scripts/local/requirements-examples.txt` installed,
+and no AWS credentials). To run only these rows:
 
 ```bash
 python3 scripts/local/run_examples_local.py --only web-function --workers 1
+```
+
+```bash
+python3 scripts/local/run_examples_local.py --only web-function-python,web-function-python-wsgi --workers 1
 ```
 
 `--only` is the harness's own debug filter and is never passed by CI; the full sweep is `make examples-local`.
@@ -157,12 +223,38 @@ counts: 1 passed, 0 failed, 0 pending-milestone
 RESULT: PASS
 ```
 
-The application can also be run directly, exactly as a Web Function environment runs it:
+The Python rows report the same assertions against the two interfaces, each behind a real server:
+
+```text
+  [ 1/2] examples/cdk/web-function-python/app/main.py        L2  PASS  page 200 text/html, health 200,
+         unknown route 404; 3 events over 0.38s, first at 0.00s, chunked; 2 streams overlapped 0.51s
+         of delivery, 5 + 4 chunks interleaved before either finished, each saw only its own tag
+  [ 2/2] examples/cdk/web-function-python/app/main_wsgi.py   L2  PASS  page 200 text/html, health 200,
+         unknown route 404; 3 events over 0.39s, first at 0.00s, chunked; 2 streams overlapped 0.50s
+         of delivery, 4 + 5 chunks interleaved before either finished, each saw only its own tag
+
+counts: 2 passed, 0 failed, 0 pending-milestone
+RESULT: PASS
+```
+
+Neither row invents a server: ASGI is served by uvicorn (the reference ASGI server, one event loop) and WSGI by the
+standard library's WSGI server with a threading mixin (one worker thread per request). Both are the local stand-ins
+for the server Lambda manages, and both are named as the row's fidelity limit.
+
+The applications can also be run directly. The Node.js one reads its listen address from the variable the service
+sets; the Python ones are called by a server, because that is what a Python Web Function is:
 
 ```bash
 AWS_LAMBDA_HTTP_ENDPOINT=127.0.0.1:3000 node examples/cdk/web-function/app/server.mjs
 curl -sS -D- http://127.0.0.1:3000/          # text/html page
 curl -sS -N http://127.0.0.1:3000/stream     # chunked events, one every 120 ms
+```
+
+```bash
+# ASGI, the way Lambda loads it: main:app
+cd examples/cdk/web-function-python/app && PYTHONPATH=../../../py/src python3 -m uvicorn main:app --port 3000
+# WSGI, the way Lambda calls it: wsgi:main_wsgi:application
+cd examples/cdk/web-function-python && PYTHONPATH=../../py/src PORT=3000 python3 scripts/serve-wsgi.py
 ```
 
 The row asserts status codes, headers, incremental delivery (the first of three events arrives as soon as the
@@ -185,8 +277,11 @@ arrived at 0.515s), so the two responses were not delivered concurrently
 
 ## Proof boundary
 
-This page and the example were verified locally: synthesis, the pinned template hash, the focused construct
-assertions, and the harness row above. **Nothing was deployed**, and no AWS credentials were used.
+This page and both examples were verified locally: synthesis, the pinned template hashes, the focused construct
+assertions, and the harness rows above — including the Python rows, which drive the real ASGI and WSGI servers in this
+repository's own Python runtime. **Nothing was deployed**, and no AWS credentials were used. Python Web Functions
+remain an upstream public preview; the local proof says the composition and the entry points behave, not that the
+preview is production-ready.
 
 The example's stack composes **two** functions, so both sides of the authorization decision appear in one synthesis:
 `Private` keeps the default `IamAuth`, and `Public` opts into `ApplicationManaged`, which Lambda does not
