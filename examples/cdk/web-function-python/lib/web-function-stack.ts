@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 
 import { AppTheoryPythonInterface, AppTheoryWebFunction } from "@theory-cloud/apptheory-cdk";
@@ -21,9 +22,9 @@ import type { Construct } from "constructs";
  * runtime, so the example labels that where an operator will see it.
  */
 /**
- * Byte-code caches and build residue are not part of the deployment package. The local rows in
- * `scripts/local/` import this application from this directory, so without these patterns a byte-code
- * cache written by a local run would land in the asset and move the template's pinned hash.
+ * Byte-code caches and build residue are not part of the deployment package. The staged package is
+ * rebuilt from source on every synthesis (see `scripts/stage-asset.mjs`) and already skips caches,
+ * and these patterns are the second lock on the same door.
  */
 const assetExclude = [
   "__pycache__",
@@ -36,11 +37,25 @@ const assetExclude = [
   "**/*.egg-info",
 ];
 
+/**
+ * Build the package both revisions stage: `app/` at the archive root with the AppTheory runtime
+ * beside it.
+ *
+ * Lambda imports the entry module from the archive root, so an asset that carries `app/` alone
+ * cannot start — the entry module's `from apptheory import ASGIApp` has nothing to import. Staging
+ * through the example's own script instead of pointing the asset at `app/` is what keeps the
+ * synthesized package and the running package the same thing.
+ */
+function stagePythonPackage(): string {
+  const script = path.join(__dirname, "..", "scripts", "stage-asset.mjs");
+  return execFileSync(process.execPath, [script], { encoding: "utf8" }).trim();
+}
+
 export class WebFunctionPythonStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
     super(scope, id, props);
 
-    const code = lambda.WebFunctionCode.fromAssetToManagedBucket(path.join(__dirname, "..", "app"), {
+    const code = lambda.WebFunctionCode.fromAssetToManagedBucket(stagePythonPackage(), {
       exclude: assetExclude,
     });
     const runtime = lambda.WebFunctionRuntime.of("python3.15");
