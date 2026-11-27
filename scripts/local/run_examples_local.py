@@ -1679,6 +1679,10 @@ def _run_web_function_python(
         [str(ROOT / "py" / "src")] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
     )
     env["PORT"] = str(port)
+    # Both servers import the application from the tree the synth gate fingerprints, so a byte-code
+    # cache would write into the asset between two synth runs and move its pinned hash. Keep the
+    # deployment package to what is in git.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     log = tempfile.NamedTemporaryFile(prefix=f"apptheory-web-function-python-{label}-", suffix=".log", delete=False)
     try:
         process = subprocess.Popen(

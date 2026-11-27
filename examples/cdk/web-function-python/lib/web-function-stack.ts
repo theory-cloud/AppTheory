@@ -20,11 +20,29 @@ import type { Construct } from "constructs";
  * Lambda SLA or Technical Support, and not for production. It is the only Python Web Function
  * runtime, so the example labels that where an operator will see it.
  */
+/**
+ * Byte-code caches and build residue are not part of the deployment package. The local rows in
+ * `scripts/local/` import this application from this directory, so without these patterns a byte-code
+ * cache written by a local run would land in the asset and move the template's pinned hash.
+ */
+const assetExclude = [
+  "__pycache__",
+  "**/__pycache__",
+  "*.pyc",
+  "**/*.pyc",
+  "*.pyo",
+  "**/*.pyo",
+  "*.egg-info",
+  "**/*.egg-info",
+];
+
 export class WebFunctionPythonStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
     super(scope, id, props);
 
-    const code = lambda.WebFunctionCode.fromAssetToManagedBucket(path.join(__dirname, "..", "app"));
+    const code = lambda.WebFunctionCode.fromAssetToManagedBucket(path.join(__dirname, "..", "app"), {
+      exclude: assetExclude,
+    });
     const runtime = lambda.WebFunctionRuntime.of("python3.15");
 
     // The default interface for a Python Web Function: one event loop, concurrent requests. The
