@@ -5,32 +5,32 @@
         "make",
         "examples-local"
       ],
-      "durationSeconds": 617.333,
+      "durationSeconds": 1263.704,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-27T22:22:59Z",
+      "finishedAt": "2026-11-28T13:23:04Z",
       "id": "examples-harness",
-      "inputsDigest": "sha256:d89d246834d97f70595a9592e2059de8020f420e1b0d8eb7798bad7bec90475c",
-      "logDigest": "sha256:a4a273d53c6399f6a1b64dea9148127279835fa583e4ff2a06665ee4c1a2d1a1",
-      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-harness-20261127T221242Z-67018.log",
+      "inputsDigest": "sha256:6f78d378fa21dc0e50370b03c77670151df8479d6f2f0518f083e7f159adf6fb",
+      "logDigest": "sha256:7be4610d28a8b0aa5e0bf6cea1e83778334d7eedbb6372cc73c402ce608b8df6",
+      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-harness-20261128T130200Z-10714.log",
       "reused": false,
-      "startedAt": "2026-11-27T22:12:42Z"
+      "startedAt": "2026-11-28T13:02:00Z"
     },
     {
       "argv": [
         "make",
         "verify-cdk-synth-location-independent"
       ],
-      "durationSeconds": 144.958,
+      "durationSeconds": 160.522,
       "executed": false,
       "exitCode": 0,
-      "finishedAt": "2026-11-27T22:09:53Z",
+      "finishedAt": "2026-11-28T12:27:26Z",
       "id": "examples-relocated-synth",
-      "inputsDigest": "sha256:f73e4dd91b3d1f799720a86791421e7d4ab9ea41a9c827866ce80de01c49f341",
+      "inputsDigest": "sha256:cbc82253b1302ab6553fbeefa8b44a9adeb7fffc7ff0284fa125ad8166aa80f2",
       "logDigest": "sha256:7af130576f9e4e90002be6cfe206b72d501e613bc82e114520b57860af817a27",
-      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-relocated-synth-20261127T220728Z-54320.log",
+      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-relocated-synth-20261128T122445Z-39285.log",
       "reused": true,
-      "startedAt": "2026-11-27T22:07:28Z"
+      "startedAt": "2026-11-28T12:24:45Z"
     }
   ],
   "consumed": [],
@@ -52,7 +52,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-27T22:22:59Z",
+  "recordedAt": "2026-11-28T13:23:04Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -62,7 +62,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:cf47198f289aa33791cc35d09ccffc2d00489954e09290328d70f0d994f323c1",
+    "digest": "sha256:494aa61debff0758d30de01693cc6c18d769f0519322bf39ebf5e7be4652cc86",
     "fileCount": 2645,
     "paths": [
       "Makefile",
@@ -88,7 +88,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:e4e85d7a78b7d4811694a0f8156da369f4b9ef270145ba0cb4d61085b2910c11",
+    "digest": "sha256:0298cbbd5fe273f9faef8390f41612e8962d4e4199a074384e8d469c1dc191fa",
     "fileCount": 2853
   },
   "verdict": "PASS"
