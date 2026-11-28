@@ -166,6 +166,14 @@ def new_autheory_provider(options: AutheoryProviderOptions) -> AutheoryProvider:
 class AutheoryProvider:
     """Provider SPI adapter for Autheory (and any RFC 8414 upstream)."""
 
+    def upstream_fetch_timeout_seconds(self) -> float:
+        """Reports the ceiling this adapter's transport places on one upstream
+        call (``UpstreamFetchTimeoutReporter``). A caller that wants a longer
+        deadline than this must raise ``http_timeout_seconds``: the transport's
+        own bound ends the call first, so a longer budget would never be
+        reached."""
+        return float(self._timeout)
+
     def __init__(self, options: AutheoryProviderOptions) -> None:
         self._options = options
         self._issuer = canonicalize_issuer_url(options.issuer)

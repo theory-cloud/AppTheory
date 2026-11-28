@@ -206,6 +206,15 @@ export class AutheoryProvider {
         };
     }
     /**
+     * Reports the ceiling this adapter's transport places on one upstream call
+     * ({@link UpstreamFetchTimeoutReporter}). A caller that wants a longer
+     * deadline than this must raise `fetchTimeoutSeconds`: the transport's own
+     * bound ends the call first, so a longer budget would never be reached.
+     */
+    upstreamFetchTimeoutSeconds() {
+        return this.transport.timeoutMs / 1000;
+    }
+    /**
      * Fetches and pins the RFC 8414 document once, then caches it. The document
      * URL must be HTTPS, a redirect is refused, and the document's `issuer` must
      * canonicalize to the configured issuer before any advertised endpoint is

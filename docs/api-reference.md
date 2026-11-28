@@ -637,7 +637,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1353 exported top-level symbols</summary>
+<summary>1354 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -810,7 +810,7 @@ ToolExecution, ToolHandler, ToolInput, ToolInputFromContext, ToolLifecycleFinish
 ToolLifecycleOutcomeContextCanceled, ToolLifecycleOutcomeHandledError, ToolLifecycleOutcomeInvalidParams, ToolLifecycleOutcomePanic,
 ToolLifecycleOutcomeSuccess, ToolLifecycleOutcomeTimeout, ToolLifecycleOutcomeUnhandledError, ToolLifecycleStart, ToolLifecycleTelemetry, ToolRegistry,
 ToolResult, TransactionRecord, TransactionStore, TransactionStoreOptions, TransitionJobStatusInput, TransportPosture, TransportPostureIAM,
-TransportPostureJWT, TransportPostureNonePublic, TransportPostureRuntimeBearer, UploadGranter, UpsertRecordStatusInput, URLMode, URLModePublicBaseURL,
+TransportPostureJWT, TransportPostureNonePublic, TransportPostureRuntimeBearer, UploadGranter, UpsertRecordStatusInput, UpstreamFetchTimeoutReporter, URLMode, URLModePublicBaseURL,
 URLModeRequestHost, UsageStats, UsageWindow, ValidateControllerContract, ValidateDimension, ValidateDynamicClientRegistrationRequest, ValidateEscapeHatches,
 ValidateKey, ValidateLifecycleContract, ValidateLoggingProfile, ValidateOperationContract, ValidatePKCECodeVerifier, ValidateProviderInvokeInput,
 ValidateProviderListInput, ValidateProviderRunInput, ValidateProviderSession, ValidateProviderSessionInput, ValidateProviderToken,

@@ -40,6 +40,21 @@ type Provider interface {
 	ValidateAccessToken(ctx context.Context, token string, expected TokenExpectations) (*TokenClaims, error)
 }
 
+// UpstreamFetchTimeoutReporter is the optional companion of Provider: an
+// adapter that bounds its own transport reports that bound so a caller can tell
+// whether the deadline it intends to impose is the deadline that will be
+// enforced. A transport bound shorter than the caller's budget ends the call
+// first, so the budget would be a claim the adapter quietly contradicts.
+//
+// An adapter that does not implement the reporter states nothing, and the
+// caller accepts its own wiring as-is: the reporter is how a provider becomes
+// answerable, not a new requirement on every provider.
+type UpstreamFetchTimeoutReporter interface {
+	// UpstreamFetchTimeout is the ceiling the adapter places on one upstream
+	// call, discovery, token refresh, and key-set fetch alike. It is positive.
+	UpstreamFetchTimeout() time.Duration
+}
+
 // ProviderMetadata is the verified upstream discovery document subset the
 // facade relies on.
 type ProviderMetadata struct {

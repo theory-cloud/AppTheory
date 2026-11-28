@@ -71,8 +71,11 @@ type RefreshSweepConfig struct {
 	// refresh budget, and the handle lifetime. Required.
 	Policy RouteRefreshPolicy
 	// Events optionally receives the same schema-redacted route refresh telemetry
-	// the request path emits. A sweep rotation reports lock_acquired, refreshed,
-	// and state_failure; it never reports a reuse or revocation class.
+	// the request path emits. A sweep rotation reports lock_acquired and
+	// refreshed; every deferral reports state_failure with the DeferredReason the
+	// result carries, including a family the sweeper could not read, because a
+	// silent deferral is indistinguishable from a sweep that never ran. The hook
+	// never reports a reuse or revocation class.
 	Events RouteRefreshEventHook
 	// Now is the sweeper's clock for the stored deadlines it writes and for the
 	// event instants. Nil means wall time.
@@ -128,6 +131,9 @@ func NewRefreshSweeper(config RefreshSweepConfig) (*RefreshSweeper, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateRouteRefreshBudgetTransport(policy, config.Provider); err != nil {
+		return nil, err
+	}
 	now := config.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -164,8 +170,17 @@ func (s *RefreshSweeper) SweepFamily(ctx context.Context, familyHash string) (Re
 
 	records, err := s.front.listFamily(ctx, familyHash)
 	if err != nil {
+		// An unreadable family is a deferral like any other, and every deferral
+		// is reported: a sweep that silently does nothing is indistinguishable
+		// from a sweep that is never scheduled, so an alarm or soak that counts
+		// route refresh events alone could not see an inert sweeper. The event
+		// carries no family identity, exactly like the other sweep deferrals.
 		result.Outcome = RefreshSweepDeferred
 		result.DeferredReason = RouteRefreshReasonFamilyStateUnavailable
+		s.emit(now, func(event *RouteRefreshEvent) {
+			event.Class = RouteRefreshEventStateFailure
+			event.Reason = RouteRefreshReasonFamilyStateUnavailable
+		})
 		return result, nil
 	}
 	head := liveFamilyHead(records)

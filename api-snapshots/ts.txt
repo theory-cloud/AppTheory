@@ -703,6 +703,7 @@ TypedHandler	type
 URL_MODE_PUBLIC_BASE_URL	const
 URL_MODE_REQUEST_HOST	const
 UpsertRecordStatusInput	type
+UpstreamFetchTimeoutReporter	interface
 UrlMode	type
 UsageStats	interface
 UsageWindow	interface

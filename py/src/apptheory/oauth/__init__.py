@@ -1306,6 +1306,7 @@ from apptheory.oauth.provider import (  # noqa: E402
     TokenClaims,
     TokenExpectations,
     TokenSet,
+    UpstreamFetchTimeoutReporter,
 )
 from apptheory.oauth.store import (  # noqa: E402
     AuthorizationCodeRecord,
@@ -1405,6 +1406,7 @@ __all__ = [
     "TokenSet",
     "TransactionRecord",
     "TransactionStore",
+    "UpstreamFetchTimeoutReporter",
     "authorization_server_metadata_handler",
     "bearer_token_claims_from_context",
     "bearer_token_from_headers",

@@ -123,6 +123,24 @@ export interface Provider {
     refresh(req: RefreshRequest): Promise<TokenSet>;
     validateAccessToken(token: string, expected: TokenExpectations): Promise<TokenClaims>;
 }
+/**
+ * The optional companion of {@link Provider}: an adapter that bounds its own
+ * transport reports that bound, so a caller can tell whether the deadline it
+ * intends to impose is the deadline that will be enforced. A transport bound
+ * shorter than the caller's budget ends the call first, so the budget would be
+ * a claim the adapter quietly contradicts.
+ *
+ * An adapter that does not report a bound states nothing, and the caller accepts
+ * its own wiring as-is: this is how a provider becomes answerable, not a new
+ * requirement on every provider.
+ */
+export interface UpstreamFetchTimeoutReporter {
+    /**
+     * The ceiling the adapter places on one upstream call, discovery, token
+     * refresh, and key-set fetch alike, in seconds. It is positive.
+     */
+    upstreamFetchTimeoutSeconds(): number;
+}
 /** The Autheory adapter's configuration. */
 export interface AutheoryProviderOptions {
     issuer: string;
@@ -153,7 +171,7 @@ export interface AutheoryProviderOptions {
  */
 export declare function newAutheoryProvider(options: AutheoryProviderOptions): Promise<AutheoryProvider>;
 /** The Autheory provider adapter. */
-export declare class AutheoryProvider implements Provider {
+export declare class AutheoryProvider implements Provider, UpstreamFetchTimeoutReporter {
     private readonly issuer;
     private readonly discoveryUrlOverride;
     private readonly tokenEndpointOverride;
@@ -166,6 +184,13 @@ export declare class AutheoryProvider implements Provider {
     private readonly validators;
     private cachedDiscovery;
     constructor(options: AutheoryProviderOptions);
+    /**
+     * Reports the ceiling this adapter's transport places on one upstream call
+     * ({@link UpstreamFetchTimeoutReporter}). A caller that wants a longer
+     * deadline than this must raise `fetchTimeoutSeconds`: the transport's own
+     * bound ends the call first, so a longer budget would never be reached.
+     */
+    upstreamFetchTimeoutSeconds(): number;
     /**
      * Fetches and pins the RFC 8414 document once, then caches it. The document
      * URL must be HTTPS, a redirect is refused, and the document's `issuer` must

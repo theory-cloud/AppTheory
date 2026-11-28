@@ -244,6 +244,25 @@ export interface Provider {
   ): Promise<TokenClaims>;
 }
 
+/**
+ * The optional companion of {@link Provider}: an adapter that bounds its own
+ * transport reports that bound, so a caller can tell whether the deadline it
+ * intends to impose is the deadline that will be enforced. A transport bound
+ * shorter than the caller's budget ends the call first, so the budget would be
+ * a claim the adapter quietly contradicts.
+ *
+ * An adapter that does not report a bound states nothing, and the caller accepts
+ * its own wiring as-is: this is how a provider becomes answerable, not a new
+ * requirement on every provider.
+ */
+export interface UpstreamFetchTimeoutReporter {
+  /**
+   * The ceiling the adapter places on one upstream call, discovery, token
+   * refresh, and key-set fetch alike, in seconds. It is positive.
+   */
+  upstreamFetchTimeoutSeconds(): number;
+}
+
 /** The Autheory adapter's configuration. */
 export interface AutheoryProviderOptions {
   issuer: string;
@@ -328,7 +347,9 @@ export async function newAutheoryProvider(
 }
 
 /** The Autheory provider adapter. */
-export class AutheoryProvider implements Provider {
+export class AutheoryProvider
+  implements Provider, UpstreamFetchTimeoutReporter
+{
   private readonly issuer: string;
   private readonly discoveryUrlOverride: string;
   private readonly tokenEndpointOverride: string;
@@ -375,6 +396,16 @@ export class AutheoryProvider implements Provider {
         (this.fetchTimeoutSeconds ?? DEFAULT_FETCH_TIMEOUT_SECONDS) * 1000,
       allowPrivateHosts: opts.allowPrivateHosts === true,
     };
+  }
+
+  /**
+   * Reports the ceiling this adapter's transport places on one upstream call
+   * ({@link UpstreamFetchTimeoutReporter}). A caller that wants a longer
+   * deadline than this must raise `fetchTimeoutSeconds`: the transport's own
+   * bound ends the call first, so a longer budget would never be reached.
+   */
+  upstreamFetchTimeoutSeconds(): number {
+    return this.transport.timeoutMs / 1000;
   }
 
   /**

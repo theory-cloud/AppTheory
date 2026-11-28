@@ -595,7 +595,13 @@ export interface RefreshSweepConfig {
     stores: Stores;
     /** The encoded route refresh policy: grace window, upstream budget, handle TTL. */
     policy: RouteRefreshPolicy;
-    /** Optionally receives the same schema-redacted route refresh telemetry. */
+    /**
+     * Optionally receives the same schema-redacted route refresh telemetry. A
+     * rotation reports `lock_acquired` and `refreshed`; every deferral reports
+     * `state_failure` with the `deferredReason` the result carries, including a
+     * family the sweeper could not read. It never reports a reuse or revocation
+     * class.
+     */
     events?: RouteRefreshEventHook;
     /** The sweeper's clock for the stored deadlines and event instants. */
     now?: () => Date;

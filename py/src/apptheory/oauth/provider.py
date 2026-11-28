@@ -156,6 +156,24 @@ class Provider(Protocol):
     def validate_access_token(self, token: str, expected: TokenExpectations) -> TokenClaims: ...
 
 
+class UpstreamFetchTimeoutReporter(Protocol):
+    """The optional companion of :class:`Provider`: an adapter that bounds its
+    own transport reports that bound, so a caller can tell whether the deadline
+    it intends to impose is the deadline that will be enforced. A transport
+    bound shorter than the caller's budget ends the call first, so the budget
+    would be a claim the adapter quietly contradicts.
+
+    An adapter that does not report a bound states nothing, and the caller
+    accepts its own wiring as-is: this is how a provider becomes answerable, not
+    a new requirement on every provider.
+    """
+
+    def upstream_fetch_timeout_seconds(self) -> float:
+        """The ceiling the adapter places on one upstream call, discovery,
+        token refresh, and key-set fetch alike, in seconds. It is positive."""
+        ...
+
+
 __all__ = [
     "ERROR_INVALID_GRANT",
     "ERROR_INVALID_REQUEST",
