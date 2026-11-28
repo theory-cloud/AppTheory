@@ -724,6 +724,11 @@ function packageNameOf(specifier) {
 
 // One declared entry target as a file on disk, resolved the way Node tries it:
 // the target itself, then each script extension, then the directory's `index`.
+//
+// The file is resolved first and asked what it is second, so nothing is decided
+// from a stat that a later read then relies on: a link that moves between the two
+// calls can only make the candidate unusable, never make the scan read a
+// different path than the one it checked.
 function entryFile(dir, target) {
   const base = path.resolve(dir, target);
   const candidates = [
@@ -732,14 +737,19 @@ function entryFile(dir, target) {
     ...SCRIPT_EXTENSIONS.map((extension) => path.join(base, `index${extension}`)),
   ];
   for (const candidate of candidates) {
-    if (!SCRIPT_EXTENSIONS.includes(path.extname(candidate)) || !isFile(candidate)) {
+    if (!SCRIPT_EXTENSIONS.includes(path.extname(candidate))) {
       continue;
     }
+    let real;
     try {
-      return fs.realpathSync(candidate);
+      real = fs.realpathSync(candidate);
     } catch {
-      return null;
+      continue;
     }
+    if (!isFile(real)) {
+      continue;
+    }
+    return real;
   }
   return null;
 }
@@ -793,14 +803,23 @@ function runtimeImports(dir, manifest) {
     }
     seen.add(file);
     scanned += 1;
+    // One descriptor owns the file's size and its bytes, so a link that moves
+    // under the scan cannot make the size check describe a different file than
+    // the read below it.
     let text;
+    let descriptor;
     try {
-      if (fs.statSync(file).size > MAX_SCANNED_BYTES) {
+      descriptor = fs.openSync(file, "r");
+      if (fs.fstatSync(descriptor).size > MAX_SCANNED_BYTES) {
         continue;
       }
-      text = fs.readFileSync(file, "utf8");
+      text = fs.readFileSync(descriptor, "utf8");
     } catch {
       continue;
+    } finally {
+      if (descriptor !== undefined) {
+        fs.closeSync(descriptor);
+      }
     }
     for (const specifier of staticSpecifiers(text)) {
       if (specifier.startsWith(".")) {
