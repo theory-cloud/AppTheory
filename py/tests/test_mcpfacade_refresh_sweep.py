@@ -10,7 +10,9 @@ transiently. The corpus itself is consumed in
 
 from __future__ import annotations
 
+import time
 import unittest
+from typing import Any
 
 from apptheory import (
     DEFAULT_REFRESH_BUDGET_SECONDS,
@@ -23,6 +25,8 @@ from apptheory import (
     RefreshSweepConfig,
     RefreshSweeper,
     RouteRefreshPolicy,
+    create_app,
+    register_mcp_facade,
 )
 from apptheory.mcpfacade import MAX_REFRESH_BUDGET_SECONDS as FACADE_MAX_BUDGET
 from apptheory.oauth.provider import (
@@ -42,6 +46,7 @@ from py.tests.test_mcpfacade_front_channel import (
     _FrontChannelHarness,
     _broker_record,
     _minted_refresh_handle,
+    _policy_test_config,
     _refresh_form,
     _token_response_handle,
 )
@@ -346,3 +351,196 @@ class _StubStores:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _ReportingProvider:
+    """Delegates every provider leg to the harness adapter and answers the
+    transport-bound reporter question, so a case can register a policy the
+    transport can or cannot honor."""
+
+    def __init__(self, inner: Any, fetch_timeout_seconds: float) -> None:
+        self._inner = inner
+        self._fetch_timeout_seconds = fetch_timeout_seconds
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def upstream_fetch_timeout_seconds(self) -> float:
+        return self._fetch_timeout_seconds
+
+
+def _sweeper_with(
+    harness: _FrontChannelHarness,
+    *,
+    provider: Any = None,
+    events: Any = None,
+    budget_seconds: int | None = None,
+) -> RefreshSweeper:
+    return RefreshSweeper(
+        RefreshSweepConfig(
+            provider=harness.provider if provider is None else provider,
+            stores=harness.stores,
+            policy=RouteRefreshPolicy(
+                handle_ttl_seconds=900,
+                reuse_rate_ceiling=9,
+                grace_window_seconds=120,
+                refresh_budget_seconds=budget_seconds,
+            ),
+            events=events,
+            now=harness.clock.now,
+        )
+    )
+
+
+def _raise_unavailable() -> Any:
+    raise RuntimeError("store unavailable")
+
+
+class RefreshSweepDeferralEventTests(unittest.TestCase):
+    """Issue #1283: every deferred sweep tick is reported.
+
+    A silent deferral is indistinguishable from a sweep that never ran, so a
+    soak or alarm that counts route refresh events alone could not see an inert
+    sweeper. Every deferred branch emits exactly one ``state_failure`` event
+    carrying the reason the result reports, and a branch that resolved no record
+    invents no identity for the event."""
+
+    def test_every_deferral_is_reported_as_one_state_failure_event(self) -> None:
+        def _unreadable_family(harness: _FrontChannelHarness, _record: Any) -> None:
+            harness.stores.route_refresh_broker.list_family = lambda _hash: _raise_unavailable()
+
+        def _lock_contention(harness: _FrontChannelHarness, record: Any) -> None:
+            harness.stores.route_refresh_broker.acquire_lock(record.handle_hash, "request-owner", record.version)
+
+        def _intent_write_failure(harness: _FrontChannelHarness, _record: Any) -> None:
+            harness.stores.route_refresh_broker.compare_and_swap = lambda *_a, **_k: _raise_unavailable()
+
+        def _upstream_rejected(harness: _FrontChannelHarness, _record: Any) -> None:
+            _script_refresh(
+                harness,
+                [lambda: (_ for _ in ()).throw(ProviderError(ERROR_TEMPORARILY_UNAVAILABLE, "refresh"))],
+            )
+
+        def _commit_race(harness: _FrontChannelHarness, _record: Any) -> None:
+            harness.stores.route_refresh_broker.rotate_family = lambda *_a, **_k: _raise_unavailable()
+
+        cases: tuple[tuple[str, Any, str, bool], ...] = (
+            ("unreadable_family", _unreadable_family, "family_state_unavailable", False),
+            ("lock_contention", _lock_contention, "lock_contention", False),
+            ("rotation_intent_write_failure", _intent_write_failure, "rewrite_failure", False),
+            ("upstream_rejected", _upstream_rejected, "upstream_rejected", True),
+            ("commit_race", _commit_race, "rewrite_failure", False),
+        )
+        for name, stage, reason, resolves_head in cases:
+            with self.subTest(case=name):
+                recorder = _EventRecorder()
+                harness = _FrontChannelHarness(self)
+                handle = _minted_refresh_handle(harness)
+                record = _broker_record(harness, handle)
+                stage(harness, record)
+
+                result = _sweeper_with(harness, events=recorder).sweep_family(record.family_hash)
+
+                self.assertEqual(REFRESH_SWEEP_DEFERRED, result.outcome)
+                self.assertEqual(reason, result.deferred_reason)
+                failures = [
+                    event for event in recorder.events if event.event_class == ROUTE_REFRESH_EVENT_STATE_FAILURE
+                ]
+                self.assertEqual(1, len(failures), f"{name}: expected one state_failure event, saw {recorder.events!r}")
+                self.assertEqual(reason, failures[0].reason)
+                if resolves_head:
+                    # This branch defers after the head is resolved, so the event
+                    # keeps the identity the existing upstream failure carries.
+                    self.assertEqual(record.handle_hash, failures[0].handle_hash)
+                else:
+                    self.assertEqual("", failures[0].handle_hash)
+                    self.assertEqual("", failures[0].family_hash)
+                    self.assertEqual("", failures[0].successor_handle_hash)
+                self.assertIsNotNone(failures[0].at)
+
+                # A deferral is never a family event.
+                kept = _broker_record(harness, handle)
+                self.assertNotEqual("revoked", kept.status)
+                self.assertEqual(record.family_hash, kept.family_hash)
+
+
+class RefreshBudgetTransportTests(unittest.TestCase):
+    """Issue #1283: an encoded budget is honored or refused, never silently cut.
+
+    The facade applies ``refresh_budget_seconds`` as the deadline of the upstream
+    call, but the adapter's own transport bound ends the call first when it is
+    shorter, so ``12`` against a ``10`` s transport was really ``10``. Registration
+    refuses that pair and names both values; a budget the transport can honor
+    stays the binding deadline."""
+
+    def test_budget_longer_than_the_provider_transport_is_refused(self) -> None:
+        harness = _FrontChannelHarness(self)
+        reporting = _ReportingProvider(harness.provider, float(DEFAULT_REFRESH_BUDGET_SECONDS))
+
+        with self.assertRaises(ValueError) as refused:
+            register_mcp_facade(
+                create_app(),
+                _policy_test_config(
+                    harness,
+                    RouteRefreshPolicy(
+                        handle_ttl_seconds=900,
+                        reuse_rate_ceiling=9,
+                        refresh_budget_seconds=12,
+                    ),
+                    provider=reporting,
+                ),
+            )
+        message = str(refused.exception)
+        self.assertIn("12s", message)
+        self.assertIn("10s", message)
+        self.assertIn("upstream fetch timeout", message)
+        self.assertIn("raise the provider's fetch timeout", message)
+
+        # The same pair through the exported sweeper.
+        with self.assertRaises(ValueError) as sweep_refused:
+            _sweeper_with(harness, provider=reporting, budget_seconds=12)
+        self.assertIn("12s", str(sweep_refused.exception))
+        self.assertIn("10s", str(sweep_refused.exception))
+
+        # The comparison is against the reported bound, not a constant.
+        with self.assertRaises(ValueError) as narrow:
+            _sweeper_with(harness, provider=_ReportingProvider(harness.provider, 2.0), budget_seconds=5)
+        self.assertIn("5s", str(narrow.exception))
+        self.assertIn("2s", str(narrow.exception))
+
+    def test_budget_the_transport_can_honor_stays_the_binding_deadline(self) -> None:
+        harness = _FrontChannelHarness(self)
+
+        # An equal bound and a longer bound are accepted; a provider that states
+        # no bound is unchecked, because the reporter is how a provider becomes
+        # answerable, never a new requirement.
+        for fetch_timeout_seconds in (float(MAX_REFRESH_BUDGET_SECONDS), 30.0):
+            with self.subTest(fetch_timeout_seconds=fetch_timeout_seconds):
+                sweeper = _sweeper_with(
+                    harness,
+                    provider=_ReportingProvider(harness.provider, fetch_timeout_seconds),
+                    budget_seconds=MAX_REFRESH_BUDGET_SECONDS,
+                )
+                self.assertIsInstance(sweeper, RefreshSweeper)
+        self.assertIsInstance(_sweeper_with(harness, budget_seconds=MAX_REFRESH_BUDGET_SECONDS), RefreshSweeper)
+
+        # The encoded budget, not the adapter's longer transport default, decides
+        # whether an answer is current: the synchronous provider SPI cannot be
+        # interrupted, so the facade refuses to act on an answer that outlived
+        # the budget it was configured with.
+        handle = _minted_refresh_handle(harness)
+        record = _broker_record(harness, handle)
+        _script_refresh(harness, [lambda: time.sleep(1.05) or _successor_token_set()])
+        events = _EventRecorder()
+        result = _sweeper_with(
+            harness,
+            provider=_ReportingProvider(harness.provider, float(MAX_REFRESH_BUDGET_SECONDS)),
+            events=events,
+            budget_seconds=1,
+        ).sweep_family(record.family_hash)
+
+        self.assertEqual(REFRESH_SWEEP_DEFERRED, result.outcome)
+        self.assertEqual("upstream_rejected", result.deferred_reason)
+        failures = [event for event in events.events if event.event_class == ROUTE_REFRESH_EVENT_STATE_FAILURE]
+        self.assertEqual(1, len(failures))
+        self.assertNotEqual("revoked", _broker_record(harness, handle).status)
