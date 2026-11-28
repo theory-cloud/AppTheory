@@ -72,6 +72,7 @@ import {
   type TokenClaims,
   type TokenSet,
   type TransactionRecord,
+  type UpstreamFetchTimeoutReporter,
 } from "./oauth/index.js";
 import { originURL } from "./response.js";
 import type { Headers, Response } from "./types.js";
@@ -830,6 +831,7 @@ function normalizeFrontChannel(
   validateFrontChannelStores(config.stores);
   const policy = normalizeRouteRefreshPolicy(config.routeRefreshPolicy);
   validateRouteRefreshPolicyStore(policy, config.stores);
+  validateRouteRefreshBudgetTransport(policy, config.provider);
   if (isPresent(config.authorizeHandler) || isPresent(config.tokenHandler)) {
     throw new Error(
       `${ERROR_PREFIX} Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel`,
@@ -964,6 +966,45 @@ function validateRouteRefreshPolicyStore(
       `${ERROR_PREFIX} route refresh policy handle TTL ${policy.handleTTLSeconds}s does not match the broker store's local lifetime ${reported}s`,
     );
   }
+}
+
+/**
+ * Refuses a refresh budget the configured provider's transport cannot honor.
+ *
+ * The facade applies `refreshBudgetSeconds` as the deadline of the upstream
+ * refresh call, but a provider that bounds its own transport below that budget
+ * ends the call first, so an encoded budget would be a claim the deployment
+ * quietly contradicts: the upstream call dies at the transport's bound and never
+ * reaches the deadline the deployment configured (issue #1283: a 12 s budget with
+ * every upstream timeout firing at 10.0 s). The facade does not reach into a
+ * provider's transport -- that bound is the provider's own wiring, and rewriting
+ * it would change every other call the adapter makes -- so the misconfiguration
+ * is refused at registration with both values named. A budget at or below the
+ * reported bound is accepted, and the budget stays the binding deadline.
+ *
+ * A provider that does not report a bound (`UpstreamFetchTimeoutReporter`)
+ * states nothing to check; its own transport is then the whole story.
+ */
+function validateRouteRefreshBudgetTransport(
+  policy: NormalizedRouteRefreshPolicy,
+  provider: Provider,
+): void {
+  const reporter = provider as Partial<UpstreamFetchTimeoutReporter>;
+  if (typeof reporter.upstreamFetchTimeoutSeconds !== "function") {
+    return;
+  }
+  const bound = reporter.upstreamFetchTimeoutSeconds();
+  if (
+    typeof bound !== "number" ||
+    !Number.isFinite(bound) ||
+    bound <= 0 ||
+    policy.refreshBudgetSeconds <= bound
+  ) {
+    return;
+  }
+  throw new Error(
+    `${ERROR_PREFIX} route refresh policy refresh budget ${policy.refreshBudgetSeconds}s exceeds the provider's upstream fetch timeout ${bound}s, which would end the refresh call first: raise the provider's fetch timeout to at least ${policy.refreshBudgetSeconds}s or lower the refresh budget to at most ${bound}s`,
+  );
 }
 
 /**
@@ -6993,6 +7034,29 @@ function queryUnescapeGo(value: string): string | null {
 }
 
 /**
+ * Reports one sweep deferral. Every deferred tick emits exactly one
+ * `state_failure` event carrying the deferred reason, including a family the
+ * sweeper could not read: a silent deferral is indistinguishable from a sweep
+ * that never ran, so an alarm or soak that counts route refresh events alone
+ * could not see an inert sweeper (issue #1283). A deferral resolves no record,
+ * so the event carries the reason and the instant only -- no handle or family
+ * hash is invented for it.
+ */
+function emitSweepStateFailure(
+  front: FrontChannelConfig,
+  at: Date,
+  reason: string,
+): void {
+  const event = routeRefreshEventFor(
+    ROUTE_REFRESH_EVENT_STATE_FAILURE,
+    at,
+    null,
+  );
+  event.reason = reason;
+  emitRouteRefresh(front, event);
+}
+
+/**
  * Rotates the live head of one refresh family out of band, so a scheduled
  * trigger (a worker function, a cron entry, a batch invocation) keeps
  * credentials fresh without reimplementing the facade's rotation. It is the
@@ -7041,6 +7105,7 @@ export class RefreshSweeper {
   constructor(config: RefreshSweepConfig) {
     const policy = normalizeRouteRefreshPolicy(config.policy);
     validateFrontChannelStores(config.stores);
+    validateRouteRefreshBudgetTransport(policy, config.provider);
     this.front = {
       provider: config.provider,
       stores: config.stores,
@@ -7070,6 +7135,11 @@ export class RefreshSweeper {
       .routeRefreshBroker as Partial<RouteRefreshBrokerTransactionalFamilyStore>;
     if (typeof familyStore.listFamily !== "function") {
       result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+      emitSweepStateFailure(
+        front,
+        now,
+        ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE,
+      );
       return result;
     }
     let members: RouteRefreshBrokerRecord[];
@@ -7077,6 +7147,11 @@ export class RefreshSweeper {
       members = await familyStore.listFamily(trimmed);
     } catch {
       result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+      emitSweepStateFailure(
+        front,
+        now,
+        ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE,
+      );
       return result;
     }
     const head = liveFamilyHead(members);
@@ -7097,7 +7172,7 @@ export class RefreshSweeper {
         head.version,
       );
     } catch (err) {
-      return this.deferredLock(result, err);
+      return this.deferredLock(result, err, now);
     }
     const lockEvent = routeRefreshEventFor(
       ROUTE_REFRESH_EVENT_LOCK_ACQUIRED,
@@ -7111,6 +7186,7 @@ export class RefreshSweeper {
     if (attempted.error !== null) {
       await releaseRefreshLock(front, head, locked);
       result.deferredReason = ROUTE_REFRESH_REASON_REWRITE_FAILURE;
+      emitSweepStateFailure(front, now, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
       return result;
     }
     const intent = attempted.record;
@@ -7150,6 +7226,11 @@ export class RefreshSweeper {
     if (typeof rotateFamily !== "function") {
       await releaseRefreshLock(front, head, locked);
       result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+      emitSweepStateFailure(
+        front,
+        now,
+        ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE,
+      );
       return result;
     }
     try {
@@ -7167,7 +7248,7 @@ export class RefreshSweeper {
         ),
       });
     } catch (err) {
-      return this.deferredRotation(result, head, locked, err);
+      return this.deferredRotation(result, head, locked, err, now);
     }
     result.outcome = "rotated";
     result.successorHandleHash = successor.handleHash;
@@ -7191,6 +7272,7 @@ export class RefreshSweeper {
   private deferredLock(
     result: RefreshSweepResult,
     err: unknown,
+    at: Date,
   ): RefreshSweepResult {
     if (err instanceof BrokerRevokedError) {
       result.outcome = "revoked_family";
@@ -7209,17 +7291,16 @@ export class RefreshSweeper {
       err instanceof BrokerVersionConflictError
     ) {
       result.deferredReason = ROUTE_REFRESH_REASON_LOCK_CONTENTION;
-      return result;
-    }
-    if (
+    } else if (
       err instanceof BrokerFamilyStateUnavailableError ||
       err instanceof BrokerFamilyMismatchError ||
       err instanceof BrokerLegacyLineageUnsupportedError
     ) {
       result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
-      return result;
+    } else {
+      result.deferredReason = ROUTE_REFRESH_REASON_STORE_FAILURE;
     }
-    result.deferredReason = ROUTE_REFRESH_REASON_STORE_FAILURE;
+    emitSweepStateFailure(this.front, at, result.deferredReason);
     return result;
   }
 
@@ -7228,6 +7309,7 @@ export class RefreshSweeper {
     head: RouteRefreshBrokerRecord,
     locked: RouteRefreshBrokerRecord,
     err: unknown,
+    at: Date,
   ): Promise<RefreshSweepResult> {
     await releaseRefreshLock(this.front, head, locked);
     if (err instanceof BrokerRevokedError) {
@@ -7241,17 +7323,16 @@ export class RefreshSweeper {
       err instanceof BrokerSuccessorExistsError
     ) {
       result.deferredReason = ROUTE_REFRESH_REASON_LOCK_CONTENTION;
-      return result;
-    }
-    if (
+    } else if (
       err instanceof BrokerFamilyStateUnavailableError ||
       err instanceof BrokerFamilyMismatchError ||
       err instanceof BrokerLegacyLineageUnsupportedError
     ) {
       result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
-      return result;
+    } else {
+      result.deferredReason = ROUTE_REFRESH_REASON_REWRITE_FAILURE;
     }
-    result.deferredReason = ROUTE_REFRESH_REASON_REWRITE_FAILURE;
+    emitSweepStateFailure(this.front, at, result.deferredReason);
     return result;
   }
 }
@@ -7264,7 +7345,13 @@ export interface RefreshSweepConfig {
   stores: Stores;
   /** The encoded route refresh policy: grace window, upstream budget, handle TTL. */
   policy: RouteRefreshPolicy;
-  /** Optionally receives the same schema-redacted route refresh telemetry. */
+  /**
+   * Optionally receives the same schema-redacted route refresh telemetry. A
+   * rotation reports `lock_acquired` and `refreshed`; every deferral reports
+   * `state_failure` with the `deferredReason` the result carries, including a
+   * family the sweeper could not read. It never reports a reuse or revocation
+   * class.
+   */
   events?: RouteRefreshEventHook;
   /** The sweeper's clock for the stored deadlines and event instants. */
   now?: () => Date;

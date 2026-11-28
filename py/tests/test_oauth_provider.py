@@ -303,6 +303,15 @@ class AutheoryAdapterBehaviourTests(unittest.TestCase):
         fields.update(overrides)
         return AuthorizationRequest(**fields)
 
+    def test_provider_reports_its_upstream_fetch_timeout(self) -> None:
+        # A default-configured adapter reports the framework's 10 s bound, which is
+        # the value issue #1283 found silently capping an encoded 12 s budget.
+        self.assertEqual(DEFAULT_TIMEOUT_SECONDS, self._provider().upstream_fetch_timeout_seconds())
+        for configured in (12.0, 3.5):
+            with self.subTest(http_timeout_seconds=configured):
+                provider = self._provider(http_timeout_seconds=configured)
+                self.assertEqual(configured, provider.upstream_fetch_timeout_seconds())
+
     def test_authorization_url_refuses_a_non_s256_method(self) -> None:
         provider = self._provider()
         with self.assertRaises(ProviderError) as caught:

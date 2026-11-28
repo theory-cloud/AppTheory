@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
@@ -43,8 +44,11 @@ import (
 //     Zero selects DefaultRefreshBudget. The facade applies it as the deadline
 //     of the provider call, so an adapter that ignores the deadline still cannot
 //     outlive it, and it is bounded above by the broker lock TTL it has to stay
-//     inside (MaxRefreshBudget). It is a configuration field, never an
-//     environment variable.
+//     inside (MaxRefreshBudget). A provider whose own transport bound is shorter
+//     than the budget would end the call first, so registration refuses that
+//     combination (validateRouteRefreshBudgetTransport) instead of letting the
+//     encoded budget mean less than it says. It is a configuration field, never
+//     an environment variable.
 type RouteRefreshPolicy struct {
 	HandleTTL        time.Duration
 	GraceWindow      time.Duration
@@ -163,6 +167,37 @@ func (policy RouteRefreshPolicy) normalized() (RouteRefreshPolicy, error) {
 		)
 	}
 	return policy, nil
+}
+
+// validateRouteRefreshBudgetTransport refuses a refresh budget the configured
+// provider's transport cannot honor.
+//
+// The facade applies RefreshBudget as the deadline of the upstream refresh
+// call, but a provider that bounds its own HTTP client below that budget ends
+// the call first, so an encoded budget would be a claim the deployment quietly
+// contradicts: the request path would report a transient failure at the
+// transport's bound and never reach the deadline it was configured with. The
+// facade does not reach into a provider's transport — that bound is the
+// provider's own wiring, and rewriting it would change every other call the
+// adapter makes — so the misconfiguration is refused at registration with both
+// values named. A budget at or below the reported bound is accepted, and the
+// budget stays the binding deadline.
+//
+// A provider that does not report a bound (oauth.UpstreamFetchTimeoutReporter)
+// states nothing to check; its own transport is then the whole story.
+func validateRouteRefreshBudgetTransport(policy RouteRefreshPolicy, provider oauth.Provider) error {
+	reporter, ok := provider.(oauth.UpstreamFetchTimeoutReporter)
+	if !ok {
+		return nil
+	}
+	upstream := reporter.UpstreamFetchTimeout()
+	if upstream <= 0 || policy.RefreshBudget <= upstream {
+		return nil
+	}
+	return fmt.Errorf(
+		"mcpfacade: route refresh policy refresh budget %s exceeds the provider's upstream fetch timeout %s, which would end the refresh call first: raise the provider's fetch timeout to at least %s or lower the refresh budget to at most %s",
+		policy.RefreshBudget, upstream, policy.RefreshBudget, upstream,
+	)
 }
 
 // validateRouteRefreshPolicyStore refuses a store that reports a local handle

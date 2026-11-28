@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>1012 exported top-level symbols</summary>
+<summary>1013 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest,
@@ -244,7 +244,7 @@ StructuredLogger, supportedEndpointTemplates, supportedIssuerModes, supportedOAu
 supportedStageGlobalRoutes, TableTheoryMicroVMSessionRegistry, TableTheoryMicroVMSessionRegistryOptions, TERMINAL_TOKEN_ERROR_CODES,
 terminalTokenVerdictCodes, TestEnv, text, Tier, TimeoutConfig, timeoutMiddleware, TimeWindow, TitanEmbedder, TitanEmbedderConfig, TokenClaims,
 TokenExpectations, TokenSet, TransactionRecord, TransactionStatus, TransactionStore, TransitionJobStatusInput, TRANSPORT_POSTURES, TypedHandler, unixSeconds,
-unsupportedObjectStoreOperation, UpsertRecordStatusInput, URL_MODE_PUBLIC_BASE_URL, URL_MODE_REQUEST_HOST, UrlMode, UsageStats, UsageWindow,
+unsupportedObjectStoreOperation, UpsertRecordStatusInput, UpstreamFetchTimeoutReporter, URL_MODE_PUBLIC_BASE_URL, URL_MODE_REQUEST_HOST, UrlMode, UsageStats, UsageWindow,
 validateDimension, validateDynamicClientRegistrationRequest, validateEndpointPath, validateLoggingProfile, validateMicroVMControllerContract,
 validateMicroVMControllerRequest, validateMicroVMEscapeHatches, validateMicroVMLifecycleContract, validateMicroVMOperationContract,
 validateMicroVMProviderListInput, validateMicroVMProviderRunInput, validateMicroVMProviderSession, validateMicroVMProviderSessionInput,

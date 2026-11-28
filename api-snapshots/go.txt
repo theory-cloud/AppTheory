@@ -5830,6 +5830,10 @@ type TokenSet struct {
 	IDToken      string `json:"id_token"`
 }
 
+type UpstreamFetchTimeoutReporter interface {
+	UpstreamFetchTimeout() time.Duration
+}
+
 func AsProviderError(error) (*ProviderError, bool)
 
 func AuthorizationServerMetadataHandler(*AuthorizationServerMetadata) apptheory.Handler
@@ -5913,6 +5917,8 @@ func (*AutheoryProvider) Discovery(context.Context) (*ProviderMetadata, error)
 func (*AutheoryProvider) ExchangeCode(context.Context, CodeExchangeRequest) (*TokenSet, error)
 
 func (*AutheoryProvider) Refresh(context.Context, RefreshRequest) (*TokenSet, error)
+
+func (*AutheoryProvider) UpstreamFetchTimeout() time.Duration
 
 func (*AutheoryProvider) ValidateAccessToken(
 	context.Context,

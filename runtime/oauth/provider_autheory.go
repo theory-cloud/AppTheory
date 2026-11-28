@@ -498,6 +498,15 @@ func (p *AutheoryProvider) Refresh(ctx context.Context, req RefreshRequest) (*To
 	return p.postToken(ctx, providerOpRefresh, endpoint, form)
 }
 
+// UpstreamFetchTimeout reports the ceiling this adapter's transport places on
+// one upstream call (oauth.UpstreamFetchTimeoutReporter). A caller that wants a
+// longer deadline than this must raise AutheoryProviderOptions.FetchTimeout:
+// the HTTP client's own bound ends the call first, so a longer context deadline
+// would never be reached.
+func (p *AutheoryProvider) UpstreamFetchTimeout() time.Duration {
+	return p.fetchTimeout
+}
+
 // postToken performs one bounded, size-capped, redirect-refusing token call and
 // maps the result onto the closed provider vocabulary. No part of the upstream
 // body reaches the returned error.

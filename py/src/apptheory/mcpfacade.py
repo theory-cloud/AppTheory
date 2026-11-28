@@ -1156,6 +1156,41 @@ def _validate_route_refresh_policy_store(policy: RouteRefreshPolicy, stores: _Fr
         )
 
 
+def _validate_route_refresh_budget_transport(policy: RouteRefreshPolicy, provider: Any) -> None:
+    """Refuses a refresh budget the configured provider's transport cannot honor.
+
+    The facade applies ``refresh_budget_seconds`` as the deadline of the upstream
+    refresh call, but a provider that bounds its own transport below that budget
+    ends the call first, so an encoded budget would be a claim the deployment
+    quietly contradicts: the upstream call dies at the transport's bound and
+    never reaches the deadline the deployment configured (issue #1283: a 12 s
+    budget with every upstream timeout firing at 10.0 s). The facade never
+    reaches into a provider's transport -- that bound is the provider's own
+    wiring, and rewriting it would change every other call the adapter makes --
+    so the misconfiguration is refused at registration with both values named. A
+    budget at or below the reported bound is accepted, and the budget stays the
+    binding deadline.
+
+    A provider that does not report a bound (``UpstreamFetchTimeoutReporter``)
+    states nothing to check; its own transport is then the whole story.
+    """
+    reporter = getattr(provider, "upstream_fetch_timeout_seconds", None)
+    if not callable(reporter):
+        return
+    try:
+        bound = float(cast("Any", reporter)())
+    except (TypeError, ValueError):
+        return
+    budget = policy.refresh_budget_seconds
+    if budget is None or bound <= 0 or float(budget) <= bound:
+        return
+    raise ValueError(
+        f"{_POLICY_ERROR_PREFIX} route refresh policy refresh budget {budget}s exceeds the provider's "
+        f"upstream fetch timeout {bound:g}s, which would end the refresh call first: raise the provider's "
+        f"fetch timeout to at least {budget}s or lower the refresh budget to at most {bound:g}s"
+    )
+
+
 def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None:
     """Validate the framework-owned front-channel field set of ``FacadeConfig``
     (DESIGN section 8) and return it.
@@ -1189,6 +1224,7 @@ def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None
     stores = _require_front_channel_stores(config.stores)
     policy = _normalize_route_refresh_policy(config.route_refresh_policy)
     _validate_route_refresh_policy_store(policy, stores)
+    _validate_route_refresh_budget_transport(policy, config.provider)
     if config.authorize_handler is not None or config.token_handler is not None:
         raise ValueError(
             f"{_ERROR_PREFIX} Provider owns the authorize and token routes; "
@@ -5565,6 +5601,11 @@ class RefreshSweepConfig:
     policy: RouteRefreshPolicy
     # Optionally receives the same schema-redacted route refresh telemetry.
     events: Callable[[RouteRefreshEvent], None] | None = None
+    # The sweeper's event hook. A rotation reports lock_acquired and refreshed;
+    # every deferral reports state_failure with the deferred reason the result
+    # carries, including a family the sweeper could not read. It never reports a
+    # reuse or revocation class.
+
     # The sweeper's clock for the stored deadlines and event instants.
     now: Callable[[], datetime] | None = None
 
@@ -5589,6 +5630,20 @@ class RefreshSweepResult:
     chain_generation: int = 0
     deferred_reason: str = ""
     upstream_class: str = ""
+
+
+def _emit_sweep_state_failure(front: _FrontChannelConfig, at: datetime, reason: str) -> None:
+    """Reports one sweep deferral. Every deferred tick emits exactly one
+    ``state_failure`` event carrying the deferred reason, including a family the
+    sweeper could not read: a silent deferral is indistinguishable from a sweep
+    that never ran, so an alarm or soak that counts route refresh events alone
+    could not see an inert sweeper (issue #1283). A deferral that resolved no
+    record invents no identity for it."""
+    event = _event_from_record(None)
+    event.event_class = ROUTE_REFRESH_EVENT_STATE_FAILURE
+    event.reason = reason
+    event.at = at
+    _emit_route_refresh(front, event)
 
 
 class RefreshSweeper:
@@ -5639,6 +5694,7 @@ class RefreshSweeper:
             raise ValueError(f"{_ERROR_PREFIX} refresh sweeper requires a provider")
         stores = _require_front_channel_stores(config.stores)
         policy = _normalize_route_refresh_policy(config.policy)
+        _validate_route_refresh_budget_transport(policy, config.provider)
         self._front = _FrontChannelConfig(
             provider=config.provider,
             stores=stores,
@@ -5663,11 +5719,13 @@ class RefreshSweeper:
         list_family = getattr(front.stores.route_refresh_broker, "list_family", None)
         if not callable(list_family):
             result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+            _emit_sweep_state_failure(front, now, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE)
             return result
         try:
             members = list(cast("Any", list_family)(trimmed))
         except Exception:  # noqa: BLE001 - an unreadable family is a deferred tick
             result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+            _emit_sweep_state_failure(front, now, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE)
             return result
         head = _live_family_head(members)
         if head is None:
@@ -5682,7 +5740,7 @@ class RefreshSweeper:
         try:
             locked = front.stores.route_refresh_broker.acquire_lock(head.handle_hash, _new_opaque_token(), head.version)
         except Exception as err:  # noqa: BLE001 - classified below
-            return self._deferred_lock(result, err)
+            return self._deferred_lock(result, err, now)
         event = _event_from_record(head)
         event.event_class = ROUTE_REFRESH_EVENT_LOCK_ACQUIRED
         event.status_to = STATUS_REFRESHING
@@ -5692,6 +5750,7 @@ class RefreshSweeper:
         intent, intent_failure = _take_rotation_intent_at(front, head, locked, now)
         if intent_failure is not None:
             result.deferred_reason = ROUTE_REFRESH_REASON_REWRITE_FAILURE
+            _emit_sweep_state_failure(front, now, ROUTE_REFRESH_REASON_REWRITE_FAILURE)
             return result
         if intent is not None:
             locked = intent
@@ -5720,6 +5779,7 @@ class RefreshSweeper:
         if not callable(rotate_family):
             _release_refresh_lock(front, head, locked)
             result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+            _emit_sweep_state_failure(front, now, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE)
             return result
         try:
             cast("Any", rotate_family)(
@@ -5734,7 +5794,7 @@ class RefreshSweeper:
                 )
             )
         except Exception as err:  # noqa: BLE001 - classified below
-            return self._deferred_rotation(result, head, locked, err)
+            return self._deferred_rotation(result, head, locked, err, now)
         result.outcome = REFRESH_SWEEP_ROTATED
         result.successor_handle_hash = successor.handle_hash
         result.chain_generation = successor.chain_generation
@@ -5751,7 +5811,12 @@ class RefreshSweeper:
         _emit_route_refresh(front, refreshed)
         return result
 
-    def _deferred_lock(self, result: RefreshSweepResult, err: Exception) -> RefreshSweepResult:
+    def _deferred_lock(
+        self,
+        result: RefreshSweepResult,
+        err: Exception,
+        at: datetime,
+    ) -> RefreshSweepResult:
         if isinstance(err, BrokerRevokedError):
             result.outcome = REFRESH_SWEEP_REVOKED_FAMILY
             return result
@@ -5768,6 +5833,7 @@ class RefreshSweeper:
             result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
         else:
             result.deferred_reason = ROUTE_REFRESH_REASON_STORE_FAILURE
+        _emit_sweep_state_failure(self._front, at, result.deferred_reason)
         return result
 
     def _deferred_rotation(
@@ -5776,6 +5842,7 @@ class RefreshSweeper:
         head: RouteRefreshBrokerRecord,
         locked: RouteRefreshBrokerRecord,
         err: Exception,
+        at: datetime,
     ) -> RefreshSweepResult:
         _release_refresh_lock(self._front, head, locked)
         if isinstance(err, BrokerRevokedError):
@@ -5791,6 +5858,7 @@ class RefreshSweeper:
             result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
         else:
             result.deferred_reason = ROUTE_REFRESH_REASON_REWRITE_FAILURE
+        _emit_sweep_state_failure(self._front, at, result.deferred_reason)
         return result
 
 

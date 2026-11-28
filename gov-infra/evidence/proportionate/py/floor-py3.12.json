@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 4.074,
+      "durationSeconds": 8.865,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-27T15:23:45Z",
+      "finishedAt": "2026-11-28T16:18:52Z",
       "id": "py-build",
-      "inputsDigest": "sha256:58c072afecd35f737a12c0d5a6897c70bdd8163b9a4d4476307123041c421c74",
+      "inputsDigest": "sha256:1f14196f11682a4d6c78d43d0e71bb4f5799cac23da1b3f212e66e63821a653e",
       "logDigest": "sha256:c0f06a96aecf4c509afd4824e65b849c2664e132b51a2ed5449a79e2c9fdfccc",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261127T152341Z-74919.log",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261128T161843Z-9873.log",
       "reused": false,
-      "startedAt": "2026-11-27T15:23:41Z"
+      "startedAt": "2026-11-28T16:18:43Z"
     }
   ],
   "consumed": [],
@@ -36,7 +36,7 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-27T15:23:45Z",
+  "recordedAt": "2026-11-28T16:18:52Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -46,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:a4a1f99484aa0639841a42829ddac4f19e3dae5b24ebfd28029450ee286d565a",
+    "digest": "sha256:b39753e24b0cdbe5f54d926ed9ca13622c888ac9c741af67f79ace8276b6fe12",
     "fileCount": 136,
     "paths": [
       "py/",
@@ -56,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:01c2f1cc5035087342c14b8098ccba812e784b5eb25123a50b5c5c276d4217dc",
-    "fileCount": 2852
+    "digest": "sha256:7e6c725d2003a11ee2550dd79942ed3b936e649d560244c19bbbc7a9133e908b",
+    "fileCount": 2856
   },
   "verdict": "PASS"
 }

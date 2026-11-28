@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-go.sh"
       ],
-      "durationSeconds": 9.207,
+      "durationSeconds": 26.056,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-27T22:05:57Z",
+      "finishedAt": "2026-11-28T16:00:23Z",
       "id": "go-test-vet",
-      "inputsDigest": "sha256:54726b605756eb3ec49ff667867ebbecb79a09df600e18bbb15491482e8f0254",
-      "logDigest": "sha256:4661cc2ee22bb9caa6313ac43042501da6d9f7b19368fd16278217a4e66aec43",
-      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261127T220547Z-54320.log",
+      "inputsDigest": "sha256:d8117b7a722f12b9c3d6ccaf409fa200ace1bd40e9c70eb620c6a5c18e2d67d8",
+      "logDigest": "sha256:ee5ffbf93227019ba6f752d370d45355eac245d9b06982df94b42326ccf1f839",
+      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261128T155957Z-43408.log",
       "reused": false,
-      "startedAt": "2026-11-27T22:05:47Z"
+      "startedAt": "2026-11-28T15:59:57Z"
     }
   ],
   "consumed": [],
@@ -36,7 +36,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-27T22:05:57Z",
+  "recordedAt": "2026-11-28T16:00:23Z",
   "releaseOnly": {
     "digest": "sha256:804e749acfdab4d66c5929f3352659c57b788b56161b672dd12b9da6d5646ce4",
     "fileCount": 549,
@@ -46,8 +46,8 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:0009b16847814efd869b87c2623fa18f632159d0396ad5b2deffe352a4c1950f",
-    "fileCount": 1690,
+    "digest": "sha256:65f1b8c33beb59ecad2de261489a73e3815f02ad640eadbddbfa046ad5bc3fa4",
+    "fileCount": 1693,
     "paths": [
       "go.mod",
       "go.sum",
@@ -64,8 +64,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:e4e85d7a78b7d4811694a0f8156da369f4b9ef270145ba0cb4d61085b2910c11",
-    "fileCount": 2853
+    "digest": "sha256:7e6c725d2003a11ee2550dd79942ed3b936e649d560244c19bbbc7a9133e908b",
+    "fileCount": 2856
   },
   "verdict": "PASS"
 }

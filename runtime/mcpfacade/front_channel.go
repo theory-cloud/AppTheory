@@ -112,6 +112,9 @@ func normalizeFrontChannel(config FacadeConfig) (*frontChannelConfig, error) {
 	if err := validateRouteRefreshPolicyStore(policy, config.Stores); err != nil {
 		return nil, err
 	}
+	if err := validateRouteRefreshBudgetTransport(policy, config.Provider); err != nil {
+		return nil, err
+	}
 	if config.AuthorizeHandler != nil || config.TokenHandler != nil {
 		return nil, fmt.Errorf("mcpfacade: Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel")
 	}
