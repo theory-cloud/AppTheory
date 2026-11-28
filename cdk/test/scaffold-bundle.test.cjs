@@ -1273,6 +1273,263 @@ test("the CDK still bundles the supported form of both refused layouts", () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Round 6: the two residuals the round-5 gate left open (issue #1347).
+//
+// Both are the same seam the round-5 refusals cover — something a package keeps
+// inside its own `node_modules` — reached through the two places that check could
+// not see. The subtree refusal asked for a `package.json`, and Node loads a
+// manifest-less directory through its `index.js`; the undeclared-import case asked
+// only what a manifest declares, and a package's content can import a name from
+// its own install at run time. Each is refused at synth with the package and the
+// path named, because each emits an asset the project never ran: one that loads a
+// different version, or one whose handler does not load at all.
+//
+// Neither is a shape `npm install` produces. The layouts the registry, workspaces,
+// `file:` links, conflict hoisting and the generated scaffold do produce keep
+// bundling exactly as before, which the controls below and the round-3 to round-5
+// cases pin.
+
+// ADV-AT-R1-R5-01: the round-5 subtree, shipped as one file. `vend` declares
+// `leftpad`, and its own `lib/node_modules/leftpad` holds only `index.js` — no
+// manifest, which Node's directory fallback still loads. The project reads
+// `9.9.9-vendored` from it; a staged copy of `vend` reaches the hoisted `0.0.1`,
+// so the asset would silently run a version the project never ran.
+function buildSubtreeWithoutManifestLayout(root) {
+  writePackage(root, {
+    name: "project",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: { vend: "file:./vendor/x", leftpad: "0.0.1" },
+  });
+  writeModule(
+    path.join(root, "vendor", "x"),
+    { name: "vend", version: "1.0.0", dependencies: { leftpad: "^0.0.1" } },
+    'module.exports.self = "vend@1.0.0";\nmodule.exports.fromLib = require("./lib/util.cjs").v();',
+  );
+  fs.mkdirSync(path.join(root, "vendor", "x", "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "vendor", "x", "lib", "util.cjs"),
+    'module.exports = { v: () => require("leftpad").version() };\n',
+  );
+  // The vendored copy: `index.js` and no `package.json`.
+  fs.mkdirSync(path.join(root, "vendor", "x", "lib", "node_modules", "leftpad"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "vendor", "x", "lib", "node_modules", "leftpad", "index.js"),
+    'module.exports = { version: () => "9.9.9-vendored" };\n',
+  );
+  installPackage(root, "leftpad", "0.0.1", { code: 'module.exports = { version: () => "0.0.1" }' });
+  linkSlot(root, "vend", path.join(root, "vendor", "x"));
+  writeHandler(root, [
+    'import { createRequire } from "node:module";',
+    "const req = createRequire(import.meta.url);",
+    'const vend = req("vend");',
+    "",
+    "export const handler = () => ({ self: vend.self, fromLib: vend.fromLib });",
+  ]);
+}
+
+// ADV-AT-R1-R5-02: `vend2` declares nothing and requires `sneaky` from its own
+// root-level `node_modules` — the placement that stays supported, because a
+// linked checkout's own install lives there. Copying a package never carries that
+// tree, so the emitted handler could not resolve `sneaky` at all.
+function buildUndeclaredOwnImportLayout(root) {
+  writePackage(root, {
+    name: "project",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: { vend2: "file:./vendor/y" },
+  });
+  writeModule(
+    path.join(root, "vendor", "y"),
+    { name: "vend2", version: "1.0.0" },
+    'module.exports.self = "vend2@1.0.0";\nmodule.exports.sneaky = require("sneaky").name;',
+  );
+  writeModule(
+    path.join(root, "vendor", "y", "node_modules", "sneaky"),
+    { name: "sneaky", version: "1.0.0-vendored" },
+    'module.exports = { name: "sneaky@1.0.0-vendored" };',
+  );
+  linkSlot(root, "vend2", path.join(root, "vendor", "y"));
+  writeHandler(root, [
+    'import { createRequire } from "node:module";',
+    "const req = createRequire(import.meta.url);",
+    'const vend2 = req("vend2");',
+    "",
+    "export const handler = () => ({ self: vend2.self, sneaky: vend2.sneaky });",
+  ]);
+}
+
+for (const layout of [
+  {
+    id: "adv-subtree-without-manifest",
+    label: "a node_modules below a package root that ships no manifest of its own",
+    build: buildSubtreeWithoutManifestLayout,
+    // What the project itself loads, before any bundling: the vendored copy.
+    project: { self: "vend@1.0.0", fromLib: "9.9.9-vendored" },
+    refusal:
+      /the staged package vend at node_modules\/vend carries node_modules\/vend\/lib\/node_modules\/leftpad, which the asset does not carry/,
+  },
+  {
+    id: "adv-undeclared-own-import",
+    label: "a package that imports an undeclared name from its own node_modules",
+    build: buildUndeclaredOwnImportLayout,
+    project: { self: "vend2@1.0.0", sneaky: "sneaky@1.0.0-vendored" },
+    refusal:
+      /the staged package vend2 at node_modules\/vend2 imports sneaky from index\.cjs, which only its own install provides \(.*node_modules\/sneaky\) and the asset does not carry/,
+  },
+]) {
+  test(`the CDK refuses ${layout.label} instead of emitting a different asset, naming the package and path`, () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `apptheory-bundle-${layout.id}-`));
+    const root = path.join(workspace, "project");
+    const outdir = path.join(workspace, `cdk.out-${layout.id}`);
+    try {
+      layout.build(root);
+      // The layout is real: the project loads it, under every interpreter.
+      const project = invokeHandlerEverywhere(path.join(root, "src", "handler.mjs"), root);
+      assert.deepEqual(
+        project.map((entry) => entry.resolved),
+        project.map(() => layout.project),
+        `the project must load ${JSON.stringify(layout.project)}`,
+      );
+
+      // Synth refuses, naming the package and the path ...
+      assert.throws(
+        () => synthNodeAsset(root, workspace, layout.id),
+        { message: layout.refusal },
+        "a layout the asset cannot reproduce must refuse the synth, not stage it",
+      );
+      // ... and the CDK emits no asset for a deployment to upload.
+      const emitted = fs.existsSync(outdir)
+        ? fs.readdirSync(outdir).filter((entry) => /^asset\.[0-9a-f]+$/.test(entry))
+        : [];
+      assert.deepEqual(emitted, [], `the refused synth emitted ${JSON.stringify(emitted)}`);
+
+      // The bundling module refuses the same layout directly, so the refusal is
+      // not an artifact of the construct.
+      assert.throws(() => tsBundle().stage(root, path.join(workspace, "direct")), {
+        message: layout.refusal,
+      });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
+
+// The boundary of the new refusal, pinned: what a package keeps in its own
+// `node_modules` is not the trigger — a linked checkout's development tree is
+// nothing but undeclared names. The trigger is a name its own *run-time* code
+// imports and the asset cannot carry. So a name nothing imports still bundles,
+// and so does an import in a file the package's `main` never reaches.
+test("the CDK still bundles undeclared names in a package's own install when its run-time code never imports them", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-undeclared-unused-"));
+  const root = path.join(workspace, "project");
+  try {
+    writePackage(root, {
+      name: "project",
+      private: true,
+      version: "0.0.0",
+      type: "module",
+      dependencies: { carrier: "file:./carrier" },
+    });
+    writeModule(
+      path.join(root, "carrier"),
+      { name: "carrier", version: "1.0.0" },
+      'module.exports.self = "carrier@1.0.0";',
+    );
+    // A development tree in the package's own install, in both shapes: one
+    // package with a manifest, one manifest-less directory, and a test file that
+    // imports them — reachable from nothing the package ships as its entry point.
+    writeModule(
+      path.join(root, "carrier", "node_modules", "dev-tool"),
+      { name: "dev-tool", version: "3.0.0" },
+      'module.exports = "dev-tool@3.0.0";',
+    );
+    fs.mkdirSync(path.join(root, "carrier", "node_modules", "dev-flat"), { recursive: true });
+    fs.writeFileSync(path.join(root, "carrier", "node_modules", "dev-flat", "index.js"), 'module.exports = "dev-flat";\n');
+    fs.mkdirSync(path.join(root, "carrier", "test"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "carrier", "test", "carrier.test.cjs"),
+      [
+        'const tool = require("dev-tool");',
+        'const flat = require("dev-flat");',
+        'const assert = require("node:assert/strict");',
+        "assert.ok(tool && flat);",
+        "",
+      ].join("\n"),
+    );
+    linkSlot(root, "carrier", path.join(root, "carrier"));
+    writeHandler(root, ['import carrier from "carrier";', "", "export const handler = () => ({ carrier: carrier.self });"]);
+
+    const project = invokeHandlerEverywhere(path.join(root, "src", "handler.mjs"), root);
+    const asset = synthNodeAsset(root, workspace, "undeclared-unused");
+    const asserted = invokeHandlerEverywhere(path.join(asset, "handler.mjs"), asset);
+    assert.deepEqual(
+      asserted.map((entry) => entry.resolved),
+      project.map((entry) => entry.resolved),
+    );
+    assert.deepEqual(project.map((entry) => entry.resolved)[0], { carrier: "carrier@1.0.0" });
+    // The development tree is not staged, exactly as before this round.
+    assert.deepEqual(fs.readdirSync(path.join(asset, "node_modules")).sort(), ["carrier"]);
+    assert.equal(
+      fs.existsSync(path.join(asset, "node_modules", "carrier", "node_modules")),
+      false,
+      "the asset must not carry the package's own install",
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+// The control for both new refusals: the same two packages without the
+// unfaithful part still bundle and load what the project loads, so the refusal is
+// about the layout and not about the package names.
+test("the CDK still bundles the supported form of both round-6 layouts", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "apptheory-bundle-r6-control-"));
+  try {
+    // `vend` with its declared dependency hoisted instead of shipped below it.
+    const subtree = path.join(workspace, "subtree");
+    buildSubtreeWithoutManifestLayout(subtree);
+    fs.rmSync(path.join(subtree, "vendor", "x", "lib", "node_modules"), { recursive: true, force: true });
+    const subtreeAsset = synthNodeAsset(subtree, workspace, "control-subtree-hoisted");
+    const subtreeProject = invokeHandlerEverywhere(path.join(subtree, "src", "handler.mjs"), subtree);
+    const subtreeStaged = invokeHandlerEverywhere(path.join(subtreeAsset, "handler.mjs"), subtreeAsset);
+    assert.deepEqual(
+      subtreeStaged.map((entry) => entry.resolved),
+      subtreeProject.map((entry) => entry.resolved),
+    );
+    assert.deepEqual(subtreeProject.map((entry) => entry.resolved)[0], { self: "vend@1.0.0", fromLib: "0.0.1" });
+
+    // `vend2` with `sneaky` declared and installed through the project's own
+    // closure instead of kept in its own install.
+    const own = path.join(workspace, "own");
+    buildUndeclaredOwnImportLayout(own);
+    fs.rmSync(path.join(own, "vendor", "y", "node_modules"), { recursive: true, force: true });
+    writePackage(path.join(own, "vendor", "y"), {
+      name: "vend2",
+      version: "1.0.0",
+      main: "index.cjs",
+      dependencies: { sneaky: "1.0.0" },
+    });
+    installPackage(own, "sneaky", "1.0.0", { code: 'module.exports = { name: "sneaky@1.0.0-vendored" }' });
+    const ownAsset = synthNodeAsset(own, workspace, "control-own-declared");
+    const ownProject = invokeHandlerEverywhere(path.join(own, "src", "handler.mjs"), own);
+    const ownStaged = invokeHandlerEverywhere(path.join(ownAsset, "handler.mjs"), ownAsset);
+    assert.deepEqual(
+      ownStaged.map((entry) => entry.resolved),
+      ownProject.map((entry) => entry.resolved),
+    );
+    assert.deepEqual(ownProject.map((entry) => entry.resolved)[0], {
+      self: "vend2@1.0.0",
+      sneaky: "sneaky@1.0.0-vendored",
+    });
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 // Part 1 of the round-4 change: acceptance is Node's resolver on the staged
 // tree. Round 3's phantom slot, injected into the real bundling path, must
 // refuse the synth and name the edge rather than emit an asset that cannot load.
