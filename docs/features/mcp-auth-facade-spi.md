@@ -202,6 +202,19 @@ The brokered refresh handle has four encoded policy values (see `FacadeConfig.Ro
   3 s commit margin: a budget above it could let the lock expire mid-rotation and admit a second concurrent upstream
   refresh. It is a configuration field, never an environment variable.
 
+  The budget is the deadline of the call only if the transport lets it be one. An adapter that bounds its own HTTP
+  client reports that bound through the optional companion of the provider SPI — `oauth.UpstreamFetchTimeoutReporter`
+  (`UpstreamFetchTimeout() time.Duration`), `upstreamFetchTimeoutSeconds(): number`, and
+  `upstream_fetch_timeout_seconds() -> float` — and registration refuses a policy whose budget exceeds it:
+  `… route refresh policy refresh budget 12s exceeds the provider's upstream fetch timeout 10s, which would end the
+  refresh call first: raise the provider's fetch timeout to at least 12s or lower the refresh budget to at most 10s`.
+  This is the honesty rule of the encoded policy: the facade will not reach into a provider's transport (that bound is
+  the provider's own wiring and governs every call the adapter makes), so a budget it cannot honor is refused with
+  both values named rather than silently cut to the stricter one. A budget at or below the reported bound is accepted
+  and stays the binding deadline; a provider that reports no bound states nothing to check. The Autheory adapter's
+  bound is `AutheoryProviderOptions.FetchTimeout` (`fetchTimeoutSeconds` / `http_timeout_seconds`), 10 s by default,
+  so an encoded 12 s budget requires a 12 s fetch timeout.
+
 ### Rotation intent, post-timeout lineage verify, and the ambiguity horizon
 
 Before it presents a record's upstream material, the facade writes a durable **rotation-intent marker**
@@ -324,7 +337,14 @@ Its concurrency contract is part of the SPI:
    revocation and its receipt stay on the request path, where the client-facing verdict is rendered and lineage is
    verified.
 5. **It is bounded.** The upstream call carries the same encoded refresh budget, which stays below the broker lock
-   TTL, so a sweep can never outlive the lock it holds.
+   TTL, so a sweep can never outlive the lock it holds, and registration refuses a budget the provider's transport
+   cannot honor (see `RefreshBudget` above).
+6. **Every deferral is reported.** A deferred tick emits exactly one `state_failure` event carrying the
+   `DeferredReason` the result reports — lock contention, an unavailable family (`family_state_unavailable`), a
+   rewrite failure, or an upstream rejection — including a family the sweeper could not read. A silent deferral is
+   indistinguishable from a sweep that never ran, so an alarm or soak that counts route refresh events alone would
+   see `deferred=1` and nothing else. The event carries no handle or family hash when the tick resolved no record:
+   the sweep does not invent identity for an answer it never had.
 
 ### Family identity, tombstone, and migration
 
@@ -357,6 +377,9 @@ gets the uniform `invalid_grant`. A family-marked record whose required family s
 
 ### Telemetry and the expiry signal
 
+The exported sweeper reports through the same hook: `lock_acquired` and `refreshed` on a rotation, and one
+`state_failure` per deferred tick (see the sweep contract above).
+
 `RouteRefreshEvents` is an optional synchronous hook with the SPEC.md:346-352 taxonomy: `issued`,
 `validation_rejected`, `lock_acquired`, `grace_served`, `refreshed`, `reuse` (the live outcome is `revoked_family`; `access_token_only`, `revoked_walk`,
 `rate_limited`, and `binding_rejected` are retained only for telemetry compatibility), `upstream_reauth_required`,
@@ -387,7 +410,7 @@ front-channel field may be set (the `/register` and callback routes then mount o
 | `UpstreamIssuer` / `upstreamIssuer` / `upstream_issuer` | The expected upstream issuer: the RFC 9207 `iss` the callback pins before consuming the transaction or exchanging the code, and the issuer `Discovery` must verify before any published endpoint is trusted | empty | absolute HTTPS URL, no query, no fragment, normalized like `IssuerURL` | Registration error (`… upstream issuer must be an absolute HTTPS URL without query or fragment`) | DESIGN §8.2; DESIGN §5.2, §6 |
 | `LifecycleScopes` / `lifecycleScopes` / `lifecycle_scopes` | Scope values added to every upstream authorize request but never required from the MCP client (for example `offline_access`) | absent — adds none | each value trimmed, non-empty, and well-formed Unicode; duplicates collapse | Registration error (`lifecycle scope values cannot be empty` / `… must be well-formed Unicode`) | FRAMEWORK_VS_POLICY row 7 |
 | `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a hint whose trimmed, lower-cased name collides with a required or reserved authorize parameter (`response_type`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`, `resource`, `scope`) is refused by the adapter as `invalid_request` before the upstream is contacted, and a hint whose name carries leading or trailing whitespace is refused the same way rather than forwarded under its untrimmed or trimmed spelling, so a returned error is a provider-call failure in the gateway class (502 `upstream_error`), never a redirect | Registration error when set without `Provider` | DESIGN §6 |
-| `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` | The static policy of the brokered route refresh handle: `HandleTTL` (required), `GraceWindow` (optional, default 120 s), `ReuseRateCeiling` (required), and `RefreshBudget` / `refreshBudgetSeconds` / `refresh_budget_seconds` (optional, default 10 s) — the encoded upstream refresh-call budget | none | **required whenever `Provider` is set.** `HandleTTL` ∈ [60 s, 30 d]; `GraceWindow` ∈ (0, 120 s]; `ReuseRateCeiling` ∈ [9, 120] per family per hour; `RefreshBudget` ∈ [1 s, 12 s], the ceiling being the reference 15 s broker lock TTL less a 3 s commit margin. A broker store that reports its own lifetime through the optional reporter must equal `HandleTTL` | Registration error on absent/zero/invalid values (`… route refresh policy handle TTL is required and must be positive`, `… must be within [1m0s, 720h0m0s]`, `… refresh budget must be within [1s, 12s]`); registration error when set without `Provider` | DESIGN §7 TTL min-of; docs/115; refresh-rotation-recovery R7 |
+| `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` | The static policy of the brokered route refresh handle: `HandleTTL` (required), `GraceWindow` (optional, default 120 s), `ReuseRateCeiling` (required), and `RefreshBudget` / `refreshBudgetSeconds` / `refresh_budget_seconds` (optional, default 10 s) — the encoded upstream refresh-call budget | none | **required whenever `Provider` is set.** `HandleTTL` ∈ [60 s, 30 d]; `GraceWindow` ∈ (0, 120 s]; `ReuseRateCeiling` ∈ [9, 120] per family per hour; `RefreshBudget` ∈ [1 s, 12 s], the ceiling being the reference 15 s broker lock TTL less a 3 s commit margin, and no budget above the provider's reported transport bound (`UpstreamFetchTimeoutReporter`). A broker store that reports its own lifetime through the optional reporter must equal `HandleTTL` | Registration error on absent/zero/invalid values (`… route refresh policy handle TTL is required and must be positive`, `… must be within [1m0s, 720h0m0s]`, `… refresh budget must be within [1s, 12s]`, `… refresh budget 12s exceeds the provider's upstream fetch timeout 10s …`); registration error when set without `Provider` | DESIGN §7 TTL min-of; docs/115; refresh-rotation-recovery R7 |
 | `RouteRefreshEvents` / `routeRefreshEvents` / `route_refresh_events` | Optional schema-redacted route refresh broker telemetry hook | absent — emits nothing | hook is opaque; called synchronously and its panic/exception is contained | Registration error when set without `Provider` | SPEC.md:346-352 |
 
 Every rejection uses the runtime's existing configuration-error prefix and the same message body (`mcpfacade: …`
